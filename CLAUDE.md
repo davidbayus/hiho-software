@@ -122,35 +122,77 @@ addon/
 
 ## Existing Work
 
-### PaWrappa the UV Unwrapper (V0.3.0 — Active Development)
+### PaWrappa the UV Unwrapper (V0.3.2 — Student Testing Ready)
 Auto-UV tool lives in `UV_UNWRAPER/`. N-panel tab is "PaWrappa". Class prefix: `PAWRAPPA`. Operator prefix: `pawrappa.*`.
 
-**Current state (April 2, 2026): PIVOTING to curvature-based seam placement.**
+**Current state (April 3, 2026): Curvature-based face clustering VALIDATED. Ready for student testing.**
 
-The V0.2.0 approach used three shape-specific algorithms (Character/Simple Shape/Thingamabob) with protrusion detection and biased pathfinding. This worked for bipeds but struggled with arbitrary shapes. Research into Substance Painter's approach revealed that production unwrappers use **dihedral angle measurement + face clustering** — one algorithm that works on any shape.
+The V0.2.0 three-button approach (Character/Simple Shape/Thingamabob) has been replaced by one universal algorithm: Lloyd-style face clustering with a merge threshold slider. One button works on any shape.
 
 **What exists now:**
-- Three legacy unwrap modes (Character, Simple Shape, Thingamabob) — still functional
-- **Edge Scorer** (new) — proof-of-concept tool that scores every edge by dihedral angle and marks high-curvature edges as seams. Used for comparing against SP's seam placement.
+- **Auto Seams** (primary tool) — one-click curvature-based face clustering + SLIM unwrap + pack. Merge threshold slider controls island count (F9 redo panel).
+- **Edge Scorer** — debug tool, hidden under Advanced Tools
+- **Legacy modes** — Character/Simple Shape/Thingamabob, hidden under Advanced Tools
 
-**Test results from curvature scorer (April 2, 2026):**
-- **Biped character:** Excellent. Finds eye sockets, armpits, crotch, neck, hands/feet. Smooth surfaces stay clean.
-- **Tube:** Finds the open ends and inner surface, but can't place the lengthwise cut a tube needs. Curvature alone isn't enough for cylindrical shapes.
-- **Simple organic:** Finds bump bases and creases. Correct reads but sparse — gentle organics have subtle curvature below the 30° default threshold.
+**Algorithm:**
+1. Score every edge by dihedral angle (curvature signal)
+2. Pick seed faces via farthest-point sampling (deterministic, starts from face 0)
+3. Grow clusters using heapq priority queue with normal deviation + edge crossing cost
+4. Lloyd iteration (8 passes) — recompute seeds, reassign faces
+5. Merge small clusters (< 3 faces)
+6. Cluster boundaries → seams → SLIM unwrap → average island scale → pack
 
-**Architecture direction:** Replace three-button shape classification with one universal curvature-based algorithm. Face clustering (Lloyd-style) to group faces into islands. Merge threshold slider to control island count (few = SP-style, many = Smart UV-style). +Y back-bias for seam hiding. See `CURVATURE_SEAM_RESEARCH.md` for full research notes.
+**Key parameters (F9 redo panel):**
+- **Merge Threshold** (0.05–0.95, default 0.50) — left = more islands, right = fewer. Sweet spot for characters: 0.85–0.90
+- **Normal Sensitivity** (0.1–3.0, default 1.0) — how strictly clusters follow surface direction
+- **Prefer Concave Seams** (default ON) — 1.5x weight on concave edges (armpits, creases)
+- **Hide Seams on Back +Y** (default ON) — 0.85x cost on back-facing edges
+- **Refinement Passes** (1–30, default 8) — Lloyd iterations
+
+**Validated test results (April 3, 2026) across 5 shape types:**
+
+| Shape | Sweet Spot | Result | Notes |
+|-------|-----------|--------|-------|
+| Chibi character | 0.90 | PASS | 177 seams, clean body-part islands. One weird spot at 0.40 (expected — cluster count fights mesh's natural segmentation) |
+| Mechanical (hard-surface) | 0.50–0.90 | PASS | Works great across full range. Strong curvature signals = clear boundaries |
+| Simple organic | 0.90 | PASS | Each lobe = one island. Seams land in creases between bumps |
+| Tube | — | KNOWN LIMITATION | Curvature only finds ring cuts, can't place lengthwise seam. Students need one manual cut. Same issue as SP. |
+| Thingamabob (mixed) | 0.85 | PASS | Mixed morphology handled well. Each protrusion gets its own island |
+
+**Scaling:** Linear cluster formula (`sqrt(faces) * (1 - threshold)`). Quadratic was tested and reverted — collapsed upper slider range. Linear gives better gradient across all shapes. Each shape has natural "sweet spots" on the slider.
+
+**UI (student-ready):**
+- One big "Auto Seams" button
+- Plain English instructions: "Slide left = more pieces, slide right = fewer pieces"
+- Status: UV map name, seam count, vert/face count
+- Advanced Tools collapsed (Score Edges + Legacy Modes)
 
 **Key files:**
-- `UV_UNWRAPER/operators/edge_scorer.py` — curvature scorer proof-of-concept
+- `UV_UNWRAPER/operators/face_cluster.py` — the core algorithm (Lloyd clustering + full unwrap pipeline)
+- `UV_UNWRAPER/operators/edge_scorer.py` — curvature visualization debug tool
 - `UV_UNWRAPER/operators/auto_uv.py` — legacy three-mode unwrapper
+- `UV_UNWRAPER/ui/panels.py` — student-ready N-panel
 - `UV_UNWRAPER/core/seam_generator.py` — legacy seam generation algorithms
 - `CURVATURE_SEAM_RESEARCH.md` — research on SP's approach, math, references
+
+**IMPORTANT — Testing gotcha:** OBJ export/reimport changes vertex/face ordering, which changes deterministic seed placement and produces different results. Always test with native .blend files, never exported OBJs.
 
 This is **Studio Track** tooling. It's NOT needed for the Stage Track (K-8 puppet show) because puppet templates use procedural geometry with solid colors, not painted textures.
 
 See `SESSION_NOTES.md` for detailed development history and known issues.
 
-**Key lesson from UV development:** Make ONE change at a time. Test each change before making the next. Commit working states to git. Don't rewrite multiple files simultaneously.
+**Key lessons from development:**
+- Make ONE change at a time. Test each change before making the next.
+- Commit working states to git. Don't rewrite multiple files simultaneously.
+- Boundary smoothing was attempted and reverted (no improvement at chaotic cluster counts).
+- Quadratic slider scaling was attempted and reverted (collapsed upper range).
+- Failed experiments are fine — revert cleanly and move on.
+
+**Next steps for PaWrappa:**
+- Student testing feedback (high school CADRE students)
+- Tube/cylinder handling (topology-aware lengthwise cuts — V2 feature)
+- Adaptive thresholding for smooth organic shapes with subtle curvature
+- Consider exposing merge threshold directly in N-panel instead of F9-only
 
 ### QUADRE Quad Remesher (V0.1.0 — Beta, for Studio Track)
 Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/folder. N-panel tab is "QUADRE".
@@ -204,4 +246,14 @@ David talks like an artist, not an engineer. When explaining what you've built o
 - If something fails, explain what the user would SEE, not what the stack trace says
 
 ## Git
-Git is initialized in this folder. Use `git log` to see history. Always commit working states before making changes. The V0.2.0 UV unwrapper is the first commit (stable baseline).
+Git is initialized in this folder. Use `git log` to see history. Always commit working states before making changes.
+
+**Commit history:**
+```
+f8757bf V0.3.2 — Student-ready UI + restored exact V0.3.0 algorithm
+0fccc6b V0.3.1 — Face clusterer validated across 5 shape types
+47a9490 V0.3.0 — PaWrappa rename + curvature-based face clustering
+dc50fb6 Pivot to puppet show architecture — two-track design
+9221dfc Add session notes for continuity between sessions
+1476272 V0.2.0 — Stable baseline with three working shape modes
+```

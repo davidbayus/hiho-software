@@ -3,7 +3,7 @@ UI Panels — Where the buttons live in Blender.
 
 Shows up in the 3D Viewport sidebar (press N to open) under "PaWrappa."
 
-V0.3.1 — Cleaned up for student testing.
+V0.3.3 — Better hints pointing to Adjust Last Operation panel.
 One big button, one slider, clear instructions.
 """
 
@@ -45,9 +45,9 @@ class PAWRAPPA_PT_uv_panel(bpy.types.Panel):
 
         # --- Slider Hint ---
         col.separator()
-        col.label(text="After clicking, press F9 to adjust:")
-        col.label(text="  Slide left = more pieces")
-        col.label(text="  Slide right = fewer pieces")
+        col.label(text="After clicking, adjust the slider at")
+        col.label(text="  bottom-left of viewport (or press F9)")
+        col.label(text="  Left = more pieces, Right = fewer")
         col.label(text="  Try 0.85 - 0.90 for characters")
 
         # --- Status ---
@@ -69,27 +69,3 @@ class PAWRAPPA_PT_uv_panel(bpy.types.Panel):
         # Mesh info
         col = box.column(align=True)
         col.label(text=f"Verts: {len(mesh.vertices):,}  |  Faces: {len(mesh.polygons):,}")
-
-        # --- Advanced (collapsed) ---
-        layout.separator()
-        row = layout.row(align=True)
-        row.prop(
-            context.scene, "pw_show_legacy",
-            text="Advanced Tools",
-            icon='TRIA_DOWN' if context.scene.get("pw_show_legacy", False) else 'TRIA_RIGHT',
-            emboss=False,
-        )
-        if context.scene.get("pw_show_legacy", False):
-            box = layout.box()
-            col = box.column(align=True)
-            col.label(text="Debug", icon='TOOL_SETTINGS')
-            col.operator(
-                "pawrappa.edge_score",
-                text="Score Edges",
-                icon='EDGESEL',
-            )
-            col.separator()
-            col.label(text="Legacy Modes (V0.2)", icon='RECOVER_LAST')
-            col.operator("pawrappa.auto_uv", text="Character", icon='MOD_ARMATURE')
-            col.operator("pawrappa.auto_uv_simple", text="Simple Shape", icon='MESH_UVSPHERE')
-            col.operator("pawrappa.auto_uv_thingamabob", text="Thingamabob", icon='OUTLINER_DATA_MESH')
