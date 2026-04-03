@@ -487,8 +487,6 @@ class PAWRAPPA_OT_face_cluster(bpy.types.Operator):
         remap = {old: new for new, old in enumerate(unique)}
         return {f: remap[c] for f, c in labels.items()}
 
-
-
     def _apply_seams_from_clusters(
         self,
         bm,
