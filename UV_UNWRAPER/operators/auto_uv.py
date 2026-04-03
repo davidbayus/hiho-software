@@ -211,11 +211,11 @@ class _AutoUVBase(bpy.types.Operator):
 #  THE THREE BUTTONS
 # ===========================================================================
 
-class KIDBLENDER_OT_auto_uv(_AutoUVBase):
+class PAWRAPPA_OT_auto_uv(_AutoUVBase):
     """Unwrap a symmetric character (biped/humanoid).
     Seams down the back and along inner limbs — like cutting open a stuffed animal."""
 
-    bl_idname = "kidblender.auto_uv"
+    bl_idname = "pawrappa.auto_uv"
     bl_label = "Character"
     bl_description = (
         "Best for people, bipeds, and symmetric characters. "
@@ -226,11 +226,11 @@ class KIDBLENDER_OT_auto_uv(_AutoUVBase):
     _mode_name = "character"
 
 
-class KIDBLENDER_OT_auto_uv_simple(_AutoUVBase):
+class PAWRAPPA_OT_auto_uv_simple(_AutoUVBase):
     """Unwrap a simple shape (prop, accessory, single object).
     One seam line on the hidden side — like cracking open a walnut."""
 
-    bl_idname = "kidblender.auto_uv_simple"
+    bl_idname = "pawrappa.auto_uv_simple"
     bl_label = "Simple Shape"
     bl_description = (
         "Best for props, accessories, weapons, potions, hats, rocks. "
@@ -241,11 +241,11 @@ class KIDBLENDER_OT_auto_uv_simple(_AutoUVBase):
     _mode_name = "simple"
 
 
-class KIDBLENDER_OT_auto_uv_thingamabob(_AutoUVBase):
+class PAWRAPPA_OT_auto_uv_thingamabob(_AutoUVBase):
     """Unwrap a complex asymmetric shape (creature, blob, multi-limbed).
     Finds every appendage and seams each one — like unwrapping an octopus."""
 
-    bl_idname = "kidblender.auto_uv_thingamabob"
+    bl_idname = "pawrappa.auto_uv_thingamabob"
     bl_label = "Thingamabob"
     bl_description = (
         "Best for creatures, monsters, asymmetric shapes, anything weird. "

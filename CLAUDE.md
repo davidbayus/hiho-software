@@ -122,17 +122,44 @@ addon/
 
 ## Existing Work
 
-### UV Unwrapper (V0.2.0 — Stable, for Studio Track)
-A working auto-UV tool lives in `UV_UNWRAPER/`. It has three modes:
-- **Character** — seam tree (spine + limb branches), works great on bipeds
-- **Simple Shape** — single biased seam, works OK on simple props
-- **Thingamabob** — multi-appendage branching, works OK on weird shapes
+### PaWrappa the UV Unwrapper (V0.3.0 — Active Development)
+Auto-UV tool lives in `UV_UNWRAPER/`. N-panel tab is "PaWrappa". Class prefix: `PAWRAPPA`. Operator prefix: `pawrappa.*`.
+
+**Current state (April 2, 2026): PIVOTING to curvature-based seam placement.**
+
+The V0.2.0 approach used three shape-specific algorithms (Character/Simple Shape/Thingamabob) with protrusion detection and biased pathfinding. This worked for bipeds but struggled with arbitrary shapes. Research into Substance Painter's approach revealed that production unwrappers use **dihedral angle measurement + face clustering** — one algorithm that works on any shape.
+
+**What exists now:**
+- Three legacy unwrap modes (Character, Simple Shape, Thingamabob) — still functional
+- **Edge Scorer** (new) — proof-of-concept tool that scores every edge by dihedral angle and marks high-curvature edges as seams. Used for comparing against SP's seam placement.
+
+**Test results from curvature scorer (April 2, 2026):**
+- **Biped character:** Excellent. Finds eye sockets, armpits, crotch, neck, hands/feet. Smooth surfaces stay clean.
+- **Tube:** Finds the open ends and inner surface, but can't place the lengthwise cut a tube needs. Curvature alone isn't enough for cylindrical shapes.
+- **Simple organic:** Finds bump bases and creases. Correct reads but sparse — gentle organics have subtle curvature below the 30° default threshold.
+
+**Architecture direction:** Replace three-button shape classification with one universal curvature-based algorithm. Face clustering (Lloyd-style) to group faces into islands. Merge threshold slider to control island count (few = SP-style, many = Smart UV-style). +Y back-bias for seam hiding. See `CURVATURE_SEAM_RESEARCH.md` for full research notes.
+
+**Key files:**
+- `UV_UNWRAPER/operators/edge_scorer.py` — curvature scorer proof-of-concept
+- `UV_UNWRAPER/operators/auto_uv.py` — legacy three-mode unwrapper
+- `UV_UNWRAPER/core/seam_generator.py` — legacy seam generation algorithms
+- `CURVATURE_SEAM_RESEARCH.md` — research on SP's approach, math, references
 
 This is **Studio Track** tooling. It's NOT needed for the Stage Track (K-8 puppet show) because puppet templates use procedural geometry with solid colors, not painted textures.
 
-See `SESSION_NOTES.md` for detailed development history and known issues. See `UV_UNWRAP_RESEARCH_CONTEXT.md` for research landscape.
+See `SESSION_NOTES.md` for detailed development history and known issues.
 
 **Key lesson from UV development:** Make ONE change at a time. Test each change before making the next. Commit working states to git. Don't rewrite multiple files simultaneously.
+
+### QUADRE Quad Remesher (V0.1.0 — Beta, for Studio Track)
+Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/folder. N-panel tab is "QUADRE".
+
+**Current state:** Shipped V0.1.0, students testing. ~80-85% of Exoside Quad Remesher quality. Known issue: unsigned dylibs need codesigning fix before Mac lab deployment. Some meshes produce pinching artifacts in concave regions (observed April 2, 2026 during PaWrappa testing).
+
+**Pipeline role:** "Clean Up My Shape" button in the Studio Track. Student sculpts → QUADRE remeshes to clean quads → PaWrappa auto-UVs → student paints. QUADRE output quality directly affects PaWrappa's seam placement, so these two addons must be tested together.
+
+**Note:** While QUADRE is in beta, use Exoside for test meshes when testing PaWrappa to isolate variables.
 
 ### Reference Material (in R&D/ folder)
 - `PUPPET_SHOW_DESIGN_REVISION_2026-04-01.md` — Full design document for the puppet show architecture
@@ -166,8 +193,8 @@ The addon must run on "Scrap in a Box" hardware — repurposed e-waste machines 
 - PEP 8
 - Type hints where possible
 - Every operator needs a docstring explaining what it does in plain English
-- Blender class naming: `KIDBLENDER_OT_start_show`, `KIDBLENDER_PT_stage_panel`
-- Prefix all custom properties with `kb_` to avoid namespace collisions
+- Blender class naming: `PAWRAPPA_OT_edge_score`, `PAWRAPPA_PT_uv_panel` (UV addon), `KIDBLENDER_OT_start_show` (puppet show addon)
+- Prefix all custom properties with `kb_` (puppet show) or `pw_` (PaWrappa) to avoid namespace collisions
 
 ## Communication Style
 David talks like an artist, not an engineer. When explaining what you've built or asking questions:
