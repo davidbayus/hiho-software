@@ -227,11 +227,30 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Dummy mesh pattern**: Hidden mesh `ARKitShapeKeys.Dummy` with shape keys matching ARKit blend shape names. OSC receiver writes values here, drivers read them.
 
 **Known issues / next steps:**
+- **Latency / skipping on fast head movement** — noticed during testing (April 3, 2026). Likely causes: viewport redraw throttled to 0.5s in `_apply_updates()`, UDP packet processing bottleneck, or Blender's depsgraph update speed. Needs research into e-waste-friendly solutions (no GPU compute, must stay open source). See "Latency Research" section below.
 - Character design is basic — needs Will Anderson-style artistic variety (shape language, proportions, personality). Research his video tutorials for geometry node patterns.
 - Template is functional but not beautiful — David wants to bring his own design sense into the node setup, which is important for high school (ART102) and CADRE students
 - No template loader yet — currently must manually open .blend files
 - No customization UI beyond the modifier panel — need kid-friendly sliders in N-panel
 - Mouth hangs down like a tongue when jaw opens wide — scaling approach needs refinement (Will Anderson uses a 2x2 grid with profile curves, not scaled spheres)
+
+**Latency Research (TODO — next session):**
+Observed: head rotation skips/jumps during fast movement. Need to investigate and fix while staying e-waste friendly (8GB RAM, integrated GPU, no CUDA).
+
+Possible causes to investigate:
+1. **Viewport redraw throttle** — `_last_redraw_time` in osc_receiver.py only redraws every 0.5s. This is WAY too slow for smooth head tracking. The shape keys update at 10ms but the viewport doesn't show it. Try reducing to 0.033s (30fps) or removing throttle entirely.
+2. **UDP packet drops** — socket buffer may overflow during fast movement. Could increase buffer size with `sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)`.
+3. **Thread lock contention** — the `_pending` list copies all updates every 10ms. Could switch to a lock-free ring buffer or only keep latest values (discard stale frames).
+4. **Depsgraph updates** — Blender may batch dependency graph updates. Could try `bpy.context.view_layer.update()` or `depsgraph.update()` after applying values.
+5. **Timer resolution** — `return 0.01` (10ms) is the requested timer interval but Blender's actual timer resolution may be lower. Test actual callback frequency.
+6. **Live Link Face app send rate** — the app may send at 60fps but we may be processing slower. Log actual packet rate to verify.
+
+Constraints (non-negotiable):
+- Must run on integrated GPU (Intel HD / AMD Vega)
+- No CUDA, no OpenCL compute
+- 8GB RAM total
+- Open source only
+- No internet required
 
 ### Reference Material (in R&D/ folder)
 - `PUPPET_SHOW_DESIGN_REVISION_2026-04-01.md` — Full design document for the puppet show architecture
