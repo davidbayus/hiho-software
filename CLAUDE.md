@@ -64,8 +64,8 @@ A puppet template is a `.blend` file with a standard structure so the addon can 
 6. **Metadata** — template name, author, thumbnail, recommended age range
 
 ## Target Blender Version
-- Blender 4.5+ (matches FOSCAP / OK Go demo compatibility)
-- Must run in EEVEE real-time
+- Blender 5.0+ (David's current version, confirmed working)
+- Must run in EEVEE real-time (engine name is `BLENDER_EEVEE` in 5.0, NOT `BLENDER_EEVEE_NEXT`)
 
 ## Project Structure
 ```
@@ -109,16 +109,17 @@ green_room/
 ```
 
 ## What to Build First (Priority Order)
-1. **FOSCAP integration** — fork the OSC receiver, one-button phone connect
-2. **Template loader** — load a puppet template, validate it, instantiate it
-3. **Starter puppet template** — one working procedural character (study OK Go demo)
-4. **Customization UI** — read geonode Group Inputs, expose as kid-friendly sliders
-5. **Performance mode** — EEVEE viewport, camera rig, live face tracking
-6. **Recording + export** — capture performance to video, one-click share
-7. **Template browser** — thumbnails, stage/backdrop selection
-8. **Studio track tools** — quad remesh (QRemeshify), auto-UV, template publishing
-9. **QR code phone pairing** — streamlined classroom setup
-10. **Polish** — startup scene, tool reduction, workspace setup
+1. ~~**FOSCAP integration** — fork the OSC receiver, one-button phone connect~~ ✅ V0.1.0
+2. ~~**Starter puppet template** — one working procedural character~~ ✅ V0.1.0 (blob template)
+3. ~~**QR code phone pairing** — streamlined classroom setup~~ ✅ V0.1.0 (zero-dependency QR generator)
+4. **Research Will Anderson's node setups** — study his videos for character design patterns, shape variety, and artistic style in geometry nodes
+5. **Template loader** — load a puppet template, validate it, instantiate it
+6. **Customization UI** — read geonode Group Inputs, expose as kid-friendly sliders
+7. **Performance mode** — EEVEE viewport, camera rig, live face tracking
+8. **Recording + export** — capture performance to video, one-click share
+9. **Template browser** — thumbnails, stage/backdrop selection
+10. **Studio track tools** — quad remesh (QRemeshify), auto-UV, template publishing
+11. **Polish** — startup scene, tool reduction, workspace setup
 
 ## Existing Work
 
@@ -203,6 +204,35 @@ Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/fo
 
 **Note:** While QUADRE is in beta, use Exoside for test meshes when testing PaWrappa to isolate variables.
 
+### Green Room Addon (V0.1.0 — Phone-to-Puppet Working)
+Puppet show addon lives in `green_room/`. N-panel tab is "Green Room". Class prefix: `GREENROOM`. Operator prefix: `greenroom.*`. Property prefix: `gr_`.
+
+**Current state (April 3, 2026): End-to-end face tracking pipeline WORKING.**
+
+Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile, pucker all confirmed working.
+
+**What exists now:**
+- **OSC Receiver** (`core/osc_receiver.py`) — FOSCAP fork, class-based, threaded, 13 active ARKit blend shapes. Timer callback at 10ms pushes shape key values + head rotation to Blender objects.
+- **Phone Connect** (`core/phone_connect.py`) — IP detection + QR code PNG generation, zero external dependencies
+- **QR Generator** (`core/qr_gen.py`) — Complete QR code encoder from scratch (~280 lines). GF(256) arithmetic, Reed-Solomon error correction, versions 1-4, EC level L. Written because pip-installing qrcode in classrooms is a non-starter.
+- **Connect Operator** (`operators/connect_phone.py`) — One button: creates dummy mesh, starts receiver, finds armature with "head" bone, generates QR, shows in panel
+- **N-Panel** (`ui/panels.py`) — Three states: disconnected (port + connect button), waiting (QR code + instructions), receiving (live face data values)
+- **Blob Puppet Template** (`assets/templates/blob/blob_puppet.blend`) — Procedural character built entirely in one geometry nodes tree (95 nodes, 133 links). Face tracking inputs as Group Inputs driven by dummy mesh shape keys via drivers. Customization sliders: Body Width/Height, Eye Size/Spacing, Ear Size, Mouth Size. Armature with "head" bone for phone rotation (Euler XYZ mode).
+- **Template Generator** (`assets/create_blob_template.py`) — Python script that builds the blob template programmatically. Run inside Blender to regenerate.
+
+**Key architecture decisions:**
+- **Driver path format**: `modifiers["GeometryNodes"]["Socket_X"]` where Socket_X is the interface identifier from `tree.interface.items_tree`
+- **Bone rotation mode**: Must be set to `'XYZ'` (Euler) — Blender defaults to Quaternion which ignores `rotation_euler` values from the phone
+- **QR text format**: `"Green Room\nIP: {ip}\nPort: {port}"` — plain text prevents iOS from interpreting as URL
+- **Dummy mesh pattern**: Hidden mesh `ARKitShapeKeys.Dummy` with shape keys matching ARKit blend shape names. OSC receiver writes values here, drivers read them.
+
+**Known issues / next steps:**
+- Character design is basic — needs Will Anderson-style artistic variety (shape language, proportions, personality). Research his video tutorials for geometry node patterns.
+- Template is functional but not beautiful — David wants to bring his own design sense into the node setup, which is important for high school (ART102) and CADRE students
+- No template loader yet — currently must manually open .blend files
+- No customization UI beyond the modifier panel — need kid-friendly sliders in N-panel
+- Mouth hangs down like a tongue when jaw opens wide — scaling approach needs refinement (Will Anderson uses a 2x2 grid with profile curves, not scaled spheres)
+
 ### Reference Material (in R&D/ folder)
 - `PUPPET_SHOW_DESIGN_REVISION_2026-04-01.md` — Full design document for the puppet show architecture
 - `REAL TIME_PUPPETRY IN BLENDER.md.txt` — Transcript of Will Anderson's Blender Conference 2025 talk
@@ -250,6 +280,8 @@ Git is initialized in this folder. Use `git log` to see history. Always commit w
 
 **Commit history:**
 ```
+3a3796c V0.1.0 — Green Room addon + blob puppet template (geometry nodes)
+2fffee1 V0.3.3 — Cleaner UI + a student's testing guide
 f8757bf V0.3.2 — Student-ready UI + restored exact V0.3.0 algorithm
 0fccc6b V0.3.1 — Face clusterer validated across 5 shape types
 47a9490 V0.3.0 — PaWrappa rename + curvature-based face clustering
