@@ -99,6 +99,7 @@ def create_materials():
         'pupil': make_material("Blob_Pupil", (0.05, 0.05, 0.05, 1.0)),
         'ear': make_color_attr_material("Blob_Ear", (1.0, 0.7, 0.55, 1.0)),
         'brow': make_color_attr_material("Blob_Brow", (0.18, 0.09, 0.05, 1.0)),
+        'lip': make_color_attr_material("Blob_Lip", (0.85, 0.45, 0.45, 1.0)),
     }
 
 
@@ -304,6 +305,7 @@ def build_geometry_nodes(mats):
     mouth_panel = tree.interface.new_panel("Mouth")
     ears_panel = tree.interface.new_panel("Ears")
     brows_panel = tree.interface.new_panel("Eyebrows")
+    lips_panel = tree.interface.new_panel("Lips")
 
     # --- Body ---
 
@@ -481,6 +483,22 @@ def build_geometry_nodes(mats):
     )
     s.default_value = (0.18, 0.09, 0.05, 1.0)  # dark brown
 
+    # --- Lips ---
+
+    s = tree.interface.new_socket(
+        "Lip Thickness", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=lips_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.2
+    s.max_value = 3.0
+
+    s = tree.interface.new_socket(
+        "Lip Color", in_out='INPUT', socket_type='NodeSocketColor',
+        parent=lips_panel
+    )
+    s.default_value = (0.85, 0.45, 0.45, 1.0)  # pinkish-red
+
     # ------------------------------------------------------------------
     # NODES — organized left to right, top to bottom
     # ------------------------------------------------------------------
@@ -508,6 +526,7 @@ def build_geometry_nodes(mats):
     EAR_R_Y = -1900
     BROW_L_Y = -2150
     BROW_R_Y = -2400
+    LIP_Y = -2650
 
     # --- Group Input & Output ---
     group_in = tree.nodes.new('NodeGroupInput')
@@ -1466,6 +1485,81 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_r_color.outputs['Geometry'], brow_r_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
+    # LIPS — beveled curve tube that wraps around the mouth opening
+    #
+    # A Curve Circle (outline only, no fill) deformed with the SAME
+    # per-vertex field as the mouth opening. Then Curve to Mesh sweeps
+    # a small profile circle along the deformed path to create the
+    # fleshy lip tube. Think Will Anderson's puppet mouths — rounded,
+    # soft lips that frame the dark mouth hole.
+    # ------------------------------------------------------------------
+
+    # --- Path curve: same shape as mouth outline ---
+    lip_curve = add_node(tree, 'GeometryNodeCurvePrimitiveCircle', PRIM_X, LIP_Y, "Lip Curve")
+    lip_curve.inputs['Resolution'].default_value = 24
+    lip_curve.inputs['Radius'].default_value = 1.0
+
+    # --- Deform the curve with the SAME field as the mouth opening ---
+    # mouth_new_pos is a field (reads Position per-element), so it
+    # evaluates correctly on any geometry with the same vertex layout.
+    lip_set_pos = add_node(tree, 'GeometryNodeSetPosition', COMBINE_X + 200, LIP_Y, "Lip Set Pos")
+    tree.links.new(lip_curve.outputs['Curve'], lip_set_pos.inputs['Geometry'])
+    tree.links.new(mouth_new_pos.outputs['Vector'], lip_set_pos.inputs['Position'])
+
+    # --- Profile circle: cross-section that gives the tube its volume ---
+    # Radius controlled by Lip Thickness slider
+    lip_profile_radius = add_node(tree, 'ShaderNodeMath', MATH_X, LIP_Y - 70, "Lip Profile R")
+    lip_profile_radius.operation = 'MULTIPLY'
+    lip_profile_radius.inputs[0].default_value = 0.18
+    tree.links.new(group_in2.outputs['Lip Thickness'], lip_profile_radius.inputs[1])
+
+    lip_profile = add_node(tree, 'GeometryNodeCurvePrimitiveCircle', PRIM_X, LIP_Y - 140, "Lip Profile")
+    lip_profile.inputs['Resolution'].default_value = 8
+    tree.links.new(lip_profile_radius.outputs[0], lip_profile.inputs['Radius'])
+
+    # --- Curve to Mesh: sweep profile along deformed path ---
+    lip_to_mesh = add_node(tree, 'GeometryNodeCurveToMesh', XFORM_X - 200, LIP_Y, "Lip To Mesh")
+    lip_to_mesh.inputs['Fill Caps'].default_value = False
+    tree.links.new(lip_set_pos.outputs['Geometry'], lip_to_mesh.inputs['Curve'])
+    tree.links.new(lip_profile.outputs['Curve'], lip_to_mesh.inputs['Profile Curve'])
+
+    # --- Transform: same position/rotation as mouth, slightly larger scale ---
+    # Lips wrap OUTSIDE the mouth opening, so scale is slightly bigger.
+    # Z scale matches Y so the tube cross-section stays round after rotation.
+    lip_scale_w = add_node(tree, 'ShaderNodeMath', MATH_X, LIP_Y - 210, "Lip Width")
+    lip_scale_w.operation = 'MULTIPLY'
+    lip_scale_w.inputs[0].default_value = 0.30
+    tree.links.new(group_in2.outputs['Mouth Size'], lip_scale_w.inputs[1])
+
+    lip_scale_h = add_node(tree, 'ShaderNodeMath', MATH_X, LIP_Y - 280, "Lip Height")
+    lip_scale_h.operation = 'MULTIPLY'
+    lip_scale_h.inputs[0].default_value = 0.30
+    tree.links.new(group_in2.outputs['Mouth Size'], lip_scale_h.inputs[1])
+
+    lip_scale_vec = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, LIP_Y - 210, "Lip Scale")
+    lip_scale_vec.inputs['Z'].default_value = 0.30
+    tree.links.new(lip_scale_w.outputs[0], lip_scale_vec.inputs['X'])
+    tree.links.new(lip_scale_h.outputs[0], lip_scale_vec.inputs['Y'])
+
+    lip_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, LIP_Y, "Lip Transform")
+    tree.links.new(lip_to_mesh.outputs['Mesh'], lip_xform.inputs['Geometry'])
+    tree.links.new(mouth_center.outputs['Vector'], lip_xform.inputs['Translation'])
+    tree.links.new(lip_scale_vec.outputs['Vector'], lip_xform.inputs['Scale'])
+    tree.links.new(mouth_rot.outputs['Vector'], lip_xform.inputs['Rotation'])
+
+    # --- Material: color attribute + lip material ---
+    lip_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, LIP_Y, "Lip Color")
+    lip_color.data_type = 'FLOAT_COLOR'
+    lip_color.domain = 'POINT'
+    lip_color.inputs['Name'].default_value = "Color"
+
+    lip_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, LIP_Y, "Lip Material")
+    lip_mat.inputs['Material'].default_value = mats['lip']
+    tree.links.new(lip_xform.outputs['Geometry'], lip_color.inputs['Geometry'])
+    tree.links.new(group_in2.outputs['Lip Color'], lip_color.inputs['Value'])
+    tree.links.new(lip_color.outputs['Geometry'], lip_mat.inputs['Geometry'])
+
+    # ------------------------------------------------------------------
     # JOIN GEOMETRY — combine all parts
     # ------------------------------------------------------------------
 
@@ -1476,6 +1570,7 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_l_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(ear_r_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(ear_l_mat.outputs['Geometry'], join.inputs['Geometry'])
+    tree.links.new(lip_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(mouth_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(pupil_r_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(pupil_l_mat.outputs['Geometry'], join.inputs['Geometry'])
