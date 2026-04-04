@@ -158,6 +158,43 @@ def add_node(tree, node_type, x, y, label=None):
     return node
 
 
+def add_round_cube(tree, x, y, label, radius, subdivs=6):
+    """Add a round cube (subdivided cube → spherized) to the node tree.
+
+    Returns (set_pos_node, output_socket_name) — the geometry output to
+    feed into the next node (transform, material, etc.).
+
+    Args:
+        tree: The geometry node tree
+        x, y: Position of the first node (cube primitive)
+        label: Base name for the nodes
+        radius: Target sphere radius
+        subdivs: Vertices per axis on the cube (default 6)
+    """
+    cube = add_node(tree, 'GeometryNodeMeshCube', x, y, f"{label} Cube")
+    d = radius * 2
+    cube.inputs['Size'].default_value = (d, d, d)
+    cube.inputs['Vertices X'].default_value = subdivs
+    cube.inputs['Vertices Y'].default_value = subdivs
+    cube.inputs['Vertices Z'].default_value = subdivs
+
+    pos_in = add_node(tree, 'GeometryNodeInputPosition', x + 150, y - 50, f"{label} Pos")
+    normalize = add_node(tree, 'ShaderNodeVectorMath', x + 300, y - 50, f"{label} Norm")
+    normalize.operation = 'NORMALIZE'
+    tree.links.new(pos_in.outputs['Position'], normalize.inputs[0])
+
+    spherize = add_node(tree, 'ShaderNodeVectorMath', x + 450, y - 50, f"{label} Sph")
+    spherize.operation = 'SCALE'
+    spherize.inputs['Scale'].default_value = radius
+    tree.links.new(normalize.outputs['Vector'], spherize.inputs[0])
+
+    set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 600, y, f"{label} RndPos")
+    tree.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
+    tree.links.new(spherize.outputs['Vector'], set_pos.inputs['Position'])
+
+    return set_pos
+
+
 def build_geometry_nodes(mats):
     """Build the entire blob character as a geometry nodes tree.
 
@@ -580,13 +617,17 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in.outputs['Ears Depth'], ears_depth_y.inputs[1])
 
     # ------------------------------------------------------------------
-    # BODY — UV Sphere, scaled by customization inputs
+    # BODY — Round Cube (no pole vertices = cleaner deformation)
+    #
+    # A subdivided cube where each vertex is pushed toward a sphere.
+    # Unlike a UV Sphere which has pinched poles at top/bottom, this
+    # gives even quad topology everywhere. Will Anderson uses this
+    # approach for all his puppet geometry.
+    #
+    # Spherize formula: new_pos = normalize(pos) * radius
     # ------------------------------------------------------------------
 
-    body_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, BODY_Y, "Body Sphere")
-    body_sphere.inputs['Segments'].default_value = 32
-    body_sphere.inputs['Rings'].default_value = 16
-    body_sphere.inputs['Radius'].default_value = 1.0
+    body_rnd = add_round_cube(tree, PRIM_X, BODY_Y, "Body", radius=1.0, subdivs=8)
 
     # Body scale: (0.9 * BodyWidth, 0.8, 1.1 * BodyHeight)
     body_scale_w = add_node(tree, 'ShaderNodeMath', MATH_X, BODY_Y, "Body Width Scale")
@@ -616,7 +657,7 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in.outputs['Body Height'], body_scale_h.inputs[0])
     tree.links.new(body_scale_w.outputs[0], body_combine.inputs['X'])
     tree.links.new(body_scale_h.outputs[0], body_combine.inputs['Z'])
-    tree.links.new(body_sphere.outputs['Mesh'], body_xform.inputs['Geometry'])
+    tree.links.new(body_rnd.outputs['Geometry'], body_xform.inputs['Geometry'])
     tree.links.new(body_combine.outputs['Vector'], body_xform.inputs['Scale'])
     tree.links.new(body_xform.outputs['Geometry'], body_color.inputs['Geometry'])
     tree.links.new(group_in.outputs['Body Color'], body_color.inputs['Value'])
@@ -626,10 +667,7 @@ def build_geometry_nodes(mats):
     # LEFT EYE — blink drives Z scale
     # ------------------------------------------------------------------
 
-    eye_l_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, EYE_L_Y, "Eye L Sphere")
-    eye_l_sphere.inputs['Segments'].default_value = 16
-    eye_l_sphere.inputs['Rings'].default_value = 8
-    eye_l_sphere.inputs['Radius'].default_value = 0.22
+    eye_l_rnd = add_round_cube(tree, PRIM_X, EYE_L_Y, "Eye L", radius=0.22, subdivs=6)
 
     # Blink: Z scale = (1 - eyeBlinkLeft * 0.9) * EyeSize
     eye_l_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, EYE_L_Y, "L Blink Invert")
@@ -696,7 +734,7 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_l_pos_y.outputs[0], eye_l_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], eye_l_pos.inputs['Z'])
 
-    tree.links.new(eye_l_sphere.outputs['Mesh'], eye_l_xform.inputs['Geometry'])
+    tree.links.new(eye_l_rnd.outputs['Geometry'], eye_l_xform.inputs['Geometry'])
     tree.links.new(eye_l_pos.outputs['Vector'], eye_l_xform.inputs['Translation'])
     tree.links.new(eye_l_scale.outputs['Vector'], eye_l_xform.inputs['Scale'])
     tree.links.new(eye_l_xform.outputs['Geometry'], eye_l_mat.inputs['Geometry'])
@@ -705,10 +743,7 @@ def build_geometry_nodes(mats):
     # RIGHT EYE — mirror of left
     # ------------------------------------------------------------------
 
-    eye_r_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, EYE_R_Y, "Eye R Sphere")
-    eye_r_sphere.inputs['Segments'].default_value = 16
-    eye_r_sphere.inputs['Rings'].default_value = 8
-    eye_r_sphere.inputs['Radius'].default_value = 0.22
+    eye_r_rnd = add_round_cube(tree, PRIM_X, EYE_R_Y, "Eye R", radius=0.22, subdivs=6)
 
     eye_r_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, EYE_R_Y, "R Blink Invert")
     eye_r_blink.operation = 'MULTIPLY'
@@ -770,7 +805,7 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_r_pos_y.outputs[0], eye_r_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], eye_r_pos.inputs['Z'])
 
-    tree.links.new(eye_r_sphere.outputs['Mesh'], eye_r_xform.inputs['Geometry'])
+    tree.links.new(eye_r_rnd.outputs['Geometry'], eye_r_xform.inputs['Geometry'])
     tree.links.new(eye_r_pos.outputs['Vector'], eye_r_xform.inputs['Translation'])
     tree.links.new(eye_r_scale.outputs['Vector'], eye_r_xform.inputs['Scale'])
     tree.links.new(eye_r_xform.outputs['Geometry'], eye_r_mat.inputs['Geometry'])
@@ -779,10 +814,7 @@ def build_geometry_nodes(mats):
     # LEFT IRIS — follows eye blink, driven by eye look
     # ------------------------------------------------------------------
 
-    iris_l_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, IRIS_L_Y, "Iris L Sphere")
-    iris_l_sphere.inputs['Segments'].default_value = 12
-    iris_l_sphere.inputs['Rings'].default_value = 6
-    iris_l_sphere.inputs['Radius'].default_value = 0.12
+    iris_l_rnd = add_round_cube(tree, PRIM_X, IRIS_L_Y, "Iris L", radius=0.12, subdivs=5)
 
     # Iris blink scale (same as eye)
     iris_l_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, IRIS_L_Y, "Iris L Blink")
@@ -845,7 +877,7 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in.outputs['Eye Size'], iris_l_scale.inputs['Y'])
     tree.links.new(iris_l_sz.outputs[0], iris_l_scale.inputs['Z'])
 
-    tree.links.new(iris_l_sphere.outputs['Mesh'], iris_l_xform.inputs['Geometry'])
+    tree.links.new(iris_l_rnd.outputs['Geometry'], iris_l_xform.inputs['Geometry'])
     tree.links.new(iris_l_pos.outputs['Vector'], iris_l_xform.inputs['Translation'])
     tree.links.new(iris_l_scale.outputs['Vector'], iris_l_xform.inputs['Scale'])
     tree.links.new(iris_l_xform.outputs['Geometry'], iris_l_color.inputs['Geometry'])
@@ -856,10 +888,7 @@ def build_geometry_nodes(mats):
     # RIGHT IRIS — mirror of left
     # ------------------------------------------------------------------
 
-    iris_r_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, IRIS_R_Y, "Iris R Sphere")
-    iris_r_sphere.inputs['Segments'].default_value = 12
-    iris_r_sphere.inputs['Rings'].default_value = 6
-    iris_r_sphere.inputs['Radius'].default_value = 0.12
+    iris_r_rnd = add_round_cube(tree, PRIM_X, IRIS_R_Y, "Iris R", radius=0.12, subdivs=5)
 
     iris_r_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, IRIS_R_Y, "Iris R Blink")
     iris_r_blink.operation = 'MULTIPLY'
@@ -920,7 +949,7 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in2.outputs['Eye Size'], iris_r_scale.inputs['Y'])
     tree.links.new(iris_r_sz.outputs[0], iris_r_scale.inputs['Z'])
 
-    tree.links.new(iris_r_sphere.outputs['Mesh'], iris_r_xform.inputs['Geometry'])
+    tree.links.new(iris_r_rnd.outputs['Geometry'], iris_r_xform.inputs['Geometry'])
     tree.links.new(iris_r_pos.outputs['Vector'], iris_r_xform.inputs['Translation'])
     tree.links.new(iris_r_scale.outputs['Vector'], iris_r_xform.inputs['Scale'])
     tree.links.new(iris_r_xform.outputs['Geometry'], iris_r_color.inputs['Geometry'])
@@ -931,10 +960,7 @@ def build_geometry_nodes(mats):
     # LEFT PUPIL — small dark sphere inside iris
     # ------------------------------------------------------------------
 
-    pupil_l_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, PUPIL_L_Y, "Pupil L Sphere")
-    pupil_l_sphere.inputs['Segments'].default_value = 8
-    pupil_l_sphere.inputs['Rings'].default_value = 4
-    pupil_l_sphere.inputs['Radius'].default_value = 0.09
+    pupil_l_rnd = add_round_cube(tree, PRIM_X, PUPIL_L_Y, "Pupil L", radius=0.09, subdivs=4)
 
     pupil_l_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_L_Y + 30, "Pupil L Pos Y")
     pupil_l_pos_y.operation = 'MULTIPLY'
@@ -953,7 +979,7 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in2.outputs['Eyes Depth'], pupil_l_pos_y.inputs[1])
     tree.links.new(pupil_l_pos_y.outputs[0], pupil_l_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], pupil_l_pos.inputs['Z'])
-    tree.links.new(pupil_l_sphere.outputs['Mesh'], pupil_l_xform.inputs['Geometry'])
+    tree.links.new(pupil_l_rnd.outputs['Geometry'], pupil_l_xform.inputs['Geometry'])
     tree.links.new(pupil_l_pos.outputs['Vector'], pupil_l_xform.inputs['Translation'])
     tree.links.new(pupil_l_xform.outputs['Geometry'], pupil_l_mat.inputs['Geometry'])
 
@@ -961,10 +987,7 @@ def build_geometry_nodes(mats):
     # RIGHT PUPIL
     # ------------------------------------------------------------------
 
-    pupil_r_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, PUPIL_R_Y, "Pupil R Sphere")
-    pupil_r_sphere.inputs['Segments'].default_value = 8
-    pupil_r_sphere.inputs['Rings'].default_value = 4
-    pupil_r_sphere.inputs['Radius'].default_value = 0.09
+    pupil_r_rnd = add_round_cube(tree, PRIM_X, PUPIL_R_Y, "Pupil R", radius=0.09, subdivs=4)
 
     pupil_r_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_R_Y + 30, "Pupil R Pos Y")
     pupil_r_pos_y.operation = 'MULTIPLY'
@@ -982,7 +1005,7 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in2.outputs['Eyes Depth'], pupil_r_pos_y.inputs[1])
     tree.links.new(pupil_r_pos_y.outputs[0], pupil_r_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], pupil_r_pos.inputs['Z'])
-    tree.links.new(pupil_r_sphere.outputs['Mesh'], pupil_r_xform.inputs['Geometry'])
+    tree.links.new(pupil_r_rnd.outputs['Geometry'], pupil_r_xform.inputs['Geometry'])
     tree.links.new(pupil_r_pos.outputs['Vector'], pupil_r_xform.inputs['Translation'])
     tree.links.new(pupil_r_xform.outputs['Geometry'], pupil_r_mat.inputs['Geometry'])
 
@@ -1209,10 +1232,7 @@ def build_geometry_nodes(mats):
     # EARS — simple spheres, scalable
     # ------------------------------------------------------------------
 
-    ear_l_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, EAR_L_Y, "Ear L Sphere")
-    ear_l_sphere.inputs['Segments'].default_value = 12
-    ear_l_sphere.inputs['Rings'].default_value = 6
-    ear_l_sphere.inputs['Radius'].default_value = 0.18
+    ear_l_rnd = add_round_cube(tree, PRIM_X, EAR_L_Y, "Ear L", radius=0.18, subdivs=5)
 
     ear_l_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EAR_L_Y, "Ear L Scale")
 
@@ -1249,7 +1269,7 @@ def build_geometry_nodes(mats):
     tree.links.new(ears_spread_neg.outputs[0], ear_l_pos.inputs['X'])
     tree.links.new(ears_depth_y.outputs[0], ear_l_pos.inputs['Y'])
     tree.links.new(ears_height_z.outputs[0], ear_l_pos.inputs['Z'])
-    tree.links.new(ear_l_sphere.outputs['Mesh'], ear_l_xform.inputs['Geometry'])
+    tree.links.new(ear_l_rnd.outputs['Geometry'], ear_l_xform.inputs['Geometry'])
     tree.links.new(ear_l_pos.outputs['Vector'], ear_l_xform.inputs['Translation'])
     tree.links.new(ear_l_scale.outputs['Vector'], ear_l_xform.inputs['Scale'])
     tree.links.new(ear_l_xform.outputs['Geometry'], ear_l_color.inputs['Geometry'])
@@ -1257,10 +1277,7 @@ def build_geometry_nodes(mats):
     tree.links.new(ear_l_color.outputs['Geometry'], ear_l_mat.inputs['Geometry'])
 
     # Right ear
-    ear_r_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, EAR_R_Y, "Ear R Sphere")
-    ear_r_sphere.inputs['Segments'].default_value = 12
-    ear_r_sphere.inputs['Rings'].default_value = 6
-    ear_r_sphere.inputs['Radius'].default_value = 0.18
+    ear_r_rnd = add_round_cube(tree, PRIM_X, EAR_R_Y, "Ear R", radius=0.18, subdivs=5)
 
     ear_r_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EAR_R_Y, "Ear R Scale")
 
@@ -1297,7 +1314,7 @@ def build_geometry_nodes(mats):
     tree.links.new(ears_spread_x.outputs[0], ear_r_pos.inputs['X'])
     tree.links.new(ears_depth_y.outputs[0], ear_r_pos.inputs['Y'])
     tree.links.new(ears_height_z.outputs[0], ear_r_pos.inputs['Z'])
-    tree.links.new(ear_r_sphere.outputs['Mesh'], ear_r_xform.inputs['Geometry'])
+    tree.links.new(ear_r_rnd.outputs['Geometry'], ear_r_xform.inputs['Geometry'])
     tree.links.new(ear_r_pos.outputs['Vector'], ear_r_xform.inputs['Translation'])
     tree.links.new(ear_r_scale.outputs['Vector'], ear_r_xform.inputs['Scale'])
     tree.links.new(ear_r_xform.outputs['Geometry'], ear_r_color.inputs['Geometry'])
@@ -1367,10 +1384,7 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_drop_r.outputs[0], brow_z_r_final.inputs[1])
 
     # --- Left Eyebrow ---
-    brow_l_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, BROW_L_Y, "Brow L Sphere")
-    brow_l_sphere.inputs['Segments'].default_value = 12
-    brow_l_sphere.inputs['Rings'].default_value = 6
-    brow_l_sphere.inputs['Radius'].default_value = 0.14
+    brow_l_rnd = add_round_cube(tree, PRIM_X, BROW_L_Y, "Brow L", radius=0.14, subdivs=5)
 
     # Scale: wide and flat (squished oval)
     brow_l_sx = add_node(tree, 'ShaderNodeMath', MATH_X, BROW_L_Y, "Brow L Sx")
@@ -1419,7 +1433,7 @@ def build_geometry_nodes(mats):
     brow_l_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, BROW_L_Y, "Brow L Material")
     brow_l_mat.inputs['Material'].default_value = mats['brow']
 
-    tree.links.new(brow_l_sphere.outputs['Mesh'], brow_l_xform.inputs['Geometry'])
+    tree.links.new(brow_l_rnd.outputs['Geometry'], brow_l_xform.inputs['Geometry'])
     tree.links.new(brow_l_pos.outputs['Vector'], brow_l_xform.inputs['Translation'])
     tree.links.new(brow_l_scale.outputs['Vector'], brow_l_xform.inputs['Scale'])
     tree.links.new(brow_l_xform.outputs['Geometry'], brow_l_color.inputs['Geometry'])
@@ -1427,10 +1441,7 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_l_color.outputs['Geometry'], brow_l_mat.inputs['Geometry'])
 
     # --- Right Eyebrow (mirror of left) ---
-    brow_r_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, BROW_R_Y, "Brow R Sphere")
-    brow_r_sphere.inputs['Segments'].default_value = 12
-    brow_r_sphere.inputs['Rings'].default_value = 6
-    brow_r_sphere.inputs['Radius'].default_value = 0.14
+    brow_r_rnd = add_round_cube(tree, PRIM_X, BROW_R_Y, "Brow R", radius=0.14, subdivs=5)
 
     brow_r_sx = add_node(tree, 'ShaderNodeMath', MATH_X, BROW_R_Y, "Brow R Sx")
     brow_r_sx.operation = 'MULTIPLY'
@@ -1477,7 +1488,7 @@ def build_geometry_nodes(mats):
     brow_r_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, BROW_R_Y, "Brow R Material")
     brow_r_mat.inputs['Material'].default_value = mats['brow']
 
-    tree.links.new(brow_r_sphere.outputs['Mesh'], brow_r_xform.inputs['Geometry'])
+    tree.links.new(brow_r_rnd.outputs['Geometry'], brow_r_xform.inputs['Geometry'])
     tree.links.new(brow_r_pos.outputs['Vector'], brow_r_xform.inputs['Translation'])
     tree.links.new(brow_r_scale.outputs['Vector'], brow_r_xform.inputs['Scale'])
     tree.links.new(brow_r_xform.outputs['Geometry'], brow_r_color.inputs['Geometry'])
@@ -1580,8 +1591,12 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_l_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(body_mat.outputs['Geometry'], join.inputs['Geometry'])
 
+    # --- Shade Smooth: makes everything look soft and rounded ---
+    shade_smooth = add_node(tree, 'GeometryNodeSetShadeSmooth', JOIN_X + 150, -400, "Shade Smooth")
+    tree.links.new(join.outputs['Geometry'], shade_smooth.inputs['Geometry'])
+
     # --- Group Output ---
-    tree.links.new(join.outputs['Geometry'], group_out.inputs['Geometry'])
+    tree.links.new(shade_smooth.outputs['Geometry'], group_out.inputs['Geometry'])
 
     return tree
 
@@ -1626,6 +1641,15 @@ def create_character(tree, armature):
     # Add geometry nodes modifier
     mod = obj.modifiers.new("GeometryNodes", 'NODES')
     mod.node_group = tree
+
+    # Add Subdivision Surface modifier — smooths everything out.
+    # Sits AFTER geonodes so it subdivides the final joined geometry.
+    # Level 2 gives a nice pillowy look without killing performance
+    # on e-waste hardware. Kids can bump it up if their machine handles it.
+    subsurf = obj.modifiers.new("Subdivision", 'SUBSURF')
+    subsurf.levels = 2           # viewport
+    subsurf.render_levels = 2    # render
+    subsurf.show_only_control_edges = True  # cleaner wireframe
 
     # Parent to armature
     obj.parent = armature

@@ -55,3 +55,10 @@ def draw_customize_sliders(layout, context):
                 col.prop(mod, f'["{sock_info.identifier}"]', text=name)
             except TypeError:
                 pass
+
+    # Smoothness slider — controls the Subdivision Surface modifier level
+    subsurf = puppet.modifiers.get("Subdivision")
+    if subsurf:
+        col = box.column(align=True)
+        col.label(text="Smoothness", icon='MOD_SUBSURF')
+        col.prop(subsurf, "levels", text="Smoothness")
