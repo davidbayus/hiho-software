@@ -1,18 +1,50 @@
-"""Green Room N-panel — the main UI for connecting and performing."""
+"""Green Room N-panel — the main UI for picking puppets, connecting, and performing."""
 
 import bpy
 
 from ..core.phone_connect import get_local_ip
+from ..operators.customize_puppet import draw_customize_sliders
+
+
+class GREENROOM_PT_puppet_panel(bpy.types.Panel):
+    """Puppet selection and customization — the top panel."""
+
+    bl_label = "Your Puppet"
+    bl_idname = "GREENROOM_PT_puppet_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Green Room"
+    bl_order = 0
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.greenroom
+
+        # --- Pick Your Puppet button ---
+        row = layout.row()
+        row.scale_y = 1.8
+        if settings.gr_active_template:
+            row.operator("greenroom.pick_puppet",
+                         text=f"Puppet: {settings.gr_active_template}",
+                         icon='ARMATURE_DATA')
+        else:
+            row.operator("greenroom.pick_puppet", icon='ARMATURE_DATA')
+
+        # --- Customization sliders (if a template is loaded) ---
+        if settings.gr_active_template:
+            layout.separator()
+            draw_customize_sliders(layout, context)
 
 
 class GREENROOM_PT_connect_panel(bpy.types.Panel):
     """Phone connection panel with step-by-step instructions."""
 
-    bl_label = "Green Room"
+    bl_label = "Connect My Phone"
     bl_idname = "GREENROOM_PT_connect_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Green Room"
+    bl_order = 1
 
     def draw(self, context):
         from .. import receiver
@@ -29,9 +61,6 @@ class GREENROOM_PT_connect_panel(bpy.types.Panel):
 
     def _draw_disconnected(self, layout, settings):
         """The starting screen — just the connect button."""
-        layout.label(text="Face tracking for puppet shows", icon='WORLD')
-        layout.separator()
-
         # Port setting (usually leave at default)
         box = layout.box()
         box.label(text="Settings:", icon='PREFERENCES')

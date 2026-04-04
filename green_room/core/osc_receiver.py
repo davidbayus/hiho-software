@@ -125,7 +125,7 @@ class OSCReceiver:
         self._sock = None
         self._running = False
         self._port = 11111
-        self._pending = []
+        self._pending = {}
         self._latest = {}
         self._lock = threading.Lock()
         self._last_packet_time = 0.0
@@ -200,7 +200,11 @@ class OSCReceiver:
             bpy.app.timers.unregister(self._apply_updates)
 
     def _listen(self):
-        """Background thread: receive and decode UDP packets."""
+        """Background thread: receive and decode UDP packets.
+
+        Only keeps the latest value for each shape key and head rotation.
+        Stale frames are discarded — we only care about the newest data.
+        """
         while self._running:
             try:
                 raw, _addr = self._sock.recvfrom(1024)
@@ -210,14 +214,21 @@ class OSCReceiver:
                         self._last_packet_time = time.time()
                         with self._lock:
                             for entry in decoded:
-                                self._pending.append(entry)
                                 if entry[0] == 'shape':
+                                    # Overwrite — only latest value matters
+                                    self._pending[entry[1]] = entry[2]
                                     self._latest[entry[1]] = entry[2]
+                                elif entry[0] == 'head_rotation':
+                                    self._pending['_head_rotation'] = entry[1]
             except OSError:
                 break
 
     def _apply_updates(self):
-        """Timer callback: push pending data to Blender objects (main thread)."""
+        """Timer callback: push pending data to Blender objects (main thread).
+
+        Only applies the latest value for each shape key — stale frames
+        from the pending dict have already been overwritten by _listen().
+        """
         if not self._running:
             return None  # Unregister timer
 
@@ -226,36 +237,38 @@ class OSCReceiver:
             return 0.01
 
         with self._lock:
-            updates = list(self._pending)
+            updates = dict(self._pending)
             self._pending.clear()
+
+        if not updates:
+            return 0.01
 
         key_blocks = dummy.data.shape_keys.key_blocks
 
-        for entry in updates:
-            if entry[0] == 'shape':
-                _, name, value = entry
-                kb = key_blocks.get(name)
-                if kb:
-                    kb.value = value
+        # Apply shape key values (each key appears once — latest value only)
+        for name, value in updates.items():
+            if name == '_head_rotation':
+                continue
+            kb = key_blocks.get(name)
+            if kb:
+                kb.value = value
 
-            elif entry[0] == 'head_rotation':
-                _, euler = entry
-                if self._target_armature and self._target_bone:
-                    arm = self._target_armature
-                    if arm.type == 'ARMATURE':
-                        bone = arm.pose.bones.get(self._target_bone)
-                        if bone:
-                            bone.rotation_euler = mathutils.Euler(euler, 'XYZ')
+        # Apply head rotation
+        head_euler = updates.get('_head_rotation')
+        if head_euler and self._target_armature and self._target_bone:
+            arm = self._target_armature
+            if arm.type == 'ARMATURE':
+                bone = arm.pose.bones.get(self._target_bone)
+                if bone:
+                    bone.rotation_euler = mathutils.Euler(head_euler, 'XYZ')
 
-        # Refresh the 3D viewport so the panel shows live values
-        # (throttled to twice per second to avoid performance hit)
-        if updates:
-            now = time.time()
-            if now - self._last_redraw_time > 0.5:
-                self._last_redraw_time = now
-                for window in bpy.context.window_manager.windows:
-                    for area in window.screen.areas:
-                        if area.type == 'VIEW_3D':
-                            area.tag_redraw()
+        # Refresh viewport at ~30fps (was 0.5s — caused visible skipping)
+        now = time.time()
+        if now - self._last_redraw_time > 0.033:
+            self._last_redraw_time = now
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        area.tag_redraw()
 
-        return 0.01  # 10ms — matches FOSCAP timing
+        return 0.01  # 10ms timer interval

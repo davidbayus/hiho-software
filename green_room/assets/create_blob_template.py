@@ -278,6 +278,90 @@ def build_geometry_nodes(mats):
     s.min_value = 0.3
     s.max_value = 2.0
 
+    # --- Position controls: slide features around the face ---
+
+    s = tree.interface.new_socket(
+        "Eyes Height", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    s = tree.interface.new_socket(
+        "Eyes Depth", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    s = tree.interface.new_socket(
+        "Mouth Height", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    s = tree.interface.new_socket(
+        "Mouth Depth", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    s = tree.interface.new_socket(
+        "Ears Height", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    s = tree.interface.new_socket(
+        "Ears Spread", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Ears Depth", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    # --- Color controls ---
+
+    s = tree.interface.new_socket(
+        "Body Color", in_out='INPUT', socket_type='NodeSocketColor',
+        parent=cust_panel
+    )
+    s.default_value = (1.0, 0.78, 0.65, 1.0)
+
+    s = tree.interface.new_socket(
+        "Eye Color", in_out='INPUT', socket_type='NodeSocketColor',
+        parent=cust_panel
+    )
+    s.default_value = (0.2, 0.65, 0.7, 1.0)
+
+    s = tree.interface.new_socket(
+        "Mouth Color", in_out='INPUT', socket_type='NodeSocketColor',
+        parent=cust_panel
+    )
+    s.default_value = (0.85, 0.35, 0.35, 1.0)
+
+    s = tree.interface.new_socket(
+        "Ear Color", in_out='INPUT', socket_type='NodeSocketColor',
+        parent=cust_panel
+    )
+    s.default_value = (1.0, 0.7, 0.55, 1.0)
+
     # ------------------------------------------------------------------
     # NODES — organized left to right, top to bottom
     # ------------------------------------------------------------------
@@ -390,8 +474,11 @@ def build_geometry_nodes(mats):
     eye_l_pos_x.operation = 'MULTIPLY'
     eye_l_pos_x.inputs[0].default_value = -0.35
 
+    eye_l_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, EYE_L_Y + 60, "L Eye Pos Y")
+    eye_l_pos_y.operation = 'MULTIPLY'
+    eye_l_pos_y.inputs[0].default_value = -0.55
+
     eye_l_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EYE_L_Y + 60, "L Eye Pos")
-    eye_l_pos.inputs['Y'].default_value = -0.55
     eye_l_pos.inputs['Z'].default_value = 1.25
 
     eye_l_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EYE_L_Y, "L Eye Scale")
@@ -418,6 +505,8 @@ def build_geometry_nodes(mats):
 
     tree.links.new(group_in.outputs['Eye Spacing'], eye_l_pos_x.inputs[1])
     tree.links.new(eye_l_pos_x.outputs[0], eye_l_pos.inputs['X'])
+    tree.links.new(group_in.outputs['Eyes Depth'], eye_l_pos_y.inputs[1])
+    tree.links.new(eye_l_pos_y.outputs[0], eye_l_pos.inputs['Y'])
 
     tree.links.new(eye_l_sphere.outputs['Mesh'], eye_l_xform.inputs['Geometry'])
     tree.links.new(eye_l_pos.outputs['Vector'], eye_l_xform.inputs['Translation'])
@@ -459,8 +548,11 @@ def build_geometry_nodes(mats):
     eye_r_pos_x.operation = 'MULTIPLY'
     eye_r_pos_x.inputs[0].default_value = 0.35
 
+    eye_r_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, EYE_R_Y + 60, "R Eye Pos Y")
+    eye_r_pos_y.operation = 'MULTIPLY'
+    eye_r_pos_y.inputs[0].default_value = -0.55
+
     eye_r_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EYE_R_Y + 60, "R Eye Pos")
-    eye_r_pos.inputs['Y'].default_value = -0.55
     eye_r_pos.inputs['Z'].default_value = 1.25
 
     eye_r_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EYE_R_Y, "R Eye Scale")
@@ -486,6 +578,8 @@ def build_geometry_nodes(mats):
 
     tree.links.new(group_in.outputs['Eye Spacing'], eye_r_pos_x.inputs[1])
     tree.links.new(eye_r_pos_x.outputs[0], eye_r_pos.inputs['X'])
+    tree.links.new(group_in.outputs['Eyes Depth'], eye_r_pos_y.inputs[1])
+    tree.links.new(eye_r_pos_y.outputs[0], eye_r_pos.inputs['Y'])
 
     tree.links.new(eye_r_sphere.outputs['Mesh'], eye_r_xform.inputs['Geometry'])
     tree.links.new(eye_r_pos.outputs['Vector'], eye_r_xform.inputs['Translation'])
@@ -525,8 +619,11 @@ def build_geometry_nodes(mats):
     iris_l_final_x = add_node(tree, 'ShaderNodeMath', MATH_X + 150, IRIS_L_Y - 80, "Iris L Final X")
     iris_l_final_x.operation = 'ADD'
 
+    iris_l_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, IRIS_L_Y + 30, "Iris L Pos Y")
+    iris_l_pos_y.operation = 'MULTIPLY'
+    iris_l_pos_y.inputs[0].default_value = -0.72
+
     iris_l_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, IRIS_L_Y, "Iris L Pos")
-    iris_l_pos.inputs['Y'].default_value = -0.72
     iris_l_pos.inputs['Z'].default_value = 1.25
 
     iris_l_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, IRIS_L_Y - 80, "Iris L Scale")
@@ -547,6 +644,8 @@ def build_geometry_nodes(mats):
     tree.links.new(iris_l_look.outputs[0], iris_l_final_x.inputs[1])
 
     tree.links.new(iris_l_final_x.outputs[0], iris_l_pos.inputs['X'])
+    tree.links.new(group_in.outputs['Eyes Depth'], iris_l_pos_y.inputs[1])
+    tree.links.new(iris_l_pos_y.outputs[0], iris_l_pos.inputs['Y'])
     tree.links.new(group_in.outputs['Eye Size'], iris_l_scale.inputs['X'])
     tree.links.new(group_in.outputs['Eye Size'], iris_l_scale.inputs['Y'])
     tree.links.new(iris_l_sz.outputs[0], iris_l_scale.inputs['Z'])
@@ -587,8 +686,11 @@ def build_geometry_nodes(mats):
     iris_r_final_x = add_node(tree, 'ShaderNodeMath', MATH_X + 150, IRIS_R_Y - 80, "Iris R Final X")
     iris_r_final_x.operation = 'ADD'
 
+    iris_r_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, IRIS_R_Y + 30, "Iris R Pos Y")
+    iris_r_pos_y.operation = 'MULTIPLY'
+    iris_r_pos_y.inputs[0].default_value = -0.72
+
     iris_r_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, IRIS_R_Y, "Iris R Pos")
-    iris_r_pos.inputs['Y'].default_value = -0.72
     iris_r_pos.inputs['Z'].default_value = 1.25
 
     iris_r_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, IRIS_R_Y - 80, "Iris R Scale")
@@ -609,6 +711,8 @@ def build_geometry_nodes(mats):
     tree.links.new(iris_r_look.outputs[0], iris_r_final_x.inputs[1])
 
     tree.links.new(iris_r_final_x.outputs[0], iris_r_pos.inputs['X'])
+    tree.links.new(group_in2.outputs['Eyes Depth'], iris_r_pos_y.inputs[1])
+    tree.links.new(iris_r_pos_y.outputs[0], iris_r_pos.inputs['Y'])
     tree.links.new(group_in2.outputs['Eye Size'], iris_r_scale.inputs['X'])
     tree.links.new(group_in2.outputs['Eye Size'], iris_r_scale.inputs['Y'])
     tree.links.new(iris_r_sz.outputs[0], iris_r_scale.inputs['Z'])
@@ -627,8 +731,11 @@ def build_geometry_nodes(mats):
     pupil_l_sphere.inputs['Rings'].default_value = 4
     pupil_l_sphere.inputs['Radius'].default_value = 0.06
 
+    pupil_l_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_L_Y + 30, "Pupil L Pos Y")
+    pupil_l_pos_y.operation = 'MULTIPLY'
+    pupil_l_pos_y.inputs[0].default_value = -0.78
+
     pupil_l_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, PUPIL_L_Y, "Pupil L Pos")
-    pupil_l_pos.inputs['Y'].default_value = -0.78
     pupil_l_pos.inputs['Z'].default_value = 1.25
 
     # Share the X position from iris
@@ -638,6 +745,8 @@ def build_geometry_nodes(mats):
     pupil_l_mat.inputs['Material'].default_value = mats['pupil']
 
     tree.links.new(iris_l_final_x.outputs[0], pupil_l_pos.inputs['X'])
+    tree.links.new(group_in2.outputs['Eyes Depth'], pupil_l_pos_y.inputs[1])
+    tree.links.new(pupil_l_pos_y.outputs[0], pupil_l_pos.inputs['Y'])
     tree.links.new(pupil_l_sphere.outputs['Mesh'], pupil_l_xform.inputs['Geometry'])
     tree.links.new(pupil_l_pos.outputs['Vector'], pupil_l_xform.inputs['Translation'])
     tree.links.new(pupil_l_xform.outputs['Geometry'], pupil_l_mat.inputs['Geometry'])
@@ -651,8 +760,11 @@ def build_geometry_nodes(mats):
     pupil_r_sphere.inputs['Rings'].default_value = 4
     pupil_r_sphere.inputs['Radius'].default_value = 0.06
 
+    pupil_r_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_R_Y + 30, "Pupil R Pos Y")
+    pupil_r_pos_y.operation = 'MULTIPLY'
+    pupil_r_pos_y.inputs[0].default_value = -0.78
+
     pupil_r_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, PUPIL_R_Y, "Pupil R Pos")
-    pupil_r_pos.inputs['Y'].default_value = -0.78
     pupil_r_pos.inputs['Z'].default_value = 1.25
 
     pupil_r_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, PUPIL_R_Y, "Pupil R Transform")
@@ -661,107 +773,173 @@ def build_geometry_nodes(mats):
     pupil_r_mat.inputs['Material'].default_value = mats['pupil']
 
     tree.links.new(iris_r_final_x.outputs[0], pupil_r_pos.inputs['X'])
+    tree.links.new(group_in2.outputs['Eyes Depth'], pupil_r_pos_y.inputs[1])
+    tree.links.new(pupil_r_pos_y.outputs[0], pupil_r_pos.inputs['Y'])
     tree.links.new(pupil_r_sphere.outputs['Mesh'], pupil_r_xform.inputs['Geometry'])
     tree.links.new(pupil_r_pos.outputs['Vector'], pupil_r_xform.inputs['Translation'])
     tree.links.new(pupil_r_xform.outputs['Geometry'], pupil_r_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
-    # MOUTH — driven by jawOpen, mouthSmileRight, mouthFunnel
+    # MOUTH — curve-profile with per-vertex deformation
+    #
+    # A filled circle (flat disc) where each vertex deforms based on
+    # face tracking inputs. Bottom drops with jawOpen, corners lift
+    # with smile, everything narrows with funnel. Reads like a flat
+    # graphic mouth — think Adventure Time or OK Go puppet.
     # ------------------------------------------------------------------
 
-    mouth_sphere = add_node(tree, 'GeometryNodeMeshUVSphere', PRIM_X, MOUTH_Y, "Mouth Sphere")
-    mouth_sphere.inputs['Segments'].default_value = 16
-    mouth_sphere.inputs['Rings'].default_value = 8
-    mouth_sphere.inputs['Radius'].default_value = 0.15
+    # Extra column positions for the mouth deformation chain
+    MOUTH_DEFORM_X = MATH_X - 600
+    MOUTH_FIELD_X = MATH_X - 400
+    MOUTH_CALC_X = MATH_X - 200
 
-    # Mouth X scale: base 0.6 * MouthSize, + smile widens, - funnel narrows
-    mouth_smile_w = add_node(tree, 'ShaderNodeMath', MATH_X - 400, MOUTH_Y, "Smile Width")
-    mouth_smile_w.operation = 'MULTIPLY'
-    mouth_smile_w.inputs[1].default_value = 0.5
+    # --- Mesh Circle (the mouth shape — flat disc in XY plane) ---
+    mouth_circle = add_node(tree, 'GeometryNodeMeshCircle', PRIM_X, MOUTH_Y, "Mouth Circle")
+    mouth_circle.inputs['Vertices'].default_value = 24
+    mouth_circle.inputs['Radius'].default_value = 1.0
+    mouth_circle.fill_type = 'NGON'
 
-    mouth_funnel_w = add_node(tree, 'ShaderNodeMath', MATH_X - 400, MOUTH_Y - 70, "Funnel Narrow")
-    mouth_funnel_w.operation = 'MULTIPLY'
-    mouth_funnel_w.inputs[1].default_value = -0.3
+    # --- Read vertex positions to compute per-vertex deformation ---
+    mouth_pos_read = add_node(tree, 'GeometryNodeInputPosition', MOUTH_DEFORM_X, MOUTH_Y, "Mouth Vtx Pos")
+    mouth_sep_xyz = add_node(tree, 'ShaderNodeSeparateXYZ', MOUTH_FIELD_X, MOUTH_Y, "Mouth Sep XYZ")
+    tree.links.new(mouth_pos_read.outputs['Position'], mouth_sep_xyz.inputs['Vector'])
 
-    mouth_w_add = add_node(tree, 'ShaderNodeMath', MATH_X - 200, MOUTH_Y, "Mouth W Sum")
-    mouth_w_add.operation = 'ADD'
+    # --- Bottom mask: how far below center (0 at top, gradual at bottom) ---
+    # Negate Y so positive = below center
+    mouth_neg_y = add_node(tree, 'ShaderNodeMath', MOUTH_FIELD_X, MOUTH_Y - 70, "Negate Y")
+    mouth_neg_y.operation = 'MULTIPLY'
+    mouth_neg_y.inputs[1].default_value = -1.0
+    tree.links.new(mouth_sep_xyz.outputs['Y'], mouth_neg_y.inputs[0])
 
-    mouth_w_base = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y, "Mouth W Base")
-    mouth_w_base.operation = 'ADD'
-    mouth_w_base.inputs[0].default_value = 0.6
+    # Clamp: max(0, -y) — only bottom vertices get affected
+    mouth_bottom_amt = add_node(tree, 'ShaderNodeMath', MOUTH_CALC_X, MOUTH_Y - 70, "Bottom Amount")
+    mouth_bottom_amt.operation = 'MAXIMUM'
+    mouth_bottom_amt.inputs[1].default_value = 0.0
+    tree.links.new(mouth_neg_y.outputs[0], mouth_bottom_amt.inputs[0])
 
-    mouth_w_size = add_node(tree, 'ShaderNodeMath', MATH_X + 150, MOUTH_Y, "Mouth W Final")
-    mouth_w_size.operation = 'MULTIPLY'
+    # --- Jaw drop: bottom vertices move down by jawOpen * strength * bottom_amount ---
+    mouth_jaw_str = add_node(tree, 'ShaderNodeMath', MOUTH_CALC_X, MOUTH_Y - 140, "Jaw Strength")
+    mouth_jaw_str.operation = 'MULTIPLY'
+    mouth_jaw_str.inputs[1].default_value = -0.8  # negative = down in Y
+    tree.links.new(group_in2.outputs['jawOpen'], mouth_jaw_str.inputs[0])
 
-    # Mouth Z scale: base 0.2 * MouthSize + jawOpen * 2.5
-    mouth_jaw = add_node(tree, 'ShaderNodeMath', MATH_X - 200, MOUTH_Y - 140, "Jaw Scale")
-    mouth_jaw.operation = 'MULTIPLY'
-    mouth_jaw.inputs[1].default_value = 2.5
+    mouth_jaw_offset = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 140, "Jaw Offset")
+    mouth_jaw_offset.operation = 'MULTIPLY'
+    tree.links.new(mouth_jaw_str.outputs[0], mouth_jaw_offset.inputs[0])
+    tree.links.new(mouth_bottom_amt.outputs[0], mouth_jaw_offset.inputs[1])
 
-    mouth_z_base = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 140, "Mouth Z Base")
-    mouth_z_base.operation = 'ADD'
-    mouth_z_base.inputs[0].default_value = 0.2
+    # --- Corner amount: abs(x) — how far left/right from center ---
+    mouth_abs_x = add_node(tree, 'ShaderNodeMath', MOUTH_FIELD_X, MOUTH_Y - 210, "Abs X")
+    mouth_abs_x.operation = 'ABSOLUTE'
+    tree.links.new(mouth_sep_xyz.outputs['X'], mouth_abs_x.inputs[0])
 
-    mouth_z_size = add_node(tree, 'ShaderNodeMath', MATH_X + 150, MOUTH_Y - 140, "Mouth Z Final")
-    mouth_z_size.operation = 'MULTIPLY'
+    # --- Smile lift: corners move up by smile * strength * abs(x) ---
+    mouth_smile_str = add_node(tree, 'ShaderNodeMath', MOUTH_CALC_X, MOUTH_Y - 210, "Smile Strength")
+    mouth_smile_str.operation = 'MULTIPLY'
+    mouth_smile_str.inputs[1].default_value = 0.4  # positive = up in Y
+    tree.links.new(group_in2.outputs['mouthSmileRight'], mouth_smile_str.inputs[0])
 
-    # Mouth Y depth scale with funnel (pucker pushes forward)
-    mouth_funnel_y = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 210, "Funnel Depth")
-    mouth_funnel_y.operation = 'ADD'
-    mouth_funnel_y.inputs[0].default_value = 0.15
+    mouth_smile_offset = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 210, "Smile Offset")
+    mouth_smile_offset.operation = 'MULTIPLY'
+    tree.links.new(mouth_smile_str.outputs[0], mouth_smile_offset.inputs[0])
+    tree.links.new(mouth_abs_x.outputs[0], mouth_smile_offset.inputs[1])
 
-    mouth_funnel_y_mul = add_node(tree, 'ShaderNodeMath', MATH_X - 200, MOUTH_Y - 210, "Funnel Y Mul")
-    mouth_funnel_y_mul.operation = 'MULTIPLY'
-    mouth_funnel_y_mul.inputs[1].default_value = 0.15
+    # --- Combine Y offset: jaw_drop + smile_lift ---
+    mouth_y_total = add_node(tree, 'ShaderNodeMath', MATH_X + 150, MOUTH_Y - 175, "Mouth Y Total")
+    mouth_y_total.operation = 'ADD'
+    tree.links.new(mouth_jaw_offset.outputs[0], mouth_y_total.inputs[0])
+    tree.links.new(mouth_smile_offset.outputs[0], mouth_y_total.inputs[1])
 
-    mouth_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, MOUTH_Y, "Mouth Scale")
+    # --- Funnel/pucker: narrow the X toward center ---
+    # new_x = x * (1 - funnel * 0.4)
+    mouth_funnel_factor = add_node(tree, 'ShaderNodeMath', MOUTH_CALC_X, MOUTH_Y - 280, "Funnel Factor")
+    mouth_funnel_factor.operation = 'MULTIPLY'
+    mouth_funnel_factor.inputs[1].default_value = 0.4
+    tree.links.new(group_in2.outputs['mouthFunnel'], mouth_funnel_factor.inputs[0])
 
-    # Mouth position (drops slightly when jaw opens)
-    mouth_drop = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 280, "Jaw Drop")
+    mouth_funnel_inv = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 280, "1 - Funnel")
+    mouth_funnel_inv.operation = 'SUBTRACT'
+    mouth_funnel_inv.inputs[0].default_value = 1.0
+    tree.links.new(mouth_funnel_factor.outputs[0], mouth_funnel_inv.inputs[1])
+
+    mouth_new_x = add_node(tree, 'ShaderNodeMath', MATH_X + 150, MOUTH_Y - 280, "New X")
+    mouth_new_x.operation = 'MULTIPLY'
+    tree.links.new(mouth_sep_xyz.outputs['X'], mouth_new_x.inputs[0])
+    tree.links.new(mouth_funnel_inv.outputs[0], mouth_new_x.inputs[1])
+
+    # --- Build new position: (new_x, original_y + y_offset, 0) ---
+    mouth_new_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, MOUTH_Y - 70, "New Y")
+    mouth_new_y.operation = 'ADD'
+    tree.links.new(mouth_sep_xyz.outputs['Y'], mouth_new_y.inputs[0])
+    tree.links.new(mouth_y_total.outputs[0], mouth_new_y.inputs[1])
+
+    mouth_new_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, MOUTH_Y - 140, "Mouth New Pos")
+    mouth_new_pos.inputs['Z'].default_value = 0.0
+    tree.links.new(mouth_new_x.outputs[0], mouth_new_pos.inputs['X'])
+    tree.links.new(mouth_new_y.outputs[0], mouth_new_pos.inputs['Y'])
+
+    # --- Set Position (apply deformation field to mesh circle) ---
+    mouth_set_pos = add_node(tree, 'GeometryNodeSetPosition', COMBINE_X + 200, MOUTH_Y, "Mouth Set Pos")
+    tree.links.new(mouth_circle.outputs['Mesh'], mouth_set_pos.inputs['Geometry'])
+    tree.links.new(mouth_new_pos.outputs['Vector'], mouth_set_pos.inputs['Position'])
+
+    # --- Transform: scale to mouth proportions, rotate into face plane,
+    #     position on blob face. Circle is in XY plane, face looks toward -Y,
+    #     so rotate 90° around X to stand it up into XZ plane. ---
+    #
+    #     Scale X = width (0.12 * MouthSize)
+    #     Scale Y = height (0.08 * MouthSize) — the circle's Y becomes Z on face
+    #     Scale Z = depth (thin — 0.02)
+    mouth_scale_w = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 350, "Mouth Width")
+    mouth_scale_w.operation = 'MULTIPLY'
+    mouth_scale_w.inputs[0].default_value = 0.28
+    tree.links.new(group_in2.outputs['Mouth Size'], mouth_scale_w.inputs[1])
+
+    mouth_scale_h = add_node(tree, 'ShaderNodeMath', MATH_X, MOUTH_Y - 420, "Mouth Height")
+    mouth_scale_h.operation = 'MULTIPLY'
+    mouth_scale_h.inputs[0].default_value = 0.20
+    tree.links.new(group_in2.outputs['Mouth Size'], mouth_scale_h.inputs[1])
+
+    mouth_scale_vec = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, MOUTH_Y - 350, "Mouth Scale")
+    mouth_scale_vec.inputs['Z'].default_value = 0.06
+    tree.links.new(mouth_scale_w.outputs[0], mouth_scale_vec.inputs['X'])
+    tree.links.new(mouth_scale_h.outputs[0], mouth_scale_vec.inputs['Y'])
+
+    # Mouth center position on blob (drops slightly when jaw opens)
+    mouth_drop = add_node(tree, 'ShaderNodeMath', MATH_X + 150, MOUTH_Y - 490, "Jaw Drop")
     mouth_drop.operation = 'MULTIPLY'
-    mouth_drop.inputs[1].default_value = -0.15
+    mouth_drop.inputs[1].default_value = -0.08
+    tree.links.new(group_in2.outputs['jawOpen'], mouth_drop.inputs[0])
 
-    mouth_pos_z = add_node(tree, 'ShaderNodeMath', MATH_X + 150, MOUTH_Y - 280, "Mouth Pos Z")
-    mouth_pos_z.operation = 'ADD'
-    mouth_pos_z.inputs[0].default_value = 0.5
+    mouth_center_z = add_node(tree, 'ShaderNodeMath', COMBINE_X, MOUTH_Y - 490, "Mouth Center Z")
+    mouth_center_z.operation = 'ADD'
+    mouth_center_z.inputs[0].default_value = 0.5
+    tree.links.new(mouth_drop.outputs[0], mouth_center_z.inputs[1])
 
-    mouth_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, MOUTH_Y - 200, "Mouth Pos")
-    mouth_pos.inputs['X'].default_value = 0.0
-    mouth_pos.inputs['Y'].default_value = -0.7
+    mouth_center_y = add_node(tree, 'ShaderNodeMath', COMBINE_X - 150, MOUTH_Y - 420, "Mouth Center Y")
+    mouth_center_y.operation = 'MULTIPLY'
+    mouth_center_y.inputs[0].default_value = -0.88
+
+    mouth_center = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, MOUTH_Y - 420, "Mouth Center")
+    mouth_center.inputs['X'].default_value = 0.0
+    tree.links.new(group_in2.outputs['Mouth Depth'], mouth_center_y.inputs[1])
+    tree.links.new(mouth_center_y.outputs[0], mouth_center.inputs['Y'])
+    tree.links.new(mouth_center_z.outputs[0], mouth_center.inputs['Z'])
+
+    # Rotation: 90° around X to stand circle up
+    mouth_rot = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, MOUTH_Y - 560, "Mouth Rotation")
+    mouth_rot.inputs['X'].default_value = 1.5708  # pi/2
+    mouth_rot.inputs['Y'].default_value = 0.0
+    mouth_rot.inputs['Z'].default_value = 0.0
 
     mouth_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, MOUTH_Y, "Mouth Transform")
+    tree.links.new(mouth_set_pos.outputs['Geometry'], mouth_xform.inputs['Geometry'])
+    tree.links.new(mouth_center.outputs['Vector'], mouth_xform.inputs['Translation'])
+    tree.links.new(mouth_scale_vec.outputs['Vector'], mouth_xform.inputs['Scale'])
+    tree.links.new(mouth_rot.outputs['Vector'], mouth_xform.inputs['Rotation'])
 
     mouth_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, MOUTH_Y, "Mouth Material")
     mouth_mat.inputs['Material'].default_value = mats['mouth']
-
-    # Links: mouth
-    tree.links.new(group_in2.outputs['mouthSmileRight'], mouth_smile_w.inputs[0])
-    tree.links.new(group_in2.outputs['mouthFunnel'], mouth_funnel_w.inputs[0])
-    tree.links.new(mouth_smile_w.outputs[0], mouth_w_add.inputs[0])
-    tree.links.new(mouth_funnel_w.outputs[0], mouth_w_add.inputs[1])
-    tree.links.new(mouth_w_add.outputs[0], mouth_w_base.inputs[1])
-    tree.links.new(mouth_w_base.outputs[0], mouth_w_size.inputs[0])
-    tree.links.new(group_in2.outputs['Mouth Size'], mouth_w_size.inputs[1])
-
-    tree.links.new(group_in2.outputs['jawOpen'], mouth_jaw.inputs[0])
-    tree.links.new(mouth_jaw.outputs[0], mouth_z_base.inputs[1])
-    tree.links.new(mouth_z_base.outputs[0], mouth_z_size.inputs[0])
-    tree.links.new(group_in2.outputs['Mouth Size'], mouth_z_size.inputs[1])
-
-    tree.links.new(group_in2.outputs['mouthFunnel'], mouth_funnel_y_mul.inputs[0])
-    tree.links.new(mouth_funnel_y_mul.outputs[0], mouth_funnel_y.inputs[1])
-
-    tree.links.new(mouth_w_size.outputs[0], mouth_scale.inputs['X'])
-    tree.links.new(mouth_funnel_y.outputs[0], mouth_scale.inputs['Y'])
-    tree.links.new(mouth_z_size.outputs[0], mouth_scale.inputs['Z'])
-
-    tree.links.new(group_in2.outputs['jawOpen'], mouth_drop.inputs[0])
-    tree.links.new(mouth_drop.outputs[0], mouth_pos_z.inputs[1])
-    tree.links.new(mouth_pos_z.outputs[0], mouth_pos.inputs['Z'])
-
-    tree.links.new(mouth_sphere.outputs['Mesh'], mouth_xform.inputs['Geometry'])
-    tree.links.new(mouth_pos.outputs['Vector'], mouth_xform.inputs['Translation'])
-    tree.links.new(mouth_scale.outputs['Vector'], mouth_xform.inputs['Scale'])
     tree.links.new(mouth_xform.outputs['Geometry'], mouth_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------

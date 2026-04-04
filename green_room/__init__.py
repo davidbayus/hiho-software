@@ -19,12 +19,17 @@ from .operators.connect_phone import (
     GREENROOM_OT_connect_phone,
     GREENROOM_OT_disconnect_phone,
 )
-from .ui.panels import GREENROOM_PT_connect_panel
+from .operators.pick_puppet import GREENROOM_OT_pick_puppet
+from .ui.panels import (
+    GREENROOM_PT_puppet_panel,
+    GREENROOM_PT_connect_panel,
+)
 
 
 # --- Shared addon state ---
 receiver = OSCReceiver()
 preview_collections = {}
+active_template_info = None  # TemplateInfo from the loaded template
 
 
 class GreenRoomSettings(bpy.types.PropertyGroup):
@@ -38,11 +43,25 @@ class GreenRoomSettings(bpy.types.PropertyGroup):
         description="UDP port for receiving face tracking data",
     )
 
+    gr_active_template: bpy.props.StringProperty(
+        name="Active Template",
+        default="",
+        description="Name of the currently loaded puppet template object",
+    )
+
+    gr_active_template_path: bpy.props.StringProperty(
+        name="Template Path",
+        default="",
+        description="File path of the currently loaded puppet template",
+    )
+
 
 classes = (
     GreenRoomSettings,
     GREENROOM_OT_connect_phone,
     GREENROOM_OT_disconnect_phone,
+    GREENROOM_OT_pick_puppet,
+    GREENROOM_PT_puppet_panel,
     GREENROOM_PT_connect_panel,
 )
 
