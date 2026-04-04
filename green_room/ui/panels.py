@@ -72,6 +72,13 @@ class GREENROOM_PT_connect_panel(bpy.types.Panel):
         row.scale_y = 2.0
         row.operator("greenroom.connect_phone", icon='PLAY')
 
+        # Calibration tool (for finding brow indices)
+        layout.separator()
+        box = layout.box()
+        box.label(text="Developer Tools:", icon='TOOL_SETTINGS')
+        box.label(text="Disconnect first, then capture")
+        box.operator("greenroom.calibrate_brows", icon='VIEWZOOM')
+
     def _draw_waiting(self, layout, settings):
         """Connected and listening — show instructions for phone setup."""
         from .. import preview_collections

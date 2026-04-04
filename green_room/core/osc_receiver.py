@@ -25,7 +25,11 @@ BLENDSHAPE_MAP = {
     5: 'eyeLookOutLeft',
     19: 'mouthFunnel',
     20: 'mouthPucker',
+    21: 'mouthLeft',
+    22: 'mouthRight',
     23: 'mouthSmileRight',
+    25: 'mouthFrownLeft',
+    26: 'mouthFrownRight',
     27: 'mouthClose',
     37: 'jawOpen',
     41: 'eyeBlinkLeft',
@@ -108,6 +112,35 @@ def decode_live_link_face(raw_bytes):
     result.append(('head_rotation', [-data[53], -data[52], -data[54]]))
 
     return result
+
+
+def decode_all_blendshapes(raw_bytes):
+    """Decode ALL 52 blend shape values from a Live Link Face packet.
+
+    Used for calibration — prints every index so you can identify
+    which ones correspond to eyebrow movements, etc.
+    Returns dict of {index: value} for values > 0.05, or None on failure.
+    """
+    try:
+        name_length = struct.unpack('!i', raw_bytes[41:45])[0]
+        name_end = 45 + name_length
+        if len(raw_bytes) <= name_end + 16:
+            return None
+        _frame, _subframe, _fps, _denom, count = struct.unpack(
+            "!if2ib", raw_bytes[name_end:name_end + 17]
+        )
+        if count != 61:
+            return None
+        data = struct.unpack("!61f", raw_bytes[name_end + 17:])
+    except (struct.error, IndexError):
+        return None
+
+    active = {}
+    for i in range(52):
+        if data[i] > 0.05:
+            label = BLENDSHAPE_MAP.get(i, f"UNKNOWN_{i}")
+            active[i] = (label, round(data[i], 3))
+    return active
 
 
 class OSCReceiver:

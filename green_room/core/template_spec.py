@@ -23,6 +23,7 @@ REQUIRED_FACE_INPUTS = {'jawOpen', 'eyeBlinkLeft', 'eyeBlinkRight'}
 # Inputs with these names get wired to the dummy mesh automatically.
 KNOWN_FACE_INPUTS = {
     'jawOpen', 'mouthSmileRight', 'mouthFunnel', 'mouthPucker', 'mouthClose',
+    'mouthFrownLeft', 'mouthFrownRight', 'mouthLeft', 'mouthRight',
     'eyeBlinkLeft', 'eyeBlinkRight', 'eyeWideLeft', 'eyeWideRight',
     'eyeLookInLeft', 'eyeLookInRight', 'eyeLookOutLeft', 'eyeLookOutRight',
 }

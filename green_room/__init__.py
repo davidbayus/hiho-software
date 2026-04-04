@@ -20,6 +20,7 @@ from .operators.connect_phone import (
     GREENROOM_OT_disconnect_phone,
 )
 from .operators.pick_puppet import GREENROOM_OT_pick_puppet
+from .operators.calibrate_brows import GREENROOM_OT_calibrate_brows
 from .ui.panels import (
     GREENROOM_PT_puppet_panel,
     GREENROOM_PT_connect_panel,
@@ -61,6 +62,7 @@ classes = (
     GREENROOM_OT_connect_phone,
     GREENROOM_OT_disconnect_phone,
     GREENROOM_OT_pick_puppet,
+    GREENROOM_OT_calibrate_brows,
     GREENROOM_PT_puppet_panel,
     GREENROOM_PT_connect_panel,
 )
