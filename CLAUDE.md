@@ -1,4 +1,4 @@
-# K-12 Blender Addon — Claude Code Project
+# Green Room — K-12 Blender Puppet Show Addon — Claude Code Project
 
 ## What This Is
 A Blender Python addon that transforms Blender into a **puppet show** for K-12 students. Kids pick a character, customize it with sliders, connect their phone, and perform — their face drives the puppet in real time. Built as a CADRE Lab collaboration at SJSU, led by David Bayus (Digital Media Art lecturer, 10+ years teaching 3D).
@@ -69,19 +69,19 @@ A puppet template is a `.blend` file with a standard structure so the addon can 
 
 ## Project Structure
 ```
-addon/
-├── __init__.py                  # bl_info, register/unregister, mode switching
+green_room/
+├── __init__.py                  # bl_info, register/unregister, shared state
 ├── core/
-│   ├── osc_receiver.py          # FOSCAP fork — OSC/Live Link Face data receiver
-│   ├── phone_connect.py         # Auto-discovery / QR code phone pairing
+│   ├── osc_receiver.py          # FOSCAP fork — OSC/Live Link Face data receiver ✅ V0.1.0
+│   ├── phone_connect.py         # IP detection, QR code generation ✅ V0.1.0
 │   ├── template_loader.py       # Load, validate, and instantiate puppet templates
 │   ├── template_spec.py         # Template validation — checks required components
 │   └── performance_recorder.py  # Record face tracking + viewport to video
 ├── operators/
+│   ├── connect_phone.py         # One-button phone connection ✅ V0.1.0
 │   ├── pick_puppet.py           # Template browser with thumbnails
 │   ├── customize_puppet.py      # Expose template parameters as kid-friendly sliders
 │   ├── pick_stage.py            # Backdrop/environment selector
-│   ├── connect_phone.py         # One-button phone connection
 │   ├── start_show.py            # Enter performance mode (EEVEE viewport)
 │   ├── record_show.py           # Start/stop recording
 │   ├── share_show.py            # One-click export (video/GIF/image)
@@ -92,7 +92,7 @@ addon/
 │   ├── auto_bake.py             # Automated normal map bake
 │   └── publish_template.py      # Package a character as a puppet template
 ├── ui/
-│   ├── panels.py                # Custom UI panels — Stage mode vs Studio mode
+│   ├── panels.py                # N-panel UI — connection, instructions, live data ✅ V0.1.0
 │   ├── workspaces.py            # Workspace definitions per track
 │   └── startup_scene.py         # Pre-loaded puppet + stage on addon activation
 ├── assets/
@@ -235,8 +235,8 @@ The addon must run on "Scrap in a Box" hardware — repurposed e-waste machines 
 - PEP 8
 - Type hints where possible
 - Every operator needs a docstring explaining what it does in plain English
-- Blender class naming: `PAWRAPPA_OT_edge_score`, `PAWRAPPA_PT_uv_panel` (UV addon), `KIDBLENDER_OT_start_show` (puppet show addon)
-- Prefix all custom properties with `kb_` (puppet show) or `pw_` (PaWrappa) to avoid namespace collisions
+- Blender class naming: `PAWRAPPA_OT_edge_score`, `PAWRAPPA_PT_uv_panel` (UV addon), `GREENROOM_OT_connect_phone` (puppet show addon)
+- Prefix all custom properties with `gr_` (Green Room / puppet show) or `pw_` (PaWrappa) to avoid namespace collisions
 
 ## Communication Style
 David talks like an artist, not an engineer. When explaining what you've built or asking questions:
