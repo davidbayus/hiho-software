@@ -38,16 +38,20 @@ def draw_customize_sliders(layout, context):
 
     box = layout.box()
     box.label(text="Make It Yours", icon='BRUSH_DATA')
-    col = box.column(align=True)
 
+    # Group inputs by their panel name (Body, Eyes, Mouth, etc.)
+    panels = {}
     for name, sock_info in info.customize_inputs.items():
-        # Skip non-geometry socket (the output)
         if sock_info.socket_type == 'NodeSocketGeometry':
             continue
+        panel_name = sock_info.panel or "Other"
+        panels.setdefault(panel_name, []).append((name, sock_info))
 
-        # Draw a slider for this input directly on the modifier
-        try:
-            col.prop(mod, f'["{sock_info.identifier}"]', text=name)
-        except TypeError:
-            # Socket type not drawable (e.g. geometry) — skip silently
-            pass
+    for panel_name, sockets in panels.items():
+        col = box.column(align=True)
+        col.label(text=panel_name, icon='DOT')
+        for name, sock_info in sockets:
+            try:
+                col.prop(mod, f'["{sock_info.identifier}"]', text=name)
+            except TypeError:
+                pass

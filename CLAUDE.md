@@ -204,35 +204,57 @@ Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/fo
 
 **Note:** While QUADRE is in beta, use Exoside for test meshes when testing PaWrappa to isolate variables.
 
-### Green Room Addon (V0.1.0 — Phone-to-Puppet Working)
+### Green Room Addon (V0.3.1 — Organized Panels + Independent Eyebrow Controls)
 Puppet show addon lives in `green_room/`. N-panel tab is "Green Room". Class prefix: `GREENROOM`. Operator prefix: `greenroom.*`. Property prefix: `gr_`.
 
-**Current state (April 3, 2026): End-to-end face tracking pipeline WORKING.**
+**Current state (April 4, 2026): Full customization UI with organized panels, color controls, eyebrows, and face tracking.**
 
-Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile, pucker all confirmed working.
+Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile/frown, pucker, eye look direction all working. Blob puppet has eyebrows reactive to face tracking.
 
 **What exists now:**
-- **OSC Receiver** (`core/osc_receiver.py`) — FOSCAP fork, class-based, threaded, 13 active ARKit blend shapes. Timer callback at 10ms pushes shape key values + head rotation to Blender objects.
+- **OSC Receiver** (`core/osc_receiver.py`) — FOSCAP fork, class-based, threaded, 13 active ARKit blend shapes. Timer callback at 10ms pushes shape key values + head rotation to Blender objects. Includes mouthFrownLeft/Right and mouthLeft/Right (indices unconfirmed).
 - **Phone Connect** (`core/phone_connect.py`) — IP detection + QR code PNG generation, zero external dependencies
 - **QR Generator** (`core/qr_gen.py`) — Complete QR code encoder from scratch (~280 lines). GF(256) arithmetic, Reed-Solomon error correction, versions 1-4, EC level L. Written because pip-installing qrcode in classrooms is a non-starter.
 - **Connect Operator** (`operators/connect_phone.py`) — One button: creates dummy mesh, starts receiver, finds armature with "head" bone, generates QR, shows in panel
-- **N-Panel** (`ui/panels.py`) — Three states: disconnected (port + connect button), waiting (QR code + instructions), receiving (live face data values)
-- **Blob Puppet Template** (`assets/templates/blob/blob_puppet.blend`) — Procedural character built entirely in one geometry nodes tree (95 nodes, 133 links). Face tracking inputs as Group Inputs driven by dummy mesh shape keys via drivers. Customization sliders: Body Width/Height, Eye Size/Spacing, Ear Size, Mouth Size. Armature with "head" bone for phone rotation (Euler XYZ mode).
-- **Template Generator** (`assets/create_blob_template.py`) — Python script that builds the blob template programmatically. Run inside Blender to regenerate.
+- **Template Loader** (`core/template_loader.py`) — Loads .blend puppet templates, validates structure, wires drivers from dummy mesh to geonode inputs
+- **Template Spec** (`core/template_spec.py`) — Validates templates: checks for geonode modifier, armature with "head" bone, face tracking inputs, customization inputs. Groups sockets by panel.
+- **Puppet Picker** (`operators/pick_puppet.py`) — Browse and load available puppet templates
+- **Customize Puppet** (`operators/customize_puppet.py`) — N-panel "Make It Yours" section draws customization sliders grouped by body part (Body, Eyes, Mouth, Ears, Eyebrows)
+- **Calibrate Brows** (`operators/calibrate_brows.py`) — Developer tool: one-shot UDP capture to identify unknown ARKit blend shape indices
+- **N-Panel** (`ui/panels.py`) — Puppet panel (picker + customization sliders) + Connect panel (three states: disconnected, waiting, receiving)
+- **Blob Puppet Template** (`assets/create_blob_template.py` → `assets/templates/blob/blob_puppet.blend`) — Procedural character with:
+  - **Body parts**: Body, eyes (with irises + pupils), mouth, ears, eyebrows
+  - **Face tracking** (13 ARKit inputs): jawOpen, mouth smile/frown/funnel/left/right, eye blink/wide/look per side
+  - **Customization panels** (5 groups, 22 sliders):
+    - Body: Width, Height, Color
+    - Eyes: Size, Spacing, Height, Depth, Color
+    - Mouth: Size, Height, Depth, Color
+    - Ears: Size, Height, Spread, Depth, Color
+    - Eyebrows: Size, Height, Depth, Spread, Color
+  - **Eyebrow face tracking**: eyeWide lifts (0.15), eyeBlink drops (-0.12), per-side independent
+  - **Mouth deformation**: Per-vertex field (squished circle, jawOpen drops bottom, smile/frown bends corners, funnel narrows)
+  - **Color system**: Store Named Attribute → Attribute material per body part
+  - Armature with "head" bone (Euler XYZ) for phone rotation
 
 **Key architecture decisions:**
-- **Driver path format**: `modifiers["GeometryNodes"]["Socket_X"]` where Socket_X is the interface identifier from `tree.interface.items_tree`
+- **Driver path format**: `modifiers["GeometryNodes"]["Socket_X"]` where Socket_X is the identifier from `tree.interface.items_tree`
 - **Bone rotation mode**: Must be set to `'XYZ'` (Euler) — Blender defaults to Quaternion which ignores `rotation_euler` values from the phone
 - **QR text format**: `"Green Room\nIP: {ip}\nPort: {port}"` — plain text prevents iOS from interpreting as URL
 - **Dummy mesh pattern**: Hidden mesh `ARKitShapeKeys.Dummy` with shape keys matching ARKit blend shape names. OSC receiver writes values here, drivers read them.
+- **Geonode panels**: Blender 5.0 does NOT support nested panels (`new_panel(parent=...)` throws TypeError). Use separate top-level panels instead.
+- **Color materials**: `make_color_attr_material()` creates a material that reads Base Color from a "Color" named attribute. Each body part uses Store Named Attribute → Set Material chain.
+- **Mouth deformation**: Flat circle mesh with per-vertex Set Position field. Y squished to 0.12 at rest (thin line). jawOpen pushes bottom verts down. Smile range is bidirectional: `(smile * 0.8 - 0.15) * abs(x)` gives slight frown at rest, full grin at smile=1.
+- **Eyebrow position**: Independent from eyes — Eyebrow Spread/Depth/Height are separate sliders. Height still offsets FROM eyes_height_z so brows track vertically with eyes.
+- **Socket cross-wiring prevention**: `setup_drivers()` maps by socket NAME not index. Adding new interface sockets won't shift existing driver targets. Always include ALL face tracking socket names in the face_inputs list.
 
-**Known issues / next steps:**
-- **Latency / skipping on fast head movement** — noticed during testing (April 3, 2026). Likely causes: viewport redraw throttled to 0.5s in `_apply_updates()`, UDP packet processing bottleneck, or Blender's depsgraph update speed. Needs research into e-waste-friendly solutions (no GPU compute, must stay open source). See "Latency Research" section below.
-- Character design is basic — needs Will Anderson-style artistic variety (shape language, proportions, personality). Research his video tutorials for geometry node patterns.
-- Template is functional but not beautiful — David wants to bring his own design sense into the node setup, which is important for high school (ART102) and CADRE students
-- No template loader yet — currently must manually open .blend files
-- No customization UI beyond the modifier panel — need kid-friendly sliders in N-panel
-- Mouth hangs down like a tongue when jaw opens wide — scaling approach needs refinement (Will Anderson uses a 2x2 grid with profile curves, not scaled spheres)
+**Known issues / next steps (David has notes from April 4 testing):**
+- **Latency / skipping on fast head movement** — noticed during testing (April 3, 2026). See "Latency Research" section below.
+- **mouthLeft/Right ARKit indices (21/22) may be wrong** — produce 0.000 values. Need calibration with calibrate_brows tool.
+- **mouthFrownLeft/Right ARKit indices (25/26) also dead** — frown is currently driven by inverted smile instead. Kept as inputs for when correct indices are found.
+- Character design is basic — needs Will Anderson-style artistic variety
+- David has feedback notes from April 4 testing session (not yet captured)
+- **Mouth shape**: Mouth is large and fully open-looking at rest when mouth size is cranked up. May need squish factor to scale with mouth size.
+- Need to rebuild `blob_puppet.blend` after latest panel reorganization changes
 
 **Latency Research (TODO — next session):**
 Observed: head rotation skips/jumps during fast movement. Need to investigate and fix while staying e-waste friendly (8GB RAM, integrated GPU, no CUDA).
@@ -299,10 +321,15 @@ Git is initialized in this folder. Use `git log` to see history. Always commit w
 
 **Commit history:**
 ```
+PENDING V0.3.1 — Organized customize panels, independent eyebrow position controls
+6a2dbe7 V0.3.0 — Eyebrows, mouth frown/shift, color controls, position sliders
+96cd580 V0.2.0 — Template loader, puppet picker, customization sliders, latency fix
+2de54b3 Add latency research notes — head tracking skips on fast movement
+35170ce Update CLAUDE.md — Green Room V0.1.0 documented, priorities reordered
 3a3796c V0.1.0 — Green Room addon + blob puppet template (geometry nodes)
-2fffee1 V0.3.3 — Cleaner UI + a student's testing guide
-f8757bf V0.3.2 — Student-ready UI + restored exact V0.3.0 algorithm
-0fccc6b V0.3.1 — Face clusterer validated across 5 shape types
+2fffee1 V0.3.3 — Cleaner UI + a student's testing guide (PaWrappa)
+f8757bf V0.3.2 — Student-ready UI + restored exact V0.3.0 algorithm (PaWrappa)
+0fccc6b V0.3.1 — Face clusterer validated across 5 shape types (PaWrappa)
 47a9490 V0.3.0 — PaWrappa rename + curvature-based face clustering
 dc50fb6 Pivot to puppet show architecture — two-track design
 9221dfc Add session notes for continuity between sessions
