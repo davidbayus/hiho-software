@@ -46,41 +46,6 @@ def clean_scene():
             bpy.data.node_groups.remove(block)
 
 
-def create_body_capsule():
-    """Create the body capsule mesh using Blender's Round Cube primitive.
-
-    Uses the Extra Objects addon (bundled with Blender) to generate a
-    proper capsule with analytically-placed vertices — way better than
-    trying to approximate it with math nodes.
-
-    Returns the hidden mesh object, which gets pulled into geonodes
-    via an Object Info node.
-    """
-    import addon_utils
-    addon_utils.enable("add_mesh_extra_objects")
-
-    # Make sure cursor is at origin so the capsule is centered there
-    bpy.context.scene.cursor.location = (0, 0, 0)
-
-    bpy.ops.mesh.primitive_round_cube_add(
-        radius=0.5,
-        size=(0.0, 0.0, 2.0),  # vertical capsule — must be > 2*radius to get straight section
-        arc_div=8,
-        lin_div=0,
-        div_type='CORNERS',
-    )
-    capsule = bpy.context.active_object
-    capsule.name = "Body_Capsule_Ref"
-    # Clear transform — we want raw geometry at origin, nothing extra
-    capsule.location = (0, 0, 0)
-    capsule.rotation_euler = (0, 0, 0)
-    capsule.scale = (1, 1, 1)
-    capsule.hide_viewport = True
-    capsule.hide_render = True
-    capsule.hide_select = True
-    return capsule
-
-
 # ===================================================================
 # 1. MATERIALS
 # ===================================================================
@@ -193,84 +158,140 @@ def add_node(tree, node_type, x, y, label=None):
     return node
 
 
-def add_round_cube(tree, x, y, label, radius=0.5, size=(0.0, 0.0, 0.0), subdivs=6):
-    """Add a round cube / capsule shape to the node tree.
+def add_dynamic_capsule(tree, x, y, label, radius=0.5, subdivs=6,
+                        width_output=None, ext_factor=0.3, axis='Z'):
+    """Add a dynamic Minkowski capsule driven by a Width slider.
 
-    Matches Blender's Round Cube addon interface:
-    - radius: rounding at caps/edges (the curved part)
-    - size: (sx, sy, sz) straight-section extension per axis
+    Same math as the body capsule (see BODY section comments):
+    subdivided cube → clamp to inner box → offset → normalize × radius
+    → add to clamped position. The inner box half-extent IS the straight
+    midsection length, driven by the Width slider × ext_factor.
 
-    Examples:
-        radius=0.5, size=(0,0,0)     → sphere
-        radius=0.5, size=(0,0,1.5)   → vertical capsule (pill standing up)
-        radius=0.5, size=(1.0,0,0)   → horizontal capsule (pill on its side)
-        radius=0.5, size=(0.5,0,0.5) → rounded box (flat front/back)
-
-    The straight section keeps its shape when you stretch one axis —
-    caps stay round, middle stays flat.
+    Width=0 → sphere. Width>0 → pill shape along the specified axis.
 
     Args:
         tree: The geometry node tree
         x, y: Position of the first node (cube primitive)
         label: Base name for the nodes
         radius: Cap rounding radius
-        size: (sx, sy, sz) straight section per axis (0 = no flat)
-        subdivs: Vertices per axis on the cube (default 6)
-    """
-    sx, sy, sz = size
+        subdivs: Vertices per axis on the cube
+        width_output: Node output socket driving width (None = static sphere)
+        ext_factor: Extension per unit of Width slider value
+        axis: Extension axis - 'X', 'Y', or 'Z'
 
-    # Cube must be big enough to encompass caps + straight sections
-    cube_w = radius * 2 + sx
-    cube_h = radius * 2 + sy
-    cube_d = radius * 2 + sz
+    Returns:
+        The Set Position node (geometry output = capsule/sphere mesh)
+    """
+    diam = 2.0 * radius
+
+    if width_output is None:
+        # Static sphere — no dynamic extension, just normalize × radius
+        cube = add_node(tree, 'GeometryNodeMeshCube', x, y, f"{label} Cube")
+        cube.inputs['Size'].default_value = (diam, diam, diam)
+        cube.inputs['Vertices X'].default_value = subdivs
+        cube.inputs['Vertices Y'].default_value = subdivs
+        cube.inputs['Vertices Z'].default_value = subdivs
+
+        pos_in = add_node(tree, 'GeometryNodeInputPosition', x + 150, y - 50, f"{label} Pos")
+        norm = add_node(tree, 'ShaderNodeVectorMath', x + 300, y - 50, f"{label} Norm")
+        norm.operation = 'NORMALIZE'
+        tree.links.new(pos_in.outputs['Position'], norm.inputs[0])
+
+        scaled = add_node(tree, 'ShaderNodeVectorMath', x + 450, y - 50, f"{label} Rnd")
+        scaled.operation = 'SCALE'
+        scaled.inputs['Scale'].default_value = radius
+        tree.links.new(norm.outputs['Vector'], scaled.inputs[0])
+
+        set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 600, y, f"{label} RndPos")
+        tree.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
+        tree.links.new(scaled.outputs['Vector'], set_pos.inputs['Position'])
+        return set_pos
+
+    # --- Dynamic capsule: Width slider drives extension along axis ---
+
+    # Width → half-extent of the straight midsection
+    ext = add_node(tree, 'ShaderNodeMath', x - 300, y - 80, f"{label} W→Ext")
+    ext.operation = 'MULTIPLY'
+    ext.inputs[1].default_value = ext_factor
+    tree.links.new(width_output, ext.inputs[0])
+
+    ext_x2 = add_node(tree, 'ShaderNodeMath', x - 300, y - 160, f"{label} Ext×2")
+    ext_x2.operation = 'MULTIPLY'
+    ext_x2.inputs[1].default_value = 2.0
+    tree.links.new(ext.outputs[0], ext_x2.inputs[0])
+
+    # Cube size along extension axis = diam + 2*ext
+    axis_size = add_node(tree, 'ShaderNodeMath', x - 150, y - 160, f"{label} AxSz")
+    axis_size.operation = 'ADD'
+    axis_size.inputs[1].default_value = diam
+    tree.links.new(ext_x2.outputs[0], axis_size.inputs[0])
+
+    cube_size = add_node(tree, 'ShaderNodeCombineXYZ', x - 50, y - 80, f"{label} CubeSz")
+    cube_size.inputs['X'].default_value = diam
+    cube_size.inputs['Y'].default_value = diam
+    cube_size.inputs['Z'].default_value = diam
+    tree.links.new(axis_size.outputs[0], cube_size.inputs[axis])
 
     cube = add_node(tree, 'GeometryNodeMeshCube', x, y, f"{label} Cube")
-    cube.inputs['Size'].default_value = (cube_w, cube_h, cube_d)
     cube.inputs['Vertices X'].default_value = subdivs
     cube.inputs['Vertices Y'].default_value = subdivs
     cube.inputs['Vertices Z'].default_value = subdivs
+    tree.links.new(cube_size.outputs['Vector'], cube.inputs['Size'])
 
-    pos_in = add_node(tree, 'GeometryNodeInputPosition', x + 150, y - 50, f"{label} Pos")
+    pos_in = add_node(tree, 'GeometryNodeInputPosition', x + 100, y - 60, f"{label} Pos")
 
-    # Inner box = the straight/flat section (half-extents per axis)
-    inner_x = sx / 2.0
-    inner_y = sy / 2.0
-    inner_z = sz / 2.0
+    # Clamp bounds: ±ext along chosen axis, 0 on others
+    clamp_hi_v = add_node(tree, 'ShaderNodeCombineXYZ', x + 100, y - 130, f"{label} +Ext")
+    clamp_hi_v.inputs['X'].default_value = 0.0
+    clamp_hi_v.inputs['Y'].default_value = 0.0
+    clamp_hi_v.inputs['Z'].default_value = 0.0
+    tree.links.new(ext.outputs[0], clamp_hi_v.inputs[axis])
 
-    # Step 1: Clamp position to inner box — vertices inside stay flat
-    clamp_hi = add_node(tree, 'ShaderNodeVectorMath', x + 300, y - 50, f"{label} ClampHi")
+    ext_neg = add_node(tree, 'ShaderNodeMath', x + 100, y - 200, f"{label} NegExt")
+    ext_neg.operation = 'MULTIPLY'
+    ext_neg.inputs[1].default_value = -1.0
+    tree.links.new(ext.outputs[0], ext_neg.inputs[0])
+
+    clamp_lo_v = add_node(tree, 'ShaderNodeCombineXYZ', x + 250, y - 200, f"{label} -Ext")
+    clamp_lo_v.inputs['X'].default_value = 0.0
+    clamp_lo_v.inputs['Y'].default_value = 0.0
+    clamp_lo_v.inputs['Z'].default_value = 0.0
+    tree.links.new(ext_neg.outputs[0], clamp_lo_v.inputs[axis])
+
+    # Step 1: Clamp position to inner box
+    clamp_hi = add_node(tree, 'ShaderNodeVectorMath', x + 400, y - 60, f"{label} ClHi")
     clamp_hi.operation = 'MINIMUM'
-    clamp_hi.inputs[1].default_value = (inner_x, inner_y, inner_z)
     tree.links.new(pos_in.outputs['Position'], clamp_hi.inputs[0])
+    tree.links.new(clamp_hi_v.outputs['Vector'], clamp_hi.inputs[1])
 
-    clamp_lo = add_node(tree, 'ShaderNodeVectorMath', x + 450, y - 50, f"{label} ClampLo")
+    clamp_lo = add_node(tree, 'ShaderNodeVectorMath', x + 550, y - 60, f"{label} ClLo")
     clamp_lo.operation = 'MAXIMUM'
-    clamp_lo.inputs[1].default_value = (-inner_x, -inner_y, -inner_z)
     tree.links.new(clamp_hi.outputs['Vector'], clamp_lo.inputs[0])
+    tree.links.new(clamp_lo_v.outputs['Vector'], clamp_lo.inputs[1])
 
-    # Step 2: Offset = how far past the inner box each vertex is
-    offset = add_node(tree, 'ShaderNodeVectorMath', x + 600, y - 50, f"{label} Offset")
+    # Step 2: Offset = how far past the inner box
+    offset = add_node(tree, 'ShaderNodeVectorMath', x + 700, y - 60, f"{label} Offs")
     offset.operation = 'SUBTRACT'
     tree.links.new(pos_in.outputs['Position'], offset.inputs[0])
     tree.links.new(clamp_lo.outputs['Vector'], offset.inputs[1])
 
-    # Step 3: Push offset onto sphere surface (normalize * radius)
-    norm = add_node(tree, 'ShaderNodeVectorMath', x + 750, y - 50, f"{label} Norm")
+    # Step 3: Normalize × radius = push onto sphere cap surface
+    norm = add_node(tree, 'ShaderNodeVectorMath', x + 850, y - 60, f"{label} Norm")
     norm.operation = 'NORMALIZE'
     tree.links.new(offset.outputs['Vector'], norm.inputs[0])
 
-    scaled = add_node(tree, 'ShaderNodeVectorMath', x + 900, y - 50, f"{label} Rnd")
-    scaled.operation = 'SCALE'
-    scaled.inputs['Scale'].default_value = radius
-    tree.links.new(norm.outputs['Vector'], scaled.inputs[0])
+    cap = add_node(tree, 'ShaderNodeVectorMath', x + 1000, y - 60, f"{label} ×R")
+    cap.operation = 'SCALE'
+    cap.inputs['Scale'].default_value = radius
+    tree.links.new(norm.outputs['Vector'], cap.inputs[0])
 
-    # Step 4: Final = clamped position + rounded cap
-    final = add_node(tree, 'ShaderNodeVectorMath', x + 1050, y - 50, f"{label} Final")
+    # Step 4: Final = clamped (flat midsection) + cap (sphere surface)
+    final = add_node(tree, 'ShaderNodeVectorMath', x + 1150, y - 60, f"{label} Final")
     final.operation = 'ADD'
     tree.links.new(clamp_lo.outputs['Vector'], final.inputs[0])
-    tree.links.new(scaled.outputs['Vector'], final.inputs[1])
+    tree.links.new(cap.outputs['Vector'], final.inputs[1])
 
-    set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 1200, y, f"{label} RndPos")
+    set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 1300, y, f"{label} Cap")
     tree.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
     tree.links.new(final.outputs['Vector'], set_pos.inputs['Position'])
 
@@ -499,6 +520,23 @@ def build_geometry_nodes(mats):
     )
     s.default_value = (0.2, 0.65, 0.7, 1.0)
 
+    s = tree.interface.new_socket(
+        "Eye Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=eyes_panel
+    )
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Eye Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=eyes_panel
+    )
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+    s.subtype = 'NONE'
+
     # --- Mouth ---
 
     s = tree.interface.new_socket(
@@ -571,6 +609,23 @@ def build_geometry_nodes(mats):
     )
     s.default_value = (1.0, 0.7, 0.55, 1.0)
 
+    s = tree.interface.new_socket(
+        "Ear Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=ears_panel
+    )
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Ear Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=ears_panel
+    )
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+    s.subtype = 'NONE'
+
     # --- Eyebrows ---
 
     s = tree.interface.new_socket(
@@ -610,6 +665,23 @@ def build_geometry_nodes(mats):
         parent=brows_panel
     )
     s.default_value = (0.18, 0.09, 0.05, 1.0)  # dark brown
+
+    s = tree.interface.new_socket(
+        "Eyebrow Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=brows_panel
+    )
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Eyebrow Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=brows_panel
+    )
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+    s.subtype = 'NONE'
 
     # --- Lips ---
 
@@ -706,6 +778,39 @@ def build_geometry_nodes(mats):
     ears_depth_y.operation = 'MULTIPLY'
     ears_depth_y.inputs[0].default_value = -0.1
     tree.links.new(group_in.outputs['Ears Depth'], ears_depth_y.inputs[1])
+
+    # Eye Rotation: degrees → radians, around Y axis (tilts eye in face plane)
+    eye_rot_rad = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -740, "Eye Rot Rad")
+    eye_rot_rad.operation = 'MULTIPLY'
+    eye_rot_rad.inputs[1].default_value = math.pi / 180.0
+    tree.links.new(group_in.outputs['Eye Rotation'], eye_rot_rad.inputs[0])
+
+    eye_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -740, "Eye Rot Vec")
+    eye_rot_vec.inputs['X'].default_value = 0.0
+    eye_rot_vec.inputs['Z'].default_value = 0.0
+    tree.links.new(eye_rot_rad.outputs[0], eye_rot_vec.inputs['Y'])
+
+    # Ear Rotation: degrees → radians, around Y axis
+    ear_rot_rad = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -800, "Ear Rot Rad")
+    ear_rot_rad.operation = 'MULTIPLY'
+    ear_rot_rad.inputs[1].default_value = math.pi / 180.0
+    tree.links.new(group_in.outputs['Ear Rotation'], ear_rot_rad.inputs[0])
+
+    ear_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -800, "Ear Rot Vec")
+    ear_rot_vec.inputs['X'].default_value = 0.0
+    ear_rot_vec.inputs['Z'].default_value = 0.0
+    tree.links.new(ear_rot_rad.outputs[0], ear_rot_vec.inputs['Y'])
+
+    # Eyebrow Rotation: degrees → radians, around Y axis
+    brow_rot_rad = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -860, "Brow Rot Rad")
+    brow_rot_rad.operation = 'MULTIPLY'
+    brow_rot_rad.inputs[1].default_value = math.pi / 180.0
+    tree.links.new(group_in.outputs['Eyebrow Rotation'], brow_rot_rad.inputs[0])
+
+    brow_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -860, "Brow Rot Vec")
+    brow_rot_vec.inputs['X'].default_value = 0.0
+    brow_rot_vec.inputs['Z'].default_value = 0.0
+    tree.links.new(brow_rot_rad.outputs[0], brow_rot_vec.inputs['Y'])
 
     # ------------------------------------------------------------------
     # BODY — Dynamic capsule (Minkowski sum, Width drives extension)
@@ -871,7 +976,9 @@ def build_geometry_nodes(mats):
     # LEFT EYE — blink drives Z scale
     # ------------------------------------------------------------------
 
-    eye_l_rnd = add_round_cube(tree, PRIM_X, EYE_L_Y, "Eye L", radius=0.22, subdivs=6)
+    eye_l_rnd = add_dynamic_capsule(
+        tree, PRIM_X, EYE_L_Y, "Eye L", radius=0.22, subdivs=6,
+        width_output=group_in.outputs['Eye Width'], ext_factor=0.30, axis='X')
 
     # Blink: Z scale = (1 - eyeBlinkLeft * 0.9) * EyeSize
     eye_l_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, EYE_L_Y, "L Blink Invert")
@@ -941,13 +1048,16 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_l_rnd.outputs['Geometry'], eye_l_xform.inputs['Geometry'])
     tree.links.new(eye_l_pos.outputs['Vector'], eye_l_xform.inputs['Translation'])
     tree.links.new(eye_l_scale.outputs['Vector'], eye_l_xform.inputs['Scale'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], eye_l_xform.inputs['Rotation'])
     tree.links.new(eye_l_xform.outputs['Geometry'], eye_l_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
     # RIGHT EYE — mirror of left
     # ------------------------------------------------------------------
 
-    eye_r_rnd = add_round_cube(tree, PRIM_X, EYE_R_Y, "Eye R", radius=0.22, subdivs=6)
+    eye_r_rnd = add_dynamic_capsule(
+        tree, PRIM_X, EYE_R_Y, "Eye R", radius=0.22, subdivs=6,
+        width_output=group_in.outputs['Eye Width'], ext_factor=0.30, axis='X')
 
     eye_r_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, EYE_R_Y, "R Blink Invert")
     eye_r_blink.operation = 'MULTIPLY'
@@ -1012,13 +1122,16 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_r_rnd.outputs['Geometry'], eye_r_xform.inputs['Geometry'])
     tree.links.new(eye_r_pos.outputs['Vector'], eye_r_xform.inputs['Translation'])
     tree.links.new(eye_r_scale.outputs['Vector'], eye_r_xform.inputs['Scale'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], eye_r_xform.inputs['Rotation'])
     tree.links.new(eye_r_xform.outputs['Geometry'], eye_r_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
     # LEFT IRIS — follows eye blink, driven by eye look
     # ------------------------------------------------------------------
 
-    iris_l_rnd = add_round_cube(tree, PRIM_X, IRIS_L_Y, "Iris L", radius=0.12, subdivs=5)
+    iris_l_rnd = add_dynamic_capsule(
+        tree, PRIM_X, IRIS_L_Y, "Iris L", radius=0.12, subdivs=5,
+        width_output=group_in.outputs['Eye Width'], ext_factor=0.16, axis='X')
 
     # Iris blink scale (same as eye)
     iris_l_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, IRIS_L_Y, "Iris L Blink")
@@ -1084,6 +1197,7 @@ def build_geometry_nodes(mats):
     tree.links.new(iris_l_rnd.outputs['Geometry'], iris_l_xform.inputs['Geometry'])
     tree.links.new(iris_l_pos.outputs['Vector'], iris_l_xform.inputs['Translation'])
     tree.links.new(iris_l_scale.outputs['Vector'], iris_l_xform.inputs['Scale'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], iris_l_xform.inputs['Rotation'])
     tree.links.new(iris_l_xform.outputs['Geometry'], iris_l_color.inputs['Geometry'])
     tree.links.new(group_in.outputs['Eye Color'], iris_l_color.inputs['Value'])
     tree.links.new(iris_l_color.outputs['Geometry'], iris_l_mat.inputs['Geometry'])
@@ -1092,7 +1206,9 @@ def build_geometry_nodes(mats):
     # RIGHT IRIS — mirror of left
     # ------------------------------------------------------------------
 
-    iris_r_rnd = add_round_cube(tree, PRIM_X, IRIS_R_Y, "Iris R", radius=0.12, subdivs=5)
+    iris_r_rnd = add_dynamic_capsule(
+        tree, PRIM_X, IRIS_R_Y, "Iris R", radius=0.12, subdivs=5,
+        width_output=group_in2.outputs['Eye Width'], ext_factor=0.16, axis='X')
 
     iris_r_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, IRIS_R_Y, "Iris R Blink")
     iris_r_blink.operation = 'MULTIPLY'
@@ -1156,6 +1272,7 @@ def build_geometry_nodes(mats):
     tree.links.new(iris_r_rnd.outputs['Geometry'], iris_r_xform.inputs['Geometry'])
     tree.links.new(iris_r_pos.outputs['Vector'], iris_r_xform.inputs['Translation'])
     tree.links.new(iris_r_scale.outputs['Vector'], iris_r_xform.inputs['Scale'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], iris_r_xform.inputs['Rotation'])
     tree.links.new(iris_r_xform.outputs['Geometry'], iris_r_color.inputs['Geometry'])
     tree.links.new(group_in2.outputs['Eye Color'], iris_r_color.inputs['Value'])
     tree.links.new(iris_r_color.outputs['Geometry'], iris_r_mat.inputs['Geometry'])
@@ -1164,7 +1281,9 @@ def build_geometry_nodes(mats):
     # LEFT PUPIL — small dark sphere inside iris
     # ------------------------------------------------------------------
 
-    pupil_l_rnd = add_round_cube(tree, PRIM_X, PUPIL_L_Y, "Pupil L", radius=0.09, subdivs=4)
+    pupil_l_rnd = add_dynamic_capsule(
+        tree, PRIM_X, PUPIL_L_Y, "Pupil L", radius=0.09, subdivs=4,
+        width_output=group_in.outputs['Eye Width'], ext_factor=0.12, axis='X')
 
     # Pupil blink: Z scale squishes with blink, same as iris
     pupil_l_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, PUPIL_L_Y, "Pupil L Blink")
@@ -1211,13 +1330,16 @@ def build_geometry_nodes(mats):
     tree.links.new(pupil_l_rnd.outputs['Geometry'], pupil_l_xform.inputs['Geometry'])
     tree.links.new(pupil_l_pos.outputs['Vector'], pupil_l_xform.inputs['Translation'])
     tree.links.new(pupil_l_scale.outputs['Vector'], pupil_l_xform.inputs['Scale'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], pupil_l_xform.inputs['Rotation'])
     tree.links.new(pupil_l_xform.outputs['Geometry'], pupil_l_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
     # RIGHT PUPIL
     # ------------------------------------------------------------------
 
-    pupil_r_rnd = add_round_cube(tree, PRIM_X, PUPIL_R_Y, "Pupil R", radius=0.09, subdivs=4)
+    pupil_r_rnd = add_dynamic_capsule(
+        tree, PRIM_X, PUPIL_R_Y, "Pupil R", radius=0.09, subdivs=4,
+        width_output=group_in.outputs['Eye Width'], ext_factor=0.12, axis='X')
 
     # Pupil blink: Z scale squishes with blink, same as iris
     pupil_r_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, PUPIL_R_Y, "Pupil R Blink")
@@ -1263,6 +1385,7 @@ def build_geometry_nodes(mats):
     tree.links.new(pupil_r_rnd.outputs['Geometry'], pupil_r_xform.inputs['Geometry'])
     tree.links.new(pupil_r_pos.outputs['Vector'], pupil_r_xform.inputs['Translation'])
     tree.links.new(pupil_r_scale.outputs['Vector'], pupil_r_xform.inputs['Scale'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], pupil_r_xform.inputs['Rotation'])
     tree.links.new(pupil_r_xform.outputs['Geometry'], pupil_r_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
@@ -1488,7 +1611,9 @@ def build_geometry_nodes(mats):
     # EARS — simple spheres, scalable
     # ------------------------------------------------------------------
 
-    ear_l_rnd = add_round_cube(tree, PRIM_X, EAR_L_Y, "Ear L", radius=0.18, subdivs=5)
+    ear_l_rnd = add_dynamic_capsule(
+        tree, PRIM_X, EAR_L_Y, "Ear L", radius=0.18, subdivs=5,
+        width_output=group_in2.outputs['Ear Width'], ext_factor=0.25, axis='Z')
 
     ear_l_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EAR_L_Y, "Ear L Scale")
 
@@ -1528,12 +1653,15 @@ def build_geometry_nodes(mats):
     tree.links.new(ear_l_rnd.outputs['Geometry'], ear_l_xform.inputs['Geometry'])
     tree.links.new(ear_l_pos.outputs['Vector'], ear_l_xform.inputs['Translation'])
     tree.links.new(ear_l_scale.outputs['Vector'], ear_l_xform.inputs['Scale'])
+    tree.links.new(ear_rot_vec.outputs['Vector'], ear_l_xform.inputs['Rotation'])
     tree.links.new(ear_l_xform.outputs['Geometry'], ear_l_color.inputs['Geometry'])
     tree.links.new(group_in2.outputs['Ear Color'], ear_l_color.inputs['Value'])
     tree.links.new(ear_l_color.outputs['Geometry'], ear_l_mat.inputs['Geometry'])
 
     # Right ear
-    ear_r_rnd = add_round_cube(tree, PRIM_X, EAR_R_Y, "Ear R", radius=0.18, subdivs=5)
+    ear_r_rnd = add_dynamic_capsule(
+        tree, PRIM_X, EAR_R_Y, "Ear R", radius=0.18, subdivs=5,
+        width_output=group_in2.outputs['Ear Width'], ext_factor=0.25, axis='Z')
 
     ear_r_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, EAR_R_Y, "Ear R Scale")
 
@@ -1573,6 +1701,7 @@ def build_geometry_nodes(mats):
     tree.links.new(ear_r_rnd.outputs['Geometry'], ear_r_xform.inputs['Geometry'])
     tree.links.new(ear_r_pos.outputs['Vector'], ear_r_xform.inputs['Translation'])
     tree.links.new(ear_r_scale.outputs['Vector'], ear_r_xform.inputs['Scale'])
+    tree.links.new(ear_rot_vec.outputs['Vector'], ear_r_xform.inputs['Rotation'])
     tree.links.new(ear_r_xform.outputs['Geometry'], ear_r_color.inputs['Geometry'])
     tree.links.new(group_in2.outputs['Ear Color'], ear_r_color.inputs['Value'])
     tree.links.new(ear_r_color.outputs['Geometry'], ear_r_mat.inputs['Geometry'])
@@ -1640,7 +1769,9 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_drop_r.outputs[0], brow_z_r_final.inputs[1])
 
     # --- Left Eyebrow ---
-    brow_l_rnd = add_round_cube(tree, PRIM_X, BROW_L_Y, "Brow L", radius=0.14, subdivs=5)
+    brow_l_rnd = add_dynamic_capsule(
+        tree, PRIM_X, BROW_L_Y, "Brow L", radius=0.14, subdivs=5,
+        width_output=group_in2.outputs['Eyebrow Width'], ext_factor=0.19, axis='X')
 
     # Scale: wide and flat (squished oval)
     brow_l_sx = add_node(tree, 'ShaderNodeMath', MATH_X, BROW_L_Y, "Brow L Sx")
@@ -1692,12 +1823,15 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_l_rnd.outputs['Geometry'], brow_l_xform.inputs['Geometry'])
     tree.links.new(brow_l_pos.outputs['Vector'], brow_l_xform.inputs['Translation'])
     tree.links.new(brow_l_scale.outputs['Vector'], brow_l_xform.inputs['Scale'])
+    tree.links.new(brow_rot_vec.outputs['Vector'], brow_l_xform.inputs['Rotation'])
     tree.links.new(brow_l_xform.outputs['Geometry'], brow_l_color.inputs['Geometry'])
     tree.links.new(group_in2.outputs['Eyebrow Color'], brow_l_color.inputs['Value'])
     tree.links.new(brow_l_color.outputs['Geometry'], brow_l_mat.inputs['Geometry'])
 
     # --- Right Eyebrow (mirror of left) ---
-    brow_r_rnd = add_round_cube(tree, PRIM_X, BROW_R_Y, "Brow R", radius=0.14, subdivs=5)
+    brow_r_rnd = add_dynamic_capsule(
+        tree, PRIM_X, BROW_R_Y, "Brow R", radius=0.14, subdivs=5,
+        width_output=group_in2.outputs['Eyebrow Width'], ext_factor=0.19, axis='X')
 
     brow_r_sx = add_node(tree, 'ShaderNodeMath', MATH_X, BROW_R_Y, "Brow R Sx")
     brow_r_sx.operation = 'MULTIPLY'
@@ -1747,6 +1881,7 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_r_rnd.outputs['Geometry'], brow_r_xform.inputs['Geometry'])
     tree.links.new(brow_r_pos.outputs['Vector'], brow_r_xform.inputs['Translation'])
     tree.links.new(brow_r_scale.outputs['Vector'], brow_r_xform.inputs['Scale'])
+    tree.links.new(brow_rot_vec.outputs['Vector'], brow_r_xform.inputs['Rotation'])
     tree.links.new(brow_r_xform.outputs['Geometry'], brow_r_color.inputs['Geometry'])
     tree.links.new(group_in2.outputs['Eyebrow Color'], brow_r_color.inputs['Value'])
     tree.links.new(brow_r_color.outputs['Geometry'], brow_r_mat.inputs['Geometry'])

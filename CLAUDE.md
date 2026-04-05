@@ -204,10 +204,10 @@ Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/fo
 
 **Note:** While QUADRE is in beta, use Exoside for test meshes when testing PaWrappa to isolate variables.
 
-### Green Room Addon (V0.4.1-WIP — Dynamic Capsule Body + Lips)
+### Green Room Addon (V0.5.0-WIP — Dynamic Capsules on ALL Body Parts)
 Puppet show addon lives in `green_room/`. N-panel tab is "Green Room". Class prefix: `GREENROOM`. Operator prefix: `greenroom.*`. Property prefix: `gr_`.
 
-**Current state (April 4, 2026): Body uses dynamic Minkowski capsule. Lips working. Shade Smooth + Subdivision Surface. Next: apply capsule to remaining body parts.**
+**Current state (April 4, 2026): ALL body parts now use dynamic Minkowski capsules with Width + Rotation sliders. Eyes, irises, pupils, ears, eyebrows — every part can be pill-shaped and tilted. Mouth/lips unchanged (curve-based).**
 
 Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile/frown, pucker, eye look direction all working. Blob puppet has eyebrows reactive to face tracking.
 
@@ -223,16 +223,16 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Calibrate Brows** (`operators/calibrate_brows.py`) — Developer tool: one-shot UDP capture to identify unknown ARKit blend shape indices
 - **N-Panel** (`ui/panels.py`) — Puppet panel (picker + customization sliders) + Connect panel (three states: disconnected, waiting, receiving)
 - **Blob Puppet Template** (`assets/create_blob_template.py` → `assets/templates/blob/blob_puppet.blend`) — Procedural character with:
-  - **Body parts**: Body (dynamic capsule), eyes (with irises + pupils), mouth, ears, eyebrows, lips (tube)
+  - **Body parts**: Body, eyes, irises, pupils, ears, eyebrows (ALL dynamic capsules), mouth, lips (curve-based)
   - **Face tracking** (13 ARKit inputs): jawOpen, mouth smile/frown/funnel/left/right, eye blink/wide/look per side
-  - **Customization panels** (6 groups, 25 sliders):
+  - **Customization panels** (6 groups, 31 sliders):
     - Body: Width (0–2, capsule extension), Height, Rotation (-180°–180°), Color
-    - Eyes: Size, Spacing, Height, Depth, Color
+    - Eyes: Size, Spacing, Height, Depth, Color, Width (0–2, football eye), Rotation (-180°–180°, tilted eye)
     - Mouth: Size, Height, Depth, Color
-    - Ears: Size, Height, Spread, Depth, Color
-    - Eyebrows: Size, Height, Depth, Spread, Color
+    - Ears: Size, Height, Spread, Depth, Color, Width (0–2, long ear), Rotation (-180°–180°)
+    - Eyebrows: Size, Height, Depth, Spread, Color, Width (0–2, wide brow), Rotation (-180°–180°)
     - Lips: Thickness, Color
-  - **Dynamic capsule body** (Minkowski sum in geonodes): Width slider extends the straight midsection while caps stay round — same math as Blender's Round Cube addon but built inline so it's always live. Width=0 → sphere, Width=2 → long pill. Body Rotation tilts the capsule.
+  - **Dynamic capsules on ALL parts** (Minkowski sum in geonodes): Width slider extends the straight midsection while caps stay round. Width=0 → sphere (default, same as before), Width>0 → pill shape. Rotation tilts the capsule around Y axis. Eyes/irises/pupils share Eye Width + Eye Rotation so they stay aligned. Extension factors are proportional to each part's radius to maintain matching aspect ratios.
   - **Shade Smooth** applied to all joined geometry before output
   - **Subdivision Surface** modifier (level 2) with kid-friendly Smoothness slider
   - **Lip tube**: Curve Circle path (24pts) deformed by mouth field → Curve to Mesh with profile circle → 3D tube around mouth opening
@@ -243,9 +243,11 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
   - **Node tree spacing**: Rows spaced 400+ apart for readability in the Geometry Nodes editor
 
 **Key architecture decisions:**
-- **Dynamic Minkowski capsule (CRITICAL — hard-won lesson)**: You CANNOT get F9-style capsule behavior by scaling a fixed mesh. Uniform scaling stretches both the caps and midsection. The Blender Round Cube addon's `size` parameter works because it changes the GEOMETRY — vertices in the flat region stay flat, cap vertices stay on a sphere surface. To replicate this in geonodes, build the Minkowski sum math inline: subdivided cube → clamp each vertex to inner box (sized by Width slider) → offset from box → normalize × radius → add to clamped position. The inner box half-extent IS the midsection length. When it's 0, all vertices map to a sphere. When it's >0, vertices inside the box stay flat = straight midsection. The `add_round_cube()` helper does this with fixed size; the body section does it with slider-driven size.
+- **Dynamic Minkowski capsule (CRITICAL — hard-won lesson)**: You CANNOT get F9-style capsule behavior by scaling a fixed mesh. Uniform scaling stretches both the caps and midsection. The Blender Round Cube addon's `size` parameter works because it changes the GEOMETRY — vertices in the flat region stay flat, cap vertices stay on a sphere surface. To replicate this in geonodes, build the Minkowski sum math inline: subdivided cube → clamp each vertex to inner box (sized by Width slider) → offset from box → normalize × radius �� add to clamped position. The inner box half-extent IS the midsection length. When it's 0, all vertices map to a sphere. When it's >0, vertices inside the box stay flat = straight midsection.
+- **`add_dynamic_capsule()` helper** — replaces the old `add_round_cube()`. Takes `width_output` (slider node output), `ext_factor` (per-part extension tuning), and `axis` ('X', 'Y', or 'Z' for extension direction). Body still uses inline Minkowski (pre-existing, untouched). All other parts use the helper.
+- **Capsule axis selection**: Eyes/irises/pupils/eyebrows extend along X (football/horizontal pill). Ears extend along Z (vertical pill). Body extends along Z (inline, rotated 90° by body transform). The axis parameter sets which CombineXYZ input gets the dynamic extension — other axes stay at 2×radius.
+- **Proportional extension factors**: Iris (ext_factor=0.16) and pupil (0.12) ext_factors are tuned so that at the same Eye Width slider value, all three (eye, iris, pupil) produce the same aspect ratio. Calculation: match eye's total/diameter ratio across all sub-parts.
 - **Round Cube addon threshold gotcha**: The Extra Objects addon's `primitive_round_cube_add` operator has an internal threshold: `size` must exceed `2 * (radius - sagitta)` to produce ANY straight section. With radius=0.5 and arc_div=8, that threshold is ~1.0. Passing size=0.8 produces a sphere, not a capsule. This is why the Object Info approach failed — the reference mesh was just a sphere.
-- **`add_round_cube()` helper** still used for eyes, irises, pupils, ears, brows with `size=(0,0,0)` (spheres). These need to be converted to dynamic Minkowski capsules with their own Width/Rotation sliders — see "Next: Capsule all body parts" below.
 - **Driver path format**: `modifiers["GeometryNodes"]["Socket_X"]` where Socket_X is the identifier from `tree.interface.items_tree`
 - **Bone rotation mode**: Must be set to `'XYZ'` (Euler) — Blender defaults to Quaternion which ignores `rotation_euler` values from the phone
 - **QR text format**: `"Green Room\nIP: {ip}\nPort: {port}"` — plain text prevents iOS from interpreting as URL
@@ -256,26 +258,10 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Eyebrow position**: Independent from eyes — Eyebrow Spread/Depth/Height are separate sliders. Height still offsets FROM eyes_height_z so brows track vertically with eyes.
 - **Socket cross-wiring prevention**: `setup_drivers()` maps by socket NAME not index. Adding new interface sockets won't shift existing driver targets. Always include ALL face tracking socket names in the face_inputs list.
 
-**Next: Capsule all body parts (IMMEDIATE — next session):**
-
-The body's dynamic Minkowski capsule is working and tested. Now apply the SAME pattern to: eyes (L/R), irises (L/R), pupils (L/R), ears (L/R), eyebrows (L/R). NOT the mouth (it uses curve-based deformation).
-
-**What to do for each body part:**
-1. Add a "Width" socket (min 0.0) and "Rotation" socket (-180° to 180°) to that part's panel in the interface section
-2. Replace the `add_round_cube(tree, ..., radius=X, subdivs=N)` call with inline Minkowski nodes:
-   - Width slider → `body_ext` (multiply by extension factor) → cube Z size + clamp bounds
-   - Subdivided Mesh Cube (dynamic Z size) → Position → Clamp → Offset → Normalize → Scale(radius) → Add → Set Position
-   - Rotation slider → degrees to radians → add to existing orientation → Combine XYZ → Transform Rotation input
-3. Keep all existing scale/position/blink logic — just replace the geometry SOURCE (from `add_round_cube` output to `body_set_pos` output equivalent)
-4. The `add_round_cube()` helper function can be removed once all parts are converted
-
-**Pattern to copy (body section, lines ~720–870 in create_blob_template.py):**
-- Extension factor per part should match the part's radius (e.g., eyes radius=0.22 → ext_factor ~0.3)
-- Cube subdivisions: 6 is fine for small parts (body uses 8)
-- Each part needs its own set of clamp/offset/normalize/scale nodes — can't share between L/R because they have independent Width sliders for asymmetric control
-
-**After capsule conversion, also add:**
+**Next steps:**
 - Asymmetric controls (per-eye size, per-ear size) — David requested this
+- Rebuild `blob_puppet.blend` by running the updated script in Blender
+- Test Width/Rotation sliders on all parts — verify pill shapes look good
 
 **Known issues / next steps:**
 - **Latency / skipping on fast head movement** — noticed during testing (April 3, 2026). See "Latency Research" section below.
@@ -283,8 +269,7 @@ The body's dynamic Minkowski capsule is working and tested. Now apply the SAME p
 - **mouthFrownLeft/Right ARKit indices (25/26) also dead** — frown is currently driven by inverted smile instead. Kept as inputs for when correct indices are found.
 - Character design is basic — needs Will Anderson-style artistic variety
 - **Mouth shape**: Mouth is large and fully open-looking at rest when mouth size is cranked up. May need squish factor to scale with mouth size.
-- Need to rebuild `blob_puppet.blend` after capsule conversion is complete
-- `create_body_capsule()` function in create_blob_template.py is now unused (was Object Info approach, replaced by inline Minkowski). Can be removed.
+- Need to rebuild `blob_puppet.blend` by running updated `create_blob_template.py` in Blender
 
 **Latency Research (TODO — next session):**
 Observed: head rotation skips/jumps during fast movement. Need to investigate and fix while staying e-waste friendly (8GB RAM, integrated GPU, no CUDA).
@@ -351,7 +336,8 @@ Git is initialized in this folder. Use `git log` to see history. Always commit w
 
 **Commit history:**
 ```
-PENDING V0.4.1 — Dynamic Minkowski capsule body, rotation slider, width min=0
+PENDING V0.5.0 — Dynamic capsules on ALL body parts (eyes, ears, brows, irises, pupils)
+7aa1056 V0.4.1 — Dynamic Minkowski capsule body, rotation slider, width min=0
 9d3be18 V0.4.0 — Round cube primitives, shade smooth, subdivision surface
 627aec6 V0.3.2 — Lip tube geometry (beveled curve around mouth opening)
 9978eff V0.3.1 — Organized customize panels, independent eyebrow position controls
