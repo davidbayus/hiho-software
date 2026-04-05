@@ -807,19 +807,65 @@ def build_geometry_nodes(mats):
     brow_rot_rad.inputs[1].default_value = math.pi / 180.0
     tree.links.new(group_in.outputs['Eyebrow Rotation'], brow_rot_rad.inputs[0])
 
-    brow_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -860, "Brow Rot L")
+    # --- Reactive brow rotation from face tracking ---
+    # Angry signal: squint + frown → brows tilt inward (positive rotation)
+    brow_angry_blink = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -980, "Brow Angry Blink")
+    brow_angry_blink.operation = 'ADD'
+    tree.links.new(group_in.outputs['eyeBlinkLeft'], brow_angry_blink.inputs[0])
+    tree.links.new(group_in.outputs['eyeBlinkRight'], brow_angry_blink.inputs[1])
+
+    brow_angry_frown = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -1040, "Brow Angry Frown")
+    brow_angry_frown.operation = 'ADD'
+    tree.links.new(group_in2.outputs['mouthFrownLeft'], brow_angry_frown.inputs[0])
+    tree.links.new(group_in2.outputs['mouthFrownRight'], brow_angry_frown.inputs[1])
+
+    brow_angry = add_node(tree, 'ShaderNodeMath', INPUT_X + 500, -1010, "Brow Angry")
+    brow_angry.operation = 'ADD'
+    tree.links.new(brow_angry_blink.outputs[0], brow_angry.inputs[0])
+    tree.links.new(brow_angry_frown.outputs[0], brow_angry.inputs[1])
+
+    # Happy signal: wide eyes + smile → brows tilt outward (negative rotation)
+    brow_happy_wide = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -1100, "Brow Happy Wide")
+    brow_happy_wide.operation = 'ADD'
+    tree.links.new(group_in.outputs['eyeWideLeft'], brow_happy_wide.inputs[0])
+    tree.links.new(group_in.outputs['eyeWideRight'], brow_happy_wide.inputs[1])
+
+    brow_happy = add_node(tree, 'ShaderNodeMath', INPUT_X + 500, -1100, "Brow Happy")
+    brow_happy.operation = 'ADD'
+    tree.links.new(brow_happy_wide.outputs[0], brow_happy.inputs[0])
+    tree.links.new(group_in2.outputs['mouthSmileRight'], brow_happy.inputs[1])
+
+    # Emotion signal: angry - happy (positive = angry, negative = happy)
+    brow_emotion = add_node(tree, 'ShaderNodeMath', INPUT_X + 700, -1050, "Brow Emotion")
+    brow_emotion.operation = 'SUBTRACT'
+    tree.links.new(brow_angry.outputs[0], brow_emotion.inputs[0])
+    tree.links.new(brow_happy.outputs[0], brow_emotion.inputs[1])
+
+    # Scale to radians (~15° per unit of emotion signal)
+    brow_emotion_rad = add_node(tree, 'ShaderNodeMath', INPUT_X + 700, -1110, "Brow Emotion Rad")
+    brow_emotion_rad.operation = 'MULTIPLY'
+    brow_emotion_rad.inputs[1].default_value = 0.26  # ~15° per unit
+    tree.links.new(brow_emotion.outputs[0], brow_emotion_rad.inputs[0])
+
+    # Total brow rotation = manual slider + emotion tracking
+    brow_rot_total = add_node(tree, 'ShaderNodeMath', INPUT_X + 900, -960, "Brow Rot Total")
+    brow_rot_total.operation = 'ADD'
+    tree.links.new(brow_rot_rad.outputs[0], brow_rot_total.inputs[0])
+    tree.links.new(brow_emotion_rad.outputs[0], brow_rot_total.inputs[1])
+
+    brow_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 1100, -960, "Brow Rot L")
     brow_rot_vec.inputs['X'].default_value = 0.0
     brow_rot_vec.inputs['Z'].default_value = 0.0
-    tree.links.new(brow_rot_rad.outputs[0], brow_rot_vec.inputs['Y'])
+    tree.links.new(brow_rot_total.outputs[0], brow_rot_vec.inputs['Y'])
 
     # Right eyebrow: mirrored rotation for symmetrical expressions
-    # Positive slider = brows angle inward (angry), negative = outward (sad)
-    brow_rot_neg = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -920, "Brow Rot Neg")
+    # Positive = brows angle inward (angry), negative = outward (happy)
+    brow_rot_neg = add_node(tree, 'ShaderNodeMath', INPUT_X + 900, -1020, "Brow Rot Neg")
     brow_rot_neg.operation = 'MULTIPLY'
     brow_rot_neg.inputs[1].default_value = -1.0
-    tree.links.new(brow_rot_rad.outputs[0], brow_rot_neg.inputs[0])
+    tree.links.new(brow_rot_total.outputs[0], brow_rot_neg.inputs[0])
 
-    brow_rot_vec_r = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -920, "Brow Rot R")
+    brow_rot_vec_r = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 1100, -1020, "Brow Rot R")
     brow_rot_vec_r.inputs['X'].default_value = 0.0
     brow_rot_vec_r.inputs['Z'].default_value = 0.0
     tree.links.new(brow_rot_neg.outputs[0], brow_rot_vec_r.inputs['Y'])
@@ -1598,7 +1644,7 @@ def build_geometry_nodes(mats):
     mouth_center_y.operation = 'MULTIPLY'
     mouth_center_y.inputs[0].default_value = -0.88
 
-    # Mouth left/right shift: (mouthRight - mouthLeft) * 0.15
+    # Mouth left/right shift: (mouthRight - mouthLeft) * strength
     mouth_lr_diff = add_node(tree, 'ShaderNodeMath', COMBINE_X - 300, MOUTH_Y - 350, "Mouth LR Diff")
     mouth_lr_diff.operation = 'SUBTRACT'
     tree.links.new(group_in2.outputs['mouthRight'], mouth_lr_diff.inputs[0])
@@ -1606,7 +1652,7 @@ def build_geometry_nodes(mats):
 
     mouth_lr_shift = add_node(tree, 'ShaderNodeMath', COMBINE_X - 150, MOUTH_Y - 350, "Mouth LR Shift")
     mouth_lr_shift.operation = 'MULTIPLY'
-    mouth_lr_shift.inputs[1].default_value = 0.15
+    mouth_lr_shift.inputs[1].default_value = 0.35
     tree.links.new(mouth_lr_diff.outputs[0], mouth_lr_shift.inputs[0])
 
     mouth_center = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, MOUTH_Y - 420, "Mouth Center")

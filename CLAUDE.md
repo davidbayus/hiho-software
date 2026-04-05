@@ -212,7 +212,7 @@ Puppet show addon lives in `green_room/`. N-panel tab is "Green Room". Class pre
 Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile/frown, pucker, eye look direction all working. Blob puppet has eyebrows reactive to face tracking.
 
 **What exists now:**
-- **OSC Receiver** (`core/osc_receiver.py`) — FOSCAP fork, class-based, threaded, 13 active ARKit blend shapes. Timer callback at 10ms pushes shape key values + head rotation to Blender objects. Includes mouthFrownLeft/Right and mouthLeft/Right (indices unconfirmed).
+- **OSC Receiver** (`core/osc_receiver.py`) — FOSCAP fork, class-based, threaded, 13 active ARKit blend shapes. Timer callback at 10ms pushes shape key values + head rotation to Blender objects. All mouth indices confirmed working (April 4 calibration).
 - **Phone Connect** (`core/phone_connect.py`) — IP detection + QR code PNG generation, zero external dependencies
 - **QR Generator** (`core/qr_gen.py`) — Complete QR code encoder from scratch (~280 lines). GF(256) arithmetic, Reed-Solomon error correction, versions 1-4, EC level L. Written because pip-installing qrcode in classrooms is a non-starter.
 - **Connect Operator** (`operators/connect_phone.py`) — One button: creates dummy mesh, starts receiver, finds armature with "head" bone, generates QR, shows in panel
@@ -220,7 +220,7 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Template Spec** (`core/template_spec.py`) — Validates templates: checks for geonode modifier, armature with "head" bone, face tracking inputs, customization inputs. Groups sockets by panel.
 - **Puppet Picker** (`operators/pick_puppet.py`) — Browse and load available puppet templates
 - **Customize Puppet** (`operators/customize_puppet.py`) — N-panel "Make It Yours" section draws customization sliders grouped by body part (Body, Eyes, Mouth, Ears, Eyebrows). Also exposes Subdivision Surface "Smoothness" slider.
-- **Calibrate Brows** (`operators/calibrate_brows.py`) — Developer tool: one-shot UDP capture to identify unknown ARKit blend shape indices
+- **Calibrate Brows** (`operators/calibrate_brows.py`) — Developer tool: one-shot UDP capture to identify unknown ARKit blend shape indices. Results write to Blender Text Editor ("FaceSnapshot") — no Terminal needed.
 - **N-Panel** (`ui/panels.py`) — Puppet panel (picker + customization sliders) + Connect panel (three states: disconnected, waiting, receiving)
 - **Blob Puppet Template** (`assets/create_blob_template.py` → `assets/templates/blob/blob_puppet.blend`) — Procedural character with:
   - **Body parts**: Body, eyes, irises, pupils, ears, eyebrows (ALL dynamic capsules), mouth, lips (curve-based)
@@ -237,7 +237,7 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
   - **Subdivision Surface** modifier (level 2) with kid-friendly Smoothness slider
   - **Lip tube**: Curve Circle path (24pts) deformed by mouth field → Curve to Mesh with profile circle → 3D tube around mouth opening
   - **Eyebrow face tracking**: eyeWide lifts (0.15), eyeBlink drops (-0.12), per-side independent
-  - **Mouth deformation**: Per-vertex field (squished circle, jawOpen drops bottom, smile/frown bends corners, funnel narrows)
+  - **Mouth deformation**: Per-vertex field (squished circle, jawOpen drops bottom, smile/frown bends corners, funnel narrows, mouthLeft/Right shifts laterally at 0.35 strength)
   - **Color system**: Store Named Attribute → Attribute material per body part
   - Armature with "head" bone (Euler XYZ) for phone rotation
   - **Node tree spacing**: Rows spaced 400+ apart for readability in the Geometry Nodes editor
@@ -259,35 +259,22 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Socket cross-wiring prevention**: `setup_drivers()` maps by socket NAME not index. Adding new interface sockets won't shift existing driver targets. Always include ALL face tracking socket names in the face_inputs list.
 
 **Next steps:**
+- **Reactive eyebrow rotation** (IN PROGRESS) — eyebrows tilt based on face tracking: frown+squint → angry inward V, smile+wide eyes → happy outward arch. Math: `(eyeBlink + frown - eyeWide - smile) * strength` added to manual Eyebrow Rotation slider.
 - Asymmetric controls (per-eye size, per-ear size) — David requested this
 - Rebuild `blob_puppet.blend` by running the updated script in Blender
-- Test Width/Rotation sliders on all parts — verify pill shapes look good
 
 **Known issues / next steps:**
-- **Latency / skipping on fast head movement** — noticed during testing (April 3, 2026). See "Latency Research" section below.
-- **mouthLeft/Right ARKit indices (21/22) may be wrong** — produce 0.000 values. Need calibration with calibrate_brows tool.
-- **mouthFrownLeft/Right ARKit indices (25/26) also dead** — frown is currently driven by inverted smile instead. Kept as inputs for when correct indices are found.
 - Character design is basic — needs Will Anderson-style artistic variety
 - **Mouth shape**: Mouth is large and fully open-looking at rest when mouth size is cranked up. May need squish factor to scale with mouth size.
 - Need to rebuild `blob_puppet.blend` by running updated `create_blob_template.py` in Blender
 
-**Latency Research (TODO — next session):**
-Observed: head rotation skips/jumps during fast movement. Need to investigate and fix while staying e-waste friendly (8GB RAM, integrated GPU, no CUDA).
-
-Possible causes to investigate:
-1. **Viewport redraw throttle** — `_last_redraw_time` in osc_receiver.py only redraws every 0.5s. This is WAY too slow for smooth head tracking. The shape keys update at 10ms but the viewport doesn't show it. Try reducing to 0.033s (30fps) or removing throttle entirely.
-2. **UDP packet drops** — socket buffer may overflow during fast movement. Could increase buffer size with `sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)`.
-3. **Thread lock contention** — the `_pending` list copies all updates every 10ms. Could switch to a lock-free ring buffer or only keep latest values (discard stale frames).
-4. **Depsgraph updates** — Blender may batch dependency graph updates. Could try `bpy.context.view_layer.update()` or `depsgraph.update()` after applying values.
-5. **Timer resolution** — `return 0.01` (10ms) is the requested timer interval but Blender's actual timer resolution may be lower. Test actual callback frequency.
-6. **Live Link Face app send rate** — the app may send at 60fps but we may be processing slower. Log actual packet rate to verify.
-
-Constraints (non-negotiable):
-- Must run on integrated GPU (Intel HD / AMD Vega)
-- No CUDA, no OpenCL compute
-- 8GB RAM total
-- Open source only
-- No internet required
+**Calibration results (April 4, 2026):**
+- **mouthLeft [21] CONFIRMED** — 0.914 when pushing mouth left
+- **mouthRight [22] CONFIRMED** — 0.953 when pushing mouth right
+- **mouthFrownLeft [25] CONFIRMED** — 0.165 (was flagged as dead, actually works)
+- **mouthFrownRight [26] CONFIRMED** — 0.179 (was flagged as dead, actually works)
+- Mouth lateral shift strength bumped from 0.15 → 0.35 (visible movement now)
+- Latency fix (viewport redraw 0.5s → 0.033s) was already applied in V0.2.0
 
 ### Reference Material (in R&D/ folder)
 - `PUPPET_SHOW_DESIGN_REVISION_2026-04-01.md` — Full design document for the puppet show architecture
@@ -336,7 +323,9 @@ Git is initialized in this folder. Use `git log` to see history. Always commit w
 
 **Commit history:**
 ```
-PENDING V0.5.0 — Dynamic capsules on ALL body parts (eyes, ears, brows, irises, pupils)
+PENDING V0.6.0 — Reactive eyebrow rotation (emotion-driven tilt from face tracking)
+6c7d23d V0.5.1 — Fix sideways blink, mirror eyebrow rotation
+2af933c V0.5.0 — Dynamic capsules on ALL body parts (eyes, ears, brows, irises, pupils)
 7aa1056 V0.4.1 — Dynamic Minkowski capsule body, rotation slider, width min=0
 9d3be18 V0.4.0 — Round cube primitives, shade smooth, subdivision surface
 627aec6 V0.3.2 — Lip tube geometry (beveled curve around mouth opening)

@@ -59,15 +59,29 @@ class GREENROOM_OT_calibrate_brows(bpy.types.Operator):
             self.report({'ERROR'}, "Failed to decode packet")
             return {'CANCELLED'}
 
-        # Print to console
-        print("\n" + "=" * 50)
-        print("FACE SNAPSHOT — Active blend shapes (> 0.05):")
-        print("=" * 50)
+        # Build results text
+        lines = []
+        lines.append("=" * 50)
+        lines.append("FACE SNAPSHOT — Active blend shapes (> 0.05):")
+        lines.append("=" * 50)
         for idx in sorted(active.keys()):
             label, value = active[idx]
-            mapped = "  ← MAPPED" if label != f"UNKNOWN_{idx}" else "  ← ???"
-            print(f"  [{idx:2d}] {value:.3f}  {label}{mapped}")
-        print("=" * 50 + "\n")
+            mapped = "  <- MAPPED" if label != f"UNKNOWN_{idx}" else "  <- ???"
+            lines.append(f"  [{idx:2d}] {value:.3f}  {label}{mapped}")
+        lines.append("=" * 50)
+        result_text = "\n".join(lines)
 
-        self.report({'INFO'}, f"Snapshot: {len(active)} active indices — check console")
+        # Write to Blender's Text Editor (viewable without Terminal)
+        text_name = "FaceSnapshot"
+        if text_name in bpy.data.texts:
+            txt = bpy.data.texts[text_name]
+            txt.clear()
+        else:
+            txt = bpy.data.texts.new(text_name)
+        txt.write(result_text)
+
+        # Also print to console (if Terminal is open)
+        print("\n" + result_text + "\n")
+
+        self.report({'INFO'}, f"Snapshot: {len(active)} active indices — see Text Editor > FaceSnapshot")
         return {'FINISHED'}
