@@ -46,6 +46,41 @@ def clean_scene():
             bpy.data.node_groups.remove(block)
 
 
+def create_body_capsule():
+    """Create the body capsule mesh using Blender's Round Cube primitive.
+
+    Uses the Extra Objects addon (bundled with Blender) to generate a
+    proper capsule with analytically-placed vertices — way better than
+    trying to approximate it with math nodes.
+
+    Returns the hidden mesh object, which gets pulled into geonodes
+    via an Object Info node.
+    """
+    import addon_utils
+    addon_utils.enable("add_mesh_extra_objects")
+
+    # Make sure cursor is at origin so the capsule is centered there
+    bpy.context.scene.cursor.location = (0, 0, 0)
+
+    bpy.ops.mesh.primitive_round_cube_add(
+        radius=0.5,
+        size=(0.0, 0.0, 2.0),  # vertical capsule — must be > 2*radius to get straight section
+        arc_div=8,
+        lin_div=0,
+        div_type='CORNERS',
+    )
+    capsule = bpy.context.active_object
+    capsule.name = "Body_Capsule_Ref"
+    # Clear transform — we want raw geometry at origin, nothing extra
+    capsule.location = (0, 0, 0)
+    capsule.rotation_euler = (0, 0, 0)
+    capsule.scale = (1, 1, 1)
+    capsule.hide_viewport = True
+    capsule.hide_render = True
+    capsule.hide_select = True
+    return capsule
+
+
 # ===================================================================
 # 1. MATERIALS
 # ===================================================================
@@ -158,39 +193,86 @@ def add_node(tree, node_type, x, y, label=None):
     return node
 
 
-def add_round_cube(tree, x, y, label, radius, subdivs=6):
-    """Add a round cube (subdivided cube → spherized) to the node tree.
+def add_round_cube(tree, x, y, label, radius=0.5, size=(0.0, 0.0, 0.0), subdivs=6):
+    """Add a round cube / capsule shape to the node tree.
 
-    Returns (set_pos_node, output_socket_name) — the geometry output to
-    feed into the next node (transform, material, etc.).
+    Matches Blender's Round Cube addon interface:
+    - radius: rounding at caps/edges (the curved part)
+    - size: (sx, sy, sz) straight-section extension per axis
+
+    Examples:
+        radius=0.5, size=(0,0,0)     → sphere
+        radius=0.5, size=(0,0,1.5)   → vertical capsule (pill standing up)
+        radius=0.5, size=(1.0,0,0)   → horizontal capsule (pill on its side)
+        radius=0.5, size=(0.5,0,0.5) → rounded box (flat front/back)
+
+    The straight section keeps its shape when you stretch one axis —
+    caps stay round, middle stays flat.
 
     Args:
         tree: The geometry node tree
         x, y: Position of the first node (cube primitive)
         label: Base name for the nodes
-        radius: Target sphere radius
+        radius: Cap rounding radius
+        size: (sx, sy, sz) straight section per axis (0 = no flat)
         subdivs: Vertices per axis on the cube (default 6)
     """
+    sx, sy, sz = size
+
+    # Cube must be big enough to encompass caps + straight sections
+    cube_w = radius * 2 + sx
+    cube_h = radius * 2 + sy
+    cube_d = radius * 2 + sz
+
     cube = add_node(tree, 'GeometryNodeMeshCube', x, y, f"{label} Cube")
-    d = radius * 2
-    cube.inputs['Size'].default_value = (d, d, d)
+    cube.inputs['Size'].default_value = (cube_w, cube_h, cube_d)
     cube.inputs['Vertices X'].default_value = subdivs
     cube.inputs['Vertices Y'].default_value = subdivs
     cube.inputs['Vertices Z'].default_value = subdivs
 
     pos_in = add_node(tree, 'GeometryNodeInputPosition', x + 150, y - 50, f"{label} Pos")
-    normalize = add_node(tree, 'ShaderNodeVectorMath', x + 300, y - 50, f"{label} Norm")
-    normalize.operation = 'NORMALIZE'
-    tree.links.new(pos_in.outputs['Position'], normalize.inputs[0])
 
-    spherize = add_node(tree, 'ShaderNodeVectorMath', x + 450, y - 50, f"{label} Sph")
-    spherize.operation = 'SCALE'
-    spherize.inputs['Scale'].default_value = radius
-    tree.links.new(normalize.outputs['Vector'], spherize.inputs[0])
+    # Inner box = the straight/flat section (half-extents per axis)
+    inner_x = sx / 2.0
+    inner_y = sy / 2.0
+    inner_z = sz / 2.0
 
-    set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 600, y, f"{label} RndPos")
+    # Step 1: Clamp position to inner box — vertices inside stay flat
+    clamp_hi = add_node(tree, 'ShaderNodeVectorMath', x + 300, y - 50, f"{label} ClampHi")
+    clamp_hi.operation = 'MINIMUM'
+    clamp_hi.inputs[1].default_value = (inner_x, inner_y, inner_z)
+    tree.links.new(pos_in.outputs['Position'], clamp_hi.inputs[0])
+
+    clamp_lo = add_node(tree, 'ShaderNodeVectorMath', x + 450, y - 50, f"{label} ClampLo")
+    clamp_lo.operation = 'MAXIMUM'
+    clamp_lo.inputs[1].default_value = (-inner_x, -inner_y, -inner_z)
+    tree.links.new(clamp_hi.outputs['Vector'], clamp_lo.inputs[0])
+
+    # Step 2: Offset = how far past the inner box each vertex is
+    offset = add_node(tree, 'ShaderNodeVectorMath', x + 600, y - 50, f"{label} Offset")
+    offset.operation = 'SUBTRACT'
+    tree.links.new(pos_in.outputs['Position'], offset.inputs[0])
+    tree.links.new(clamp_lo.outputs['Vector'], offset.inputs[1])
+
+    # Step 3: Push offset onto sphere surface (normalize * radius)
+    norm = add_node(tree, 'ShaderNodeVectorMath', x + 750, y - 50, f"{label} Norm")
+    norm.operation = 'NORMALIZE'
+    tree.links.new(offset.outputs['Vector'], norm.inputs[0])
+
+    scaled = add_node(tree, 'ShaderNodeVectorMath', x + 900, y - 50, f"{label} Rnd")
+    scaled.operation = 'SCALE'
+    scaled.inputs['Scale'].default_value = radius
+    tree.links.new(norm.outputs['Vector'], scaled.inputs[0])
+
+    # Step 4: Final = clamped position + rounded cap
+    final = add_node(tree, 'ShaderNodeVectorMath', x + 1050, y - 50, f"{label} Final")
+    final.operation = 'ADD'
+    tree.links.new(clamp_lo.outputs['Vector'], final.inputs[0])
+    tree.links.new(scaled.outputs['Vector'], final.inputs[1])
+
+    set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 1200, y, f"{label} RndPos")
     tree.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
-    tree.links.new(spherize.outputs['Vector'], set_pos.inputs['Position'])
+    tree.links.new(final.outputs['Vector'], set_pos.inputs['Position'])
 
     return set_pos
 
@@ -351,7 +433,7 @@ def build_geometry_nodes(mats):
         parent=body_panel
     )
     s.default_value = 1.0
-    s.min_value = 0.5
+    s.min_value = 0.0
     s.max_value = 2.0
 
     s = tree.interface.new_socket(
@@ -361,6 +443,15 @@ def build_geometry_nodes(mats):
     s.default_value = 1.0
     s.min_value = 0.5
     s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Body Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=body_panel
+    )
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+    s.subtype = 'NONE'
 
     s = tree.interface.new_socket(
         "Body Color", in_out='INPUT', socket_type='NodeSocketColor',
@@ -550,20 +641,20 @@ def build_geometry_nodes(mats):
     JOIN_X = 600
     OUT_X = 900
 
-    # Row positions (each body part gets a row)
+    # Row positions (each body part gets its own row, spaced 400+ apart)
     BODY_Y = 400
-    EYE_L_Y = 100
-    EYE_R_Y = -150
-    IRIS_L_Y = -400
-    IRIS_R_Y = -650
-    PUPIL_L_Y = -900
-    PUPIL_R_Y = -1100
-    MOUTH_Y = -1350
-    EAR_L_Y = -1650
-    EAR_R_Y = -1900
-    BROW_L_Y = -2150
-    BROW_R_Y = -2400
-    LIP_Y = -2650
+    EYE_L_Y = -100
+    EYE_R_Y = -500
+    IRIS_L_Y = -900
+    IRIS_R_Y = -1300
+    PUPIL_L_Y = -1700
+    PUPIL_R_Y = -2000
+    MOUTH_Y = -2400
+    EAR_L_Y = -2900
+    EAR_R_Y = -3300
+    BROW_L_Y = -3700
+    BROW_R_Y = -4100
+    LIP_Y = -4500
 
     # --- Group Input & Output ---
     group_in = tree.nodes.new('NodeGroupInput')
@@ -574,7 +665,7 @@ def build_geometry_nodes(mats):
 
     # We'll need a second Group Input for readability (Blender allows multiple)
     group_in2 = tree.nodes.new('NodeGroupInput')
-    group_in2.location = (INPUT_X, -1400)
+    group_in2.location = (INPUT_X, -2400)
 
     # ------------------------------------------------------------------
     # POSITION HELPERS — shared multiply nodes for slider-driven placement
@@ -617,31 +708,111 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in.outputs['Ears Depth'], ears_depth_y.inputs[1])
 
     # ------------------------------------------------------------------
-    # BODY — Round Cube (no pole vertices = cleaner deformation)
+    # BODY — Dynamic capsule (Minkowski sum, Width drives extension)
     #
-    # A subdivided cube where each vertex is pushed toward a sphere.
-    # Unlike a UV Sphere which has pinched poles at top/bottom, this
-    # gives even quad topology everywhere. Will Anderson uses this
-    # approach for all his puppet geometry.
+    # Works exactly like the F9 "Size" parameter on a Round Cube:
+    # - Width slider extends the STRAIGHT MIDSECTION (caps stay round)
+    # - Height slider scales the CROSS-SECTION (cap diameter)
+    # - Width=min → sphere, Width=max → long pill
     #
-    # Spherize formula: new_pos = normalize(pos) * radius
+    # Math per vertex (same as Blender's Round Cube addon):
+    #   1. Clamp position to inner box (the flat region, sized by Width)
+    #   2. Offset = how far past the box the vertex extends
+    #   3. Normalize offset × radius = push onto sphere cap surface
+    #   4. Final = clamped + sphere-mapped offset
     # ------------------------------------------------------------------
 
-    body_rnd = add_round_cube(tree, PRIM_X, BODY_Y, "Body", radius=1.0, subdivs=8)
+    BODY_RADIUS = 0.5
 
-    # Body scale: (0.9 * BodyWidth, 0.8, 1.1 * BodyHeight)
-    body_scale_w = add_node(tree, 'ShaderNodeMath', MATH_X, BODY_Y, "Body Width Scale")
-    body_scale_w.operation = 'MULTIPLY'
-    body_scale_w.inputs[1].default_value = 0.9
+    # Width → half-extent of the straight midsection on Z
+    body_ext = add_node(tree, 'ShaderNodeMath', PRIM_X - 300, BODY_Y - 80, "Width → Extension")
+    body_ext.operation = 'MULTIPLY'
+    body_ext.inputs[1].default_value = 0.6  # at default Width=1.0, ext=0.6
 
-    body_scale_h = add_node(tree, 'ShaderNodeMath', MATH_X, BODY_Y - 60, "Body Height Scale")
+    # Cube Z size must fit capsule: Z = 2 × radius + 2 × extension
+    body_ext_x2 = add_node(tree, 'ShaderNodeMath', PRIM_X - 300, BODY_Y - 160, "Ext × 2")
+    body_ext_x2.operation = 'MULTIPLY'
+    body_ext_x2.inputs[1].default_value = 2.0
+
+    body_cube_z = add_node(tree, 'ShaderNodeMath', PRIM_X - 150, BODY_Y - 160, "Cube Z Size")
+    body_cube_z.operation = 'ADD'
+    body_cube_z.inputs[1].default_value = 2.0 * BODY_RADIUS  # 1.0
+
+    body_cube_size = add_node(tree, 'ShaderNodeCombineXYZ', PRIM_X - 50, BODY_Y - 80, "Cube Size Vec")
+    body_cube_size.inputs['X'].default_value = 2.0 * BODY_RADIUS
+    body_cube_size.inputs['Y'].default_value = 2.0 * BODY_RADIUS
+
+    # The subdivided cube — vertex grid that gets reshaped into a capsule
+    body_cube = add_node(tree, 'GeometryNodeMeshCube', PRIM_X, BODY_Y, "Body Cube 8×8×8")
+    body_cube.inputs['Vertices X'].default_value = 8
+    body_cube.inputs['Vertices Y'].default_value = 8
+    body_cube.inputs['Vertices Z'].default_value = 8
+
+    body_pos = add_node(tree, 'GeometryNodeInputPosition', PRIM_X + 100, BODY_Y - 60, "Vertex Pos")
+
+    # Clamp bounds = inner box where vertices stay flat
+    # High: (0, 0, +ext)   Low: (0, 0, -ext)
+    body_clamp_hi_v = add_node(tree, 'ShaderNodeCombineXYZ', PRIM_X + 100, BODY_Y - 130, "+Ext Bound")
+    body_clamp_hi_v.inputs['X'].default_value = 0.0
+    body_clamp_hi_v.inputs['Y'].default_value = 0.0
+
+    body_ext_neg = add_node(tree, 'ShaderNodeMath', PRIM_X + 100, BODY_Y - 200, "Negate Ext")
+    body_ext_neg.operation = 'MULTIPLY'
+    body_ext_neg.inputs[1].default_value = -1.0
+
+    body_clamp_lo_v = add_node(tree, 'ShaderNodeCombineXYZ', PRIM_X + 250, BODY_Y - 200, "-Ext Bound")
+    body_clamp_lo_v.inputs['X'].default_value = 0.0
+    body_clamp_lo_v.inputs['Y'].default_value = 0.0
+
+    # Step 1: Clamp — vertices inside the box stay put (flat midsection)
+    body_clamp_hi = add_node(tree, 'ShaderNodeVectorMath', PRIM_X + 400, BODY_Y - 60, "Clamp Hi")
+    body_clamp_hi.operation = 'MINIMUM'
+
+    body_clamp_lo = add_node(tree, 'ShaderNodeVectorMath', PRIM_X + 550, BODY_Y - 60, "Clamp Lo")
+    body_clamp_lo.operation = 'MAXIMUM'
+
+    # Step 2: Offset = how far past the inner box
+    body_offset = add_node(tree, 'ShaderNodeVectorMath', PRIM_X + 700, BODY_Y - 60, "Cap Offset")
+    body_offset.operation = 'SUBTRACT'
+
+    # Step 3: Push onto sphere cap (normalize × radius)
+    body_norm = add_node(tree, 'ShaderNodeVectorMath', PRIM_X + 850, BODY_Y - 60, "Normalize")
+    body_norm.operation = 'NORMALIZE'
+
+    body_cap = add_node(tree, 'ShaderNodeVectorMath', PRIM_X + 1000, BODY_Y - 60, "× Radius")
+    body_cap.operation = 'SCALE'
+    body_cap.inputs['Scale'].default_value = BODY_RADIUS
+
+    # Step 4: Final = flat midsection + sphere caps
+    body_final = add_node(tree, 'ShaderNodeVectorMath', PRIM_X + 1150, BODY_Y - 60, "Final Pos")
+    body_final.operation = 'ADD'
+
+    body_set_pos = add_node(tree, 'GeometryNodeSetPosition', PRIM_X + 1300, BODY_Y, "Body Capsule")
+
+    # Height → cross-section scale (capsule X before rotation → world Z height)
+    body_scale_h = add_node(tree, 'ShaderNodeMath', COMBINE_X - 150, BODY_Y, "Height Scale")
     body_scale_h.operation = 'MULTIPLY'
-    body_scale_h.inputs[1].default_value = 1.1
+    body_scale_h.inputs[1].default_value = 1.0
 
-    body_combine = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, BODY_Y, "Body Scale Vec")
-    body_combine.inputs['Y'].default_value = 0.8
+    body_combine = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, BODY_Y, "Body Scale")
+    body_combine.inputs['Y'].default_value = 0.9   # depth
+    body_combine.inputs['Z'].default_value = 1.0   # Z already sized by Minkowski
 
-    body_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, BODY_Y, "Body Transform")
+    # Body Rotation slider (degrees) → radians, added to base 90° Y
+    body_rot_rad = add_node(tree, 'ShaderNodeMath', XFORM_X - 300, BODY_Y - 80, "Deg → Rad")
+    body_rot_rad.operation = 'MULTIPLY'
+    body_rot_rad.inputs[1].default_value = math.pi / 180.0  # deg to rad
+
+    body_rot_add = add_node(tree, 'ShaderNodeMath', XFORM_X - 150, BODY_Y - 80, "Add Base 90°")
+    body_rot_add.operation = 'ADD'
+    body_rot_add.inputs[1].default_value = math.pi / 2  # base orientation
+
+    body_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', XFORM_X - 50, BODY_Y - 80, "Rot Vector")
+    body_rot_vec.inputs['X'].default_value = 0.0
+    body_rot_vec.inputs['Z'].default_value = 0.0
+
+    # Orient: Scale cross-section → Rotate (base 90° + slider) → Move up
+    body_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, BODY_Y, "Body Orient")
     body_xform.inputs['Translation'].default_value = (0, 0, 0.8)
 
     body_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, BODY_Y, "Body Color")
@@ -652,12 +823,45 @@ def build_geometry_nodes(mats):
     body_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, BODY_Y, "Body Material")
     body_mat.inputs['Material'].default_value = mats['body']
 
-    # Links: body
-    tree.links.new(group_in.outputs['Body Width'], body_scale_w.inputs[0])
+    # --- Links: body ---
+    # Width → extension → cube size + clamp bounds
+    tree.links.new(group_in.outputs['Body Width'], body_ext.inputs[0])
+    tree.links.new(body_ext.outputs[0], body_ext_x2.inputs[0])
+    tree.links.new(body_ext_x2.outputs[0], body_cube_z.inputs[0])
+    tree.links.new(body_cube_z.outputs[0], body_cube_size.inputs['Z'])
+    tree.links.new(body_cube_size.outputs['Vector'], body_cube.inputs['Size'])
+
+    # Extension → clamp bounds
+    tree.links.new(body_ext.outputs[0], body_clamp_hi_v.inputs['Z'])
+    tree.links.new(body_ext.outputs[0], body_ext_neg.inputs[0])
+    tree.links.new(body_ext_neg.outputs[0], body_clamp_lo_v.inputs['Z'])
+
+    # Minkowski chain: clamp → offset → normalize → scale → add
+    tree.links.new(body_pos.outputs['Position'], body_clamp_hi.inputs[0])
+    tree.links.new(body_clamp_hi_v.outputs['Vector'], body_clamp_hi.inputs[1])
+    tree.links.new(body_clamp_hi.outputs['Vector'], body_clamp_lo.inputs[0])
+    tree.links.new(body_clamp_lo_v.outputs['Vector'], body_clamp_lo.inputs[1])
+
+    tree.links.new(body_pos.outputs['Position'], body_offset.inputs[0])
+    tree.links.new(body_clamp_lo.outputs['Vector'], body_offset.inputs[1])
+    tree.links.new(body_offset.outputs['Vector'], body_norm.inputs[0])
+    tree.links.new(body_norm.outputs['Vector'], body_cap.inputs[0])
+    tree.links.new(body_clamp_lo.outputs['Vector'], body_final.inputs[0])
+    tree.links.new(body_cap.outputs['Vector'], body_final.inputs[1])
+
+    # Capsule shape → set position on cube → scale/orient/place
+    tree.links.new(body_cube.outputs['Mesh'], body_set_pos.inputs['Geometry'])
+    tree.links.new(body_final.outputs['Vector'], body_set_pos.inputs['Position'])
+
     tree.links.new(group_in.outputs['Body Height'], body_scale_h.inputs[0])
-    tree.links.new(body_scale_w.outputs[0], body_combine.inputs['X'])
-    tree.links.new(body_scale_h.outputs[0], body_combine.inputs['Z'])
-    tree.links.new(body_rnd.outputs['Geometry'], body_xform.inputs['Geometry'])
+    tree.links.new(body_scale_h.outputs[0], body_combine.inputs['X'])
+    # Rotation: slider degrees → radians → add base 90° → Y rotation
+    tree.links.new(group_in.outputs['Body Rotation'], body_rot_rad.inputs[0])
+    tree.links.new(body_rot_rad.outputs[0], body_rot_add.inputs[0])
+    tree.links.new(body_rot_add.outputs[0], body_rot_vec.inputs['Y'])
+    tree.links.new(body_rot_vec.outputs['Vector'], body_xform.inputs['Rotation'])
+
+    tree.links.new(body_set_pos.outputs['Geometry'], body_xform.inputs['Geometry'])
     tree.links.new(body_combine.outputs['Vector'], body_xform.inputs['Scale'])
     tree.links.new(body_xform.outputs['Geometry'], body_color.inputs['Geometry'])
     tree.links.new(group_in.outputs['Body Color'], body_color.inputs['Value'])
@@ -962,6 +1166,18 @@ def build_geometry_nodes(mats):
 
     pupil_l_rnd = add_round_cube(tree, PRIM_X, PUPIL_L_Y, "Pupil L", radius=0.09, subdivs=4)
 
+    # Pupil blink: Z scale squishes with blink, same as iris
+    pupil_l_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, PUPIL_L_Y, "Pupil L Blink")
+    pupil_l_blink.operation = 'MULTIPLY'
+    pupil_l_blink.inputs[1].default_value = 0.9
+
+    pupil_l_open = add_node(tree, 'ShaderNodeMath', MATH_X, PUPIL_L_Y, "Pupil L Open")
+    pupil_l_open.operation = 'SUBTRACT'
+    pupil_l_open.inputs[0].default_value = 1.0
+
+    pupil_l_sz = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_L_Y, "Pupil L Size Z")
+    pupil_l_sz.operation = 'MULTIPLY'
+
     pupil_l_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_L_Y + 30, "Pupil L Pos Y")
     pupil_l_pos_y.operation = 'MULTIPLY'
     pupil_l_pos_y.inputs[0].default_value = -0.85  # further forward than iris (-0.72)
@@ -969,11 +1185,24 @@ def build_geometry_nodes(mats):
     pupil_l_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, PUPIL_L_Y, "Pupil L Pos")
     pupil_l_pos.inputs['Z'].default_value = 1.25  # overridden by Eyes Height link
 
+    pupil_l_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, PUPIL_L_Y - 80, "Pupil L Scale")
+
     # Share the X position from iris
     pupil_l_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, PUPIL_L_Y, "Pupil L Transform")
 
     pupil_l_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, PUPIL_L_Y, "Pupil L Material")
     pupil_l_mat.inputs['Material'].default_value = mats['pupil']
+
+    # Blink → scale Z
+    tree.links.new(group_in.outputs['eyeBlinkLeft'], pupil_l_blink.inputs[0])
+    tree.links.new(pupil_l_blink.outputs[0], pupil_l_open.inputs[1])
+    tree.links.new(pupil_l_open.outputs[0], pupil_l_sz.inputs[0])
+    tree.links.new(group_in.outputs['Eye Size'], pupil_l_sz.inputs[1])
+
+    # Scale: X=EyeSize, Y=EyeSize, Z=blink-scaled EyeSize
+    tree.links.new(group_in.outputs['Eye Size'], pupil_l_scale.inputs['X'])
+    tree.links.new(group_in.outputs['Eye Size'], pupil_l_scale.inputs['Y'])
+    tree.links.new(pupil_l_sz.outputs[0], pupil_l_scale.inputs['Z'])
 
     tree.links.new(iris_l_final_x.outputs[0], pupil_l_pos.inputs['X'])
     tree.links.new(group_in2.outputs['Eyes Depth'], pupil_l_pos_y.inputs[1])
@@ -981,6 +1210,7 @@ def build_geometry_nodes(mats):
     tree.links.new(eyes_height_z.outputs[0], pupil_l_pos.inputs['Z'])
     tree.links.new(pupil_l_rnd.outputs['Geometry'], pupil_l_xform.inputs['Geometry'])
     tree.links.new(pupil_l_pos.outputs['Vector'], pupil_l_xform.inputs['Translation'])
+    tree.links.new(pupil_l_scale.outputs['Vector'], pupil_l_xform.inputs['Scale'])
     tree.links.new(pupil_l_xform.outputs['Geometry'], pupil_l_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
@@ -989,6 +1219,18 @@ def build_geometry_nodes(mats):
 
     pupil_r_rnd = add_round_cube(tree, PRIM_X, PUPIL_R_Y, "Pupil R", radius=0.09, subdivs=4)
 
+    # Pupil blink: Z scale squishes with blink, same as iris
+    pupil_r_blink = add_node(tree, 'ShaderNodeMath', MATH_X - 200, PUPIL_R_Y, "Pupil R Blink")
+    pupil_r_blink.operation = 'MULTIPLY'
+    pupil_r_blink.inputs[1].default_value = 0.9
+
+    pupil_r_open = add_node(tree, 'ShaderNodeMath', MATH_X, PUPIL_R_Y, "Pupil R Open")
+    pupil_r_open.operation = 'SUBTRACT'
+    pupil_r_open.inputs[0].default_value = 1.0
+
+    pupil_r_sz = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_R_Y, "Pupil R Size Z")
+    pupil_r_sz.operation = 'MULTIPLY'
+
     pupil_r_pos_y = add_node(tree, 'ShaderNodeMath', MATH_X + 150, PUPIL_R_Y + 30, "Pupil R Pos Y")
     pupil_r_pos_y.operation = 'MULTIPLY'
     pupil_r_pos_y.inputs[0].default_value = -0.85  # further forward than iris (-0.72)
@@ -996,10 +1238,23 @@ def build_geometry_nodes(mats):
     pupil_r_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, PUPIL_R_Y, "Pupil R Pos")
     pupil_r_pos.inputs['Z'].default_value = 1.25  # overridden by Eyes Height link
 
+    pupil_r_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, PUPIL_R_Y - 80, "Pupil R Scale")
+
     pupil_r_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, PUPIL_R_Y, "Pupil R Transform")
 
     pupil_r_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, PUPIL_R_Y, "Pupil R Material")
     pupil_r_mat.inputs['Material'].default_value = mats['pupil']
+
+    # Blink → scale Z
+    tree.links.new(group_in.outputs['eyeBlinkRight'], pupil_r_blink.inputs[0])
+    tree.links.new(pupil_r_blink.outputs[0], pupil_r_open.inputs[1])
+    tree.links.new(pupil_r_open.outputs[0], pupil_r_sz.inputs[0])
+    tree.links.new(group_in.outputs['Eye Size'], pupil_r_sz.inputs[1])
+
+    # Scale: X=EyeSize, Y=EyeSize, Z=blink-scaled EyeSize
+    tree.links.new(group_in.outputs['Eye Size'], pupil_r_scale.inputs['X'])
+    tree.links.new(group_in.outputs['Eye Size'], pupil_r_scale.inputs['Y'])
+    tree.links.new(pupil_r_sz.outputs[0], pupil_r_scale.inputs['Z'])
 
     tree.links.new(iris_r_final_x.outputs[0], pupil_r_pos.inputs['X'])
     tree.links.new(group_in2.outputs['Eyes Depth'], pupil_r_pos_y.inputs[1])
@@ -1007,6 +1262,7 @@ def build_geometry_nodes(mats):
     tree.links.new(eyes_height_z.outputs[0], pupil_r_pos.inputs['Z'])
     tree.links.new(pupil_r_rnd.outputs['Geometry'], pupil_r_xform.inputs['Geometry'])
     tree.links.new(pupil_r_pos.outputs['Vector'], pupil_r_xform.inputs['Translation'])
+    tree.links.new(pupil_r_scale.outputs['Vector'], pupil_r_xform.inputs['Scale'])
     tree.links.new(pupil_r_xform.outputs['Geometry'], pupil_r_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------

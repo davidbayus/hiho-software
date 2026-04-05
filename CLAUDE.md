@@ -204,10 +204,10 @@ Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/fo
 
 **Note:** While QUADRE is in beta, use Exoside for test meshes when testing PaWrappa to isolate variables.
 
-### Green Room Addon (V0.3.1 — Organized Panels + Independent Eyebrow Controls)
+### Green Room Addon (V0.4.1-WIP — Dynamic Capsule Body + Lips)
 Puppet show addon lives in `green_room/`. N-panel tab is "Green Room". Class prefix: `GREENROOM`. Operator prefix: `greenroom.*`. Property prefix: `gr_`.
 
-**Current state (April 4, 2026): Full customization UI with organized panels, color controls, eyebrows, and face tracking.**
+**Current state (April 4, 2026): Body uses dynamic Minkowski capsule. Lips working. Shade Smooth + Subdivision Surface. Next: apply capsule to remaining body parts.**
 
 Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile/frown, pucker, eye look direction all working. Blob puppet has eyebrows reactive to face tracking.
 
@@ -219,24 +219,33 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Template Loader** (`core/template_loader.py`) — Loads .blend puppet templates, validates structure, wires drivers from dummy mesh to geonode inputs
 - **Template Spec** (`core/template_spec.py`) — Validates templates: checks for geonode modifier, armature with "head" bone, face tracking inputs, customization inputs. Groups sockets by panel.
 - **Puppet Picker** (`operators/pick_puppet.py`) — Browse and load available puppet templates
-- **Customize Puppet** (`operators/customize_puppet.py`) — N-panel "Make It Yours" section draws customization sliders grouped by body part (Body, Eyes, Mouth, Ears, Eyebrows)
+- **Customize Puppet** (`operators/customize_puppet.py`) — N-panel "Make It Yours" section draws customization sliders grouped by body part (Body, Eyes, Mouth, Ears, Eyebrows). Also exposes Subdivision Surface "Smoothness" slider.
 - **Calibrate Brows** (`operators/calibrate_brows.py`) — Developer tool: one-shot UDP capture to identify unknown ARKit blend shape indices
 - **N-Panel** (`ui/panels.py`) — Puppet panel (picker + customization sliders) + Connect panel (three states: disconnected, waiting, receiving)
 - **Blob Puppet Template** (`assets/create_blob_template.py` → `assets/templates/blob/blob_puppet.blend`) — Procedural character with:
-  - **Body parts**: Body, eyes (with irises + pupils), mouth, ears, eyebrows
+  - **Body parts**: Body (dynamic capsule), eyes (with irises + pupils), mouth, ears, eyebrows, lips (tube)
   - **Face tracking** (13 ARKit inputs): jawOpen, mouth smile/frown/funnel/left/right, eye blink/wide/look per side
-  - **Customization panels** (5 groups, 22 sliders):
-    - Body: Width, Height, Color
+  - **Customization panels** (6 groups, 25 sliders):
+    - Body: Width (0–2, capsule extension), Height, Rotation (-180°–180°), Color
     - Eyes: Size, Spacing, Height, Depth, Color
     - Mouth: Size, Height, Depth, Color
     - Ears: Size, Height, Spread, Depth, Color
     - Eyebrows: Size, Height, Depth, Spread, Color
+    - Lips: Thickness, Color
+  - **Dynamic capsule body** (Minkowski sum in geonodes): Width slider extends the straight midsection while caps stay round — same math as Blender's Round Cube addon but built inline so it's always live. Width=0 → sphere, Width=2 → long pill. Body Rotation tilts the capsule.
+  - **Shade Smooth** applied to all joined geometry before output
+  - **Subdivision Surface** modifier (level 2) with kid-friendly Smoothness slider
+  - **Lip tube**: Curve Circle path (24pts) deformed by mouth field → Curve to Mesh with profile circle → 3D tube around mouth opening
   - **Eyebrow face tracking**: eyeWide lifts (0.15), eyeBlink drops (-0.12), per-side independent
   - **Mouth deformation**: Per-vertex field (squished circle, jawOpen drops bottom, smile/frown bends corners, funnel narrows)
   - **Color system**: Store Named Attribute → Attribute material per body part
   - Armature with "head" bone (Euler XYZ) for phone rotation
+  - **Node tree spacing**: Rows spaced 400+ apart for readability in the Geometry Nodes editor
 
 **Key architecture decisions:**
+- **Dynamic Minkowski capsule (CRITICAL — hard-won lesson)**: You CANNOT get F9-style capsule behavior by scaling a fixed mesh. Uniform scaling stretches both the caps and midsection. The Blender Round Cube addon's `size` parameter works because it changes the GEOMETRY — vertices in the flat region stay flat, cap vertices stay on a sphere surface. To replicate this in geonodes, build the Minkowski sum math inline: subdivided cube → clamp each vertex to inner box (sized by Width slider) → offset from box → normalize × radius → add to clamped position. The inner box half-extent IS the midsection length. When it's 0, all vertices map to a sphere. When it's >0, vertices inside the box stay flat = straight midsection. The `add_round_cube()` helper does this with fixed size; the body section does it with slider-driven size.
+- **Round Cube addon threshold gotcha**: The Extra Objects addon's `primitive_round_cube_add` operator has an internal threshold: `size` must exceed `2 * (radius - sagitta)` to produce ANY straight section. With radius=0.5 and arc_div=8, that threshold is ~1.0. Passing size=0.8 produces a sphere, not a capsule. This is why the Object Info approach failed — the reference mesh was just a sphere.
+- **`add_round_cube()` helper** still used for eyes, irises, pupils, ears, brows with `size=(0,0,0)` (spheres). These need to be converted to dynamic Minkowski capsules with their own Width/Rotation sliders — see "Next: Capsule all body parts" below.
 - **Driver path format**: `modifiers["GeometryNodes"]["Socket_X"]` where Socket_X is the identifier from `tree.interface.items_tree`
 - **Bone rotation mode**: Must be set to `'XYZ'` (Euler) — Blender defaults to Quaternion which ignores `rotation_euler` values from the phone
 - **QR text format**: `"Green Room\nIP: {ip}\nPort: {port}"` — plain text prevents iOS from interpreting as URL
@@ -247,14 +256,35 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Eyebrow position**: Independent from eyes — Eyebrow Spread/Depth/Height are separate sliders. Height still offsets FROM eyes_height_z so brows track vertically with eyes.
 - **Socket cross-wiring prevention**: `setup_drivers()` maps by socket NAME not index. Adding new interface sockets won't shift existing driver targets. Always include ALL face tracking socket names in the face_inputs list.
 
-**Known issues / next steps (David has notes from April 4 testing):**
+**Next: Capsule all body parts (IMMEDIATE — next session):**
+
+The body's dynamic Minkowski capsule is working and tested. Now apply the SAME pattern to: eyes (L/R), irises (L/R), pupils (L/R), ears (L/R), eyebrows (L/R). NOT the mouth (it uses curve-based deformation).
+
+**What to do for each body part:**
+1. Add a "Width" socket (min 0.0) and "Rotation" socket (-180° to 180°) to that part's panel in the interface section
+2. Replace the `add_round_cube(tree, ..., radius=X, subdivs=N)` call with inline Minkowski nodes:
+   - Width slider → `body_ext` (multiply by extension factor) → cube Z size + clamp bounds
+   - Subdivided Mesh Cube (dynamic Z size) → Position → Clamp → Offset → Normalize → Scale(radius) → Add → Set Position
+   - Rotation slider → degrees to radians → add to existing orientation → Combine XYZ → Transform Rotation input
+3. Keep all existing scale/position/blink logic — just replace the geometry SOURCE (from `add_round_cube` output to `body_set_pos` output equivalent)
+4. The `add_round_cube()` helper function can be removed once all parts are converted
+
+**Pattern to copy (body section, lines ~720–870 in create_blob_template.py):**
+- Extension factor per part should match the part's radius (e.g., eyes radius=0.22 → ext_factor ~0.3)
+- Cube subdivisions: 6 is fine for small parts (body uses 8)
+- Each part needs its own set of clamp/offset/normalize/scale nodes — can't share between L/R because they have independent Width sliders for asymmetric control
+
+**After capsule conversion, also add:**
+- Asymmetric controls (per-eye size, per-ear size) — David requested this
+
+**Known issues / next steps:**
 - **Latency / skipping on fast head movement** — noticed during testing (April 3, 2026). See "Latency Research" section below.
 - **mouthLeft/Right ARKit indices (21/22) may be wrong** — produce 0.000 values. Need calibration with calibrate_brows tool.
 - **mouthFrownLeft/Right ARKit indices (25/26) also dead** — frown is currently driven by inverted smile instead. Kept as inputs for when correct indices are found.
 - Character design is basic — needs Will Anderson-style artistic variety
-- David has feedback notes from April 4 testing session (not yet captured)
 - **Mouth shape**: Mouth is large and fully open-looking at rest when mouth size is cranked up. May need squish factor to scale with mouth size.
-- Need to rebuild `blob_puppet.blend` after latest panel reorganization changes
+- Need to rebuild `blob_puppet.blend` after capsule conversion is complete
+- `create_body_capsule()` function in create_blob_template.py is now unused (was Object Info approach, replaced by inline Minkowski). Can be removed.
 
 **Latency Research (TODO — next session):**
 Observed: head rotation skips/jumps during fast movement. Need to investigate and fix while staying e-waste friendly (8GB RAM, integrated GPU, no CUDA).
@@ -321,7 +351,10 @@ Git is initialized in this folder. Use `git log` to see history. Always commit w
 
 **Commit history:**
 ```
-PENDING V0.3.1 — Organized customize panels, independent eyebrow position controls
+PENDING V0.4.1 — Dynamic Minkowski capsule body, rotation slider, width min=0
+9d3be18 V0.4.0 — Round cube primitives, shade smooth, subdivision surface
+627aec6 V0.3.2 — Lip tube geometry (beveled curve around mouth opening)
+9978eff V0.3.1 — Organized customize panels, independent eyebrow position controls
 6a2dbe7 V0.3.0 — Eyebrows, mouth frown/shift, color controls, position sliders
 96cd580 V0.2.0 — Template loader, puppet picker, customization sliders, latency fix
 2de54b3 Add latency research notes — head tracking skips on fast movement
