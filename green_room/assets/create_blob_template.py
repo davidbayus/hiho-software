@@ -807,10 +807,22 @@ def build_geometry_nodes(mats):
     brow_rot_rad.inputs[1].default_value = math.pi / 180.0
     tree.links.new(group_in.outputs['Eyebrow Rotation'], brow_rot_rad.inputs[0])
 
-    brow_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -860, "Brow Rot Vec")
+    brow_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -860, "Brow Rot L")
     brow_rot_vec.inputs['X'].default_value = 0.0
     brow_rot_vec.inputs['Z'].default_value = 0.0
     tree.links.new(brow_rot_rad.outputs[0], brow_rot_vec.inputs['Y'])
+
+    # Right eyebrow: mirrored rotation for symmetrical expressions
+    # Positive slider = brows angle inward (angry), negative = outward (sad)
+    brow_rot_neg = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -920, "Brow Rot Neg")
+    brow_rot_neg.operation = 'MULTIPLY'
+    brow_rot_neg.inputs[1].default_value = -1.0
+    tree.links.new(brow_rot_rad.outputs[0], brow_rot_neg.inputs[0])
+
+    brow_rot_vec_r = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -920, "Brow Rot R")
+    brow_rot_vec_r.inputs['X'].default_value = 0.0
+    brow_rot_vec_r.inputs['Z'].default_value = 0.0
+    tree.links.new(brow_rot_neg.outputs[0], brow_rot_vec_r.inputs['Y'])
 
     # ------------------------------------------------------------------
     # BODY — Dynamic capsule (Minkowski sum, Width drives extension)
@@ -1045,10 +1057,14 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_l_pos_y.outputs[0], eye_l_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], eye_l_pos.inputs['Z'])
 
-    tree.links.new(eye_l_rnd.outputs['Geometry'], eye_l_xform.inputs['Geometry'])
+    # Pre-rotation: rotate capsule BEFORE blink scale so blink stays vertical
+    eye_l_pre_rot = add_node(tree, 'GeometryNodeTransform', XFORM_X - 100, EYE_L_Y, "Eye L PreRot")
+    tree.links.new(eye_l_rnd.outputs['Geometry'], eye_l_pre_rot.inputs['Geometry'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], eye_l_pre_rot.inputs['Rotation'])
+
+    tree.links.new(eye_l_pre_rot.outputs['Geometry'], eye_l_xform.inputs['Geometry'])
     tree.links.new(eye_l_pos.outputs['Vector'], eye_l_xform.inputs['Translation'])
     tree.links.new(eye_l_scale.outputs['Vector'], eye_l_xform.inputs['Scale'])
-    tree.links.new(eye_rot_vec.outputs['Vector'], eye_l_xform.inputs['Rotation'])
     tree.links.new(eye_l_xform.outputs['Geometry'], eye_l_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
@@ -1119,10 +1135,13 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_r_pos_y.outputs[0], eye_r_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], eye_r_pos.inputs['Z'])
 
-    tree.links.new(eye_r_rnd.outputs['Geometry'], eye_r_xform.inputs['Geometry'])
+    eye_r_pre_rot = add_node(tree, 'GeometryNodeTransform', XFORM_X - 100, EYE_R_Y, "Eye R PreRot")
+    tree.links.new(eye_r_rnd.outputs['Geometry'], eye_r_pre_rot.inputs['Geometry'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], eye_r_pre_rot.inputs['Rotation'])
+
+    tree.links.new(eye_r_pre_rot.outputs['Geometry'], eye_r_xform.inputs['Geometry'])
     tree.links.new(eye_r_pos.outputs['Vector'], eye_r_xform.inputs['Translation'])
     tree.links.new(eye_r_scale.outputs['Vector'], eye_r_xform.inputs['Scale'])
-    tree.links.new(eye_rot_vec.outputs['Vector'], eye_r_xform.inputs['Rotation'])
     tree.links.new(eye_r_xform.outputs['Geometry'], eye_r_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
@@ -1194,10 +1213,13 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in.outputs['Eye Size'], iris_l_scale.inputs['Y'])
     tree.links.new(iris_l_sz.outputs[0], iris_l_scale.inputs['Z'])
 
-    tree.links.new(iris_l_rnd.outputs['Geometry'], iris_l_xform.inputs['Geometry'])
+    iris_l_pre_rot = add_node(tree, 'GeometryNodeTransform', XFORM_X - 100, IRIS_L_Y, "Iris L PreRot")
+    tree.links.new(iris_l_rnd.outputs['Geometry'], iris_l_pre_rot.inputs['Geometry'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], iris_l_pre_rot.inputs['Rotation'])
+
+    tree.links.new(iris_l_pre_rot.outputs['Geometry'], iris_l_xform.inputs['Geometry'])
     tree.links.new(iris_l_pos.outputs['Vector'], iris_l_xform.inputs['Translation'])
     tree.links.new(iris_l_scale.outputs['Vector'], iris_l_xform.inputs['Scale'])
-    tree.links.new(eye_rot_vec.outputs['Vector'], iris_l_xform.inputs['Rotation'])
     tree.links.new(iris_l_xform.outputs['Geometry'], iris_l_color.inputs['Geometry'])
     tree.links.new(group_in.outputs['Eye Color'], iris_l_color.inputs['Value'])
     tree.links.new(iris_l_color.outputs['Geometry'], iris_l_mat.inputs['Geometry'])
@@ -1269,10 +1291,13 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in2.outputs['Eye Size'], iris_r_scale.inputs['Y'])
     tree.links.new(iris_r_sz.outputs[0], iris_r_scale.inputs['Z'])
 
-    tree.links.new(iris_r_rnd.outputs['Geometry'], iris_r_xform.inputs['Geometry'])
+    iris_r_pre_rot = add_node(tree, 'GeometryNodeTransform', XFORM_X - 100, IRIS_R_Y, "Iris R PreRot")
+    tree.links.new(iris_r_rnd.outputs['Geometry'], iris_r_pre_rot.inputs['Geometry'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], iris_r_pre_rot.inputs['Rotation'])
+
+    tree.links.new(iris_r_pre_rot.outputs['Geometry'], iris_r_xform.inputs['Geometry'])
     tree.links.new(iris_r_pos.outputs['Vector'], iris_r_xform.inputs['Translation'])
     tree.links.new(iris_r_scale.outputs['Vector'], iris_r_xform.inputs['Scale'])
-    tree.links.new(eye_rot_vec.outputs['Vector'], iris_r_xform.inputs['Rotation'])
     tree.links.new(iris_r_xform.outputs['Geometry'], iris_r_color.inputs['Geometry'])
     tree.links.new(group_in2.outputs['Eye Color'], iris_r_color.inputs['Value'])
     tree.links.new(iris_r_color.outputs['Geometry'], iris_r_mat.inputs['Geometry'])
@@ -1327,10 +1352,13 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in2.outputs['Eyes Depth'], pupil_l_pos_y.inputs[1])
     tree.links.new(pupil_l_pos_y.outputs[0], pupil_l_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], pupil_l_pos.inputs['Z'])
-    tree.links.new(pupil_l_rnd.outputs['Geometry'], pupil_l_xform.inputs['Geometry'])
+    pupil_l_pre_rot = add_node(tree, 'GeometryNodeTransform', XFORM_X - 100, PUPIL_L_Y, "Pupil L PreRot")
+    tree.links.new(pupil_l_rnd.outputs['Geometry'], pupil_l_pre_rot.inputs['Geometry'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], pupil_l_pre_rot.inputs['Rotation'])
+
+    tree.links.new(pupil_l_pre_rot.outputs['Geometry'], pupil_l_xform.inputs['Geometry'])
     tree.links.new(pupil_l_pos.outputs['Vector'], pupil_l_xform.inputs['Translation'])
     tree.links.new(pupil_l_scale.outputs['Vector'], pupil_l_xform.inputs['Scale'])
-    tree.links.new(eye_rot_vec.outputs['Vector'], pupil_l_xform.inputs['Rotation'])
     tree.links.new(pupil_l_xform.outputs['Geometry'], pupil_l_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
@@ -1382,10 +1410,13 @@ def build_geometry_nodes(mats):
     tree.links.new(group_in2.outputs['Eyes Depth'], pupil_r_pos_y.inputs[1])
     tree.links.new(pupil_r_pos_y.outputs[0], pupil_r_pos.inputs['Y'])
     tree.links.new(eyes_height_z.outputs[0], pupil_r_pos.inputs['Z'])
-    tree.links.new(pupil_r_rnd.outputs['Geometry'], pupil_r_xform.inputs['Geometry'])
+    pupil_r_pre_rot = add_node(tree, 'GeometryNodeTransform', XFORM_X - 100, PUPIL_R_Y, "Pupil R PreRot")
+    tree.links.new(pupil_r_rnd.outputs['Geometry'], pupil_r_pre_rot.inputs['Geometry'])
+    tree.links.new(eye_rot_vec.outputs['Vector'], pupil_r_pre_rot.inputs['Rotation'])
+
+    tree.links.new(pupil_r_pre_rot.outputs['Geometry'], pupil_r_xform.inputs['Geometry'])
     tree.links.new(pupil_r_pos.outputs['Vector'], pupil_r_xform.inputs['Translation'])
     tree.links.new(pupil_r_scale.outputs['Vector'], pupil_r_xform.inputs['Scale'])
-    tree.links.new(eye_rot_vec.outputs['Vector'], pupil_r_xform.inputs['Rotation'])
     tree.links.new(pupil_r_xform.outputs['Geometry'], pupil_r_mat.inputs['Geometry'])
 
     # ------------------------------------------------------------------
@@ -1881,7 +1912,7 @@ def build_geometry_nodes(mats):
     tree.links.new(brow_r_rnd.outputs['Geometry'], brow_r_xform.inputs['Geometry'])
     tree.links.new(brow_r_pos.outputs['Vector'], brow_r_xform.inputs['Translation'])
     tree.links.new(brow_r_scale.outputs['Vector'], brow_r_xform.inputs['Scale'])
-    tree.links.new(brow_rot_vec.outputs['Vector'], brow_r_xform.inputs['Rotation'])
+    tree.links.new(brow_rot_vec_r.outputs['Vector'], brow_r_xform.inputs['Rotation'])
     tree.links.new(brow_r_xform.outputs['Geometry'], brow_r_color.inputs['Geometry'])
     tree.links.new(group_in2.outputs['Eyebrow Color'], brow_r_color.inputs['Value'])
     tree.links.new(brow_r_color.outputs['Geometry'], brow_r_mat.inputs['Geometry'])
