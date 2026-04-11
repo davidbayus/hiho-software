@@ -2380,10 +2380,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       ext_factor=0.3, axis='Z',
                       uniform_scale_out=group_in.outputs['Hand Size'],
                       rotation_output=group_in.outputs['Hand Rotation'],
-                      negate_rot=True,
                       tilt_output=group_in.outputs['Hand Tilt'],
                       tilt_axis='X',
-                      negate_tilt=True,
                       mat_socket=group_in.outputs['Hand Material'])
 
     # Feet: capsules with Width + Rotation on Z (mirrored) + Depth
