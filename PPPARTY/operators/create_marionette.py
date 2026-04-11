@@ -2181,19 +2181,24 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                           width_output=None, ext_factor=0.3, axis='Z',
                           subdivs=6, uniform_scale_out=None,
                           rotation_output=None, rot_axis='Y',
+                          negate_rot=False,
                           tilt_output=None, tilt_axis='X',
+                          negate_tilt=False,
                           depth_output=None, depth_axis='Y',
                           mat_socket=None):
         """Create one body part: capsule + transform + material + smooth.
 
         uniform_scale_out: optional socket driving uniform XYZ scale
         rotation_output: optional socket driving rotation (degrees) on rot_axis
+        negate_rot: if True, mirror the rotation (multiply by -1)
         tilt_output: optional SECOND rotation axis (degrees) on tilt_axis
+        negate_tilt: if True, mirror the tilt (multiply by -1)
         depth_output: optional position offset along depth_axis
         mat_socket: optional group_in socket for material assignment
                     (overrides hardcoded mat when provided)
         """
         import math
+        _axis_idx = {'X': 0, 'Y': 1, 'Z': 2}
 
         capsule = add_dynamic_capsule(
             tree, x_part - 1200, y, label,
@@ -2221,7 +2226,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
             tree.links.new(pos_socket, tf.inputs['Translation'])
 
         if rotation_output is not None or tilt_output is not None:
-            # Build rotation vector: static base, override driven axes
+            # Build rotation vector: static base, driven axes add to base
             rot_vec = add_node(tree, 'ShaderNodeCombineXYZ',
                                x_part + 200, y - 160, f"{label} RotV")
             rot_vec.inputs['X'].default_value = rotation[0]
@@ -2229,22 +2234,51 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
             rot_vec.inputs['Z'].default_value = rotation[2]
 
             if rotation_output is not None:
+                rot_scale = (-math.pi / 180.0) if negate_rot else (math.pi / 180.0)
                 rot_rad = add_node(tree, 'ShaderNodeMath',
                                    x_part + 50, y - 160, f"{label} D→R")
                 rot_rad.operation = 'MULTIPLY'
-                rot_rad.inputs[1].default_value = math.pi / 180.0
+                rot_rad.inputs[1].default_value = rot_scale
                 tree.links.new(rotation_output, rot_rad.inputs[0])
-                tree.links.new(rot_rad.outputs[0],
-                               rot_vec.inputs[rot_axis])
+
+                # Add to static base if axis has a non-zero default
+                base_val = rotation[_axis_idx[rot_axis]]
+                if abs(base_val) > 1e-6:
+                    rot_add = add_node(tree, 'ShaderNodeMath',
+                                       x_part + 50, y - 130,
+                                       f"{label} R+B")
+                    rot_add.operation = 'ADD'
+                    rot_add.inputs[0].default_value = base_val
+                    tree.links.new(rot_rad.outputs[0],
+                                   rot_add.inputs[1])
+                    tree.links.new(rot_add.outputs[0],
+                                   rot_vec.inputs[rot_axis])
+                else:
+                    tree.links.new(rot_rad.outputs[0],
+                                   rot_vec.inputs[rot_axis])
 
             if tilt_output is not None:
+                tilt_scale = (-math.pi / 180.0) if negate_tilt else (math.pi / 180.0)
                 tilt_rad = add_node(tree, 'ShaderNodeMath',
                                     x_part + 50, y - 220, f"{label} T→R")
                 tilt_rad.operation = 'MULTIPLY'
-                tilt_rad.inputs[1].default_value = math.pi / 180.0
+                tilt_rad.inputs[1].default_value = tilt_scale
                 tree.links.new(tilt_output, tilt_rad.inputs[0])
-                tree.links.new(tilt_rad.outputs[0],
-                               rot_vec.inputs[tilt_axis])
+
+                base_val_t = rotation[_axis_idx[tilt_axis]]
+                if abs(base_val_t) > 1e-6:
+                    tilt_add = add_node(tree, 'ShaderNodeMath',
+                                        x_part + 50, y - 250,
+                                        f"{label} T+B")
+                    tilt_add.operation = 'ADD'
+                    tilt_add.inputs[0].default_value = base_val_t
+                    tree.links.new(tilt_rad.outputs[0],
+                                   tilt_add.inputs[1])
+                    tree.links.new(tilt_add.outputs[0],
+                                   rot_vec.inputs[tilt_axis])
+                else:
+                    tree.links.new(tilt_rad.outputs[0],
+                                   rot_vec.inputs[tilt_axis])
 
             tree.links.new(rot_vec.outputs['Vector'],
                            tf.inputs['Rotation'])
@@ -2330,7 +2364,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                      waist_mid.outputs['Vector'], body_mats['joint'],
                      mat_socket=group_in.outputs['Joint Material'])
 
-    # Hands: capsules with Width + Rotation + Tilt
+    # Hands: capsules with Width + Rotation + Tilt (mirrored L/R)
     _add_capsule_part(-620, "Hand L", HAND_RADIUS,
                       sim_out.outputs['pos_hand_l'], body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
@@ -2346,11 +2380,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       ext_factor=0.3, axis='Z',
                       uniform_scale_out=group_in.outputs['Hand Size'],
                       rotation_output=group_in.outputs['Hand Rotation'],
+                      negate_rot=True,
                       tilt_output=group_in.outputs['Hand Tilt'],
                       tilt_axis='X',
+                      negate_tilt=True,
                       mat_socket=group_in.outputs['Hand Material'])
 
-    # Feet: capsules with Width + Rotation + Depth (forward offset)
+    # Feet: capsules with Width + Rotation on Z (mirrored) + Depth
     _add_capsule_part(-940, "Foot L", FOOT_RADIUS,
                       sim_out.outputs['pos_foot_l'], body_mats['foot'],
                       rotation=(0, 0, FOOT_SPLAY_ANGLE),
@@ -2358,7 +2394,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       ext_factor=0.3, axis='Y',
                       uniform_scale_out=group_in.outputs['Foot Size'],
                       rotation_output=group_in.outputs['Foot Rotation'],
-                      rot_axis='X',
+                      rot_axis='Z',
                       depth_output=group_in.outputs['Foot Depth'],
                       depth_axis='Y',
                       mat_socket=group_in.outputs['Foot Material'])
@@ -2369,7 +2405,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       ext_factor=0.3, axis='Y',
                       uniform_scale_out=group_in.outputs['Foot Size'],
                       rotation_output=group_in.outputs['Foot Rotation'],
-                      rot_axis='X',
+                      rot_axis='Z', negate_rot=True,
                       depth_output=group_in.outputs['Foot Depth'],
                       depth_axis='Y',
                       mat_socket=group_in.outputs['Foot Material'])
