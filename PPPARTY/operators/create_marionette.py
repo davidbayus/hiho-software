@@ -1,5 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""PPParty — Create Marionette V0.9.4: Material slots for all parts.
+"""PPParty — Create Marionette V0.9.6: Node groups + tree organization.
+
+V0.9.6:
+- Three reusable node groups with internal frames and descriptions:
+  PP_DynCapsule (Minkowski capsule), PP_TwoBoneIK (elbow/knee solver),
+  PP_ShoulderFloat (Jim Rose drift). Collapses ~244 inline nodes into
+  14 group instances. Each group has labeled sub-frames explaining the math.
+- Colored Frame nodes around every section of the GN tree for readability.
+- 12 labeled sections: Face, Control Bar, Strings, Attachments, Rest Pose,
+  Sim Zone, Physics Core, Shoulder Float, Verlet, Body, Skeleton, Assembly.
+
+V0.9.5:
+- Colored Frame nodes around every section of the GN tree for readability.
+- Each label explains the section's role in the marionette design.
+- Zero functional changes — same connections, same physics, same behavior.
 
 V0.9.0:
 - Head customization passthrough: all 27 blob head sliders (eyes, mouth,
@@ -151,139 +165,22 @@ def make_material(name, color):
 
 def add_dynamic_capsule(tree, x, y, label, radius=0.5, subdivs=6,
                         width_output=None, ext_factor=0.3, axis='Z'):
-    """Add a dynamic Minkowski capsule driven by a Width slider.
+    """Add a dynamic Minkowski capsule via the PP_DynCapsule node group.
 
-    Ported from Green Room blob puppet. Subdivided cube → clamp to inner
-    box → offset → normalize × radius → add to clamped position.
     Width=0 → sphere. Width>0 → pill shape along the specified axis.
-
-    Returns the Set Position node (geometry output = capsule mesh).
+    Returns the group node (geometry output = capsule mesh).
     """
-    diam = 2.0 * radius
-
-    if width_output is None:
-        cube = add_node(tree, 'GeometryNodeMeshCube', x, y, f"{label} Cube")
-        cube.inputs['Size'].default_value = (diam, diam, diam)
-        cube.inputs['Vertices X'].default_value = subdivs
-        cube.inputs['Vertices Y'].default_value = subdivs
-        cube.inputs['Vertices Z'].default_value = subdivs
-
-        pos_in = add_node(tree, 'GeometryNodeInputPosition', x + 150,
-                          y - 50, f"{label} Pos")
-        norm = add_node(tree, 'ShaderNodeVectorMath', x + 300, y - 50,
-                        f"{label} Norm")
-        norm.operation = 'NORMALIZE'
-        tree.links.new(pos_in.outputs['Position'], norm.inputs[0])
-
-        scaled = add_node(tree, 'ShaderNodeVectorMath', x + 450, y - 50,
-                          f"{label} Rnd")
-        scaled.operation = 'SCALE'
-        scaled.inputs['Scale'].default_value = radius
-        tree.links.new(norm.outputs['Vector'], scaled.inputs[0])
-
-        set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 600, y,
-                           f"{label} RndPos")
-        tree.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
-        tree.links.new(scaled.outputs['Vector'],
-                       set_pos.inputs['Position'])
-        return set_pos
-
-    # --- Dynamic capsule: Width slider drives extension along axis ---
-    ext = add_node(tree, 'ShaderNodeMath', x - 300, y - 80,
-                   f"{label} W→Ext")
-    ext.operation = 'MULTIPLY'
-    ext.inputs[1].default_value = ext_factor
-    tree.links.new(width_output, ext.inputs[0])
-
-    ext_x2 = add_node(tree, 'ShaderNodeMath', x - 300, y - 160,
-                       f"{label} Ext×2")
-    ext_x2.operation = 'MULTIPLY'
-    ext_x2.inputs[1].default_value = 2.0
-    tree.links.new(ext.outputs[0], ext_x2.inputs[0])
-
-    axis_size = add_node(tree, 'ShaderNodeMath', x - 150, y - 160,
-                         f"{label} AxSz")
-    axis_size.operation = 'ADD'
-    axis_size.inputs[1].default_value = diam
-    tree.links.new(ext_x2.outputs[0], axis_size.inputs[0])
-
-    cube_size = add_node(tree, 'ShaderNodeCombineXYZ', x - 50, y - 80,
-                         f"{label} CubeSz")
-    cube_size.inputs['X'].default_value = diam
-    cube_size.inputs['Y'].default_value = diam
-    cube_size.inputs['Z'].default_value = diam
-    tree.links.new(axis_size.outputs[0], cube_size.inputs[axis])
-
-    cube = add_node(tree, 'GeometryNodeMeshCube', x, y, f"{label} Cube")
-    cube.inputs['Vertices X'].default_value = subdivs
-    cube.inputs['Vertices Y'].default_value = subdivs
-    cube.inputs['Vertices Z'].default_value = subdivs
-    tree.links.new(cube_size.outputs['Vector'], cube.inputs['Size'])
-
-    pos_in = add_node(tree, 'GeometryNodeInputPosition', x + 100, y - 60,
-                      f"{label} Pos")
-
-    clamp_hi_v = add_node(tree, 'ShaderNodeCombineXYZ', x + 100, y - 130,
-                          f"{label} +Ext")
-    clamp_hi_v.inputs['X'].default_value = 0.0
-    clamp_hi_v.inputs['Y'].default_value = 0.0
-    clamp_hi_v.inputs['Z'].default_value = 0.0
-    tree.links.new(ext.outputs[0], clamp_hi_v.inputs[axis])
-
-    ext_neg = add_node(tree, 'ShaderNodeMath', x + 100, y - 200,
-                       f"{label} NegExt")
-    ext_neg.operation = 'MULTIPLY'
-    ext_neg.inputs[1].default_value = -1.0
-    tree.links.new(ext.outputs[0], ext_neg.inputs[0])
-
-    clamp_lo_v = add_node(tree, 'ShaderNodeCombineXYZ', x + 250, y - 200,
-                          f"{label} -Ext")
-    clamp_lo_v.inputs['X'].default_value = 0.0
-    clamp_lo_v.inputs['Y'].default_value = 0.0
-    clamp_lo_v.inputs['Z'].default_value = 0.0
-    tree.links.new(ext_neg.outputs[0], clamp_lo_v.inputs[axis])
-
-    clamp_hi = add_node(tree, 'ShaderNodeVectorMath', x + 400, y - 60,
-                        f"{label} ClHi")
-    clamp_hi.operation = 'MINIMUM'
-    tree.links.new(pos_in.outputs['Position'], clamp_hi.inputs[0])
-    tree.links.new(clamp_hi_v.outputs['Vector'], clamp_hi.inputs[1])
-
-    clamp_lo = add_node(tree, 'ShaderNodeVectorMath', x + 550, y - 60,
-                        f"{label} ClLo")
-    clamp_lo.operation = 'MAXIMUM'
-    tree.links.new(clamp_hi.outputs['Vector'], clamp_lo.inputs[0])
-    tree.links.new(clamp_lo_v.outputs['Vector'], clamp_lo.inputs[1])
-
-    offset = add_node(tree, 'ShaderNodeVectorMath', x + 700, y - 60,
-                      f"{label} Offs")
-    offset.operation = 'SUBTRACT'
-    tree.links.new(pos_in.outputs['Position'], offset.inputs[0])
-    tree.links.new(clamp_lo.outputs['Vector'], offset.inputs[1])
-
-    norm = add_node(tree, 'ShaderNodeVectorMath', x + 850, y - 60,
-                    f"{label} Norm")
-    norm.operation = 'NORMALIZE'
-    tree.links.new(offset.outputs['Vector'], norm.inputs[0])
-
-    cap = add_node(tree, 'ShaderNodeVectorMath', x + 1000, y - 60,
-                   f"{label} ×R")
-    cap.operation = 'SCALE'
-    cap.inputs['Scale'].default_value = radius
-    tree.links.new(norm.outputs['Vector'], cap.inputs[0])
-
-    final = add_node(tree, 'ShaderNodeVectorMath', x + 1150, y - 60,
-                     f"{label} Final")
-    final.operation = 'ADD'
-    tree.links.new(clamp_lo.outputs['Vector'], final.inputs[0])
-    tree.links.new(cap.outputs['Vector'], final.inputs[1])
-
-    set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 1300, y,
-                       f"{label} Cap")
-    tree.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
-    tree.links.new(final.outputs['Vector'], set_pos.inputs['Position'])
-
-    return set_pos
+    _axis_map = {'X': (1, 0, 0), 'Y': (0, 1, 0), 'Z': (0, 0, 1)}
+    capsule_tree = _ensure_capsule_group()
+    grp = add_node(tree, 'GeometryNodeGroup', x, y, label)
+    grp.node_tree = capsule_tree
+    grp.inputs['Radius'].default_value = radius
+    grp.inputs['Ext Factor'].default_value = ext_factor
+    grp.inputs['Subdivisions'].default_value = subdivs
+    grp.inputs['Axis Mask'].default_value = _axis_map.get(axis, (0, 0, 1))
+    if width_output is not None:
+        tree.links.new(width_output, grp.inputs['Width'])
+    return grp
 
 
 def create_body_materials():
@@ -295,6 +192,506 @@ def create_body_materials():
         'joint': make_material("PP_Joint", (0.5, 0.5, 0.5, 1.0)),
         'limb': make_material("PP_Limb", (0.25, 0.25, 0.25, 1.0)),
     }
+
+
+# ===================================================================
+# NODE TREE ORGANIZATION — colored frames for readability
+# ===================================================================
+# Purely visual. No functional changes to the node tree.
+# Each section of the marionette gets a labeled, colored Frame node
+# so the GN editor reads like a blueprint of the puppet's design.
+
+FRAME_COLORS = {
+    'face':     (0.25, 0.55, 0.65),  # Teal — the puppet's head/expressions
+    'control':  (0.30, 0.40, 0.70),  # Blue — control bar (input mapping)
+    'strings':  (0.70, 0.50, 0.25),  # Orange — strings (torso dynamics)
+    'attach':   (0.65, 0.60, 0.30),  # Yellow — attachment points
+    'rest':     (0.55, 0.55, 0.40),  # Olive — rest positions
+    'simzone':  (0.50, 0.30, 0.50),  # Purple — simulation zone boundary
+    'physics':  (0.65, 0.30, 0.35),  # Red — physics core
+    'float':    (0.55, 0.35, 0.60),  # Violet — shoulder float
+    'verlet':   (0.70, 0.25, 0.30),  # Dark red — Verlet integration
+    'body':     (0.35, 0.60, 0.35),  # Green — visual body parts
+    'skeleton': (0.40, 0.55, 0.50),  # Teal-green — limb curves / IK
+    'output':   (0.50, 0.50, 0.50),  # Grey — final assembly
+}
+
+
+def _snap_nodes(tree):
+    """Snapshot current node names for section framing."""
+    return {n.name for n in tree.nodes}
+
+
+def _new_nodes(tree, snap):
+    """Get nodes added since snapshot (excluding Frame nodes)."""
+    return [n for n in tree.nodes
+            if n.name not in snap and n.type != 'FRAME']
+
+
+def _frame_section(tree, label, color_key, nodes):
+    """Wrap nodes in a labeled, colored Frame for GN editor readability.
+
+    Purely visual — does not change any node connections or behavior.
+    """
+    if not nodes:
+        return None
+    frame = tree.nodes.new('NodeFrame')
+    frame.label = label
+    frame.use_custom_color = True
+    frame.color = FRAME_COLORS[color_key]
+    frame.label_size = 20
+    frame.shrink = True
+    for n in nodes:
+        if n.parent is None:
+            n.parent = frame
+    return frame
+
+
+# ===================================================================
+# REUSABLE NODE GROUPS — collapse repeated math into single nodes
+# ===================================================================
+
+def _ensure_capsule_group():
+    """Create or retrieve the PP_DynCapsule node group.
+
+    Minkowski capsule: cube → clamp to inner box → offset → normalize
+    × radius → add back. Width=0 → sphere, Width>0 → pill shape.
+    Replaces ~15 inline nodes per body part.
+    """
+    existing = bpy.data.node_groups.get("PP_DynCapsule")
+    if existing:
+        return existing
+
+    g = bpy.data.node_groups.new("PP_DynCapsule", 'GeometryNodeTree')
+    g.interface.clear()
+
+    s = g.interface.new_socket(
+        "Width", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 5.0
+    s = g.interface.new_socket(
+        "Ext Factor", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.3
+    s = g.interface.new_socket(
+        "Radius", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.5
+    s = g.interface.new_socket(
+        "Subdivisions", in_out='INPUT', socket_type='NodeSocketInt')
+    s.default_value = 6
+    s.min_value = 2
+    s.max_value = 12
+    s = g.interface.new_socket(
+        "Axis Mask", in_out='INPUT', socket_type='NodeSocketVector')
+    s.default_value = (0.0, 0.0, 1.0)
+    g.interface.new_socket(
+        "Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+
+    dx = 200
+    gin = add_node(g, 'NodeGroupInput', 0, 0, "In")
+
+    # --- Extension sizing ---
+    diam_n = add_node(g, 'ShaderNodeMath', dx, 0, "Diam")
+    diam_n.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Radius'], diam_n.inputs[0])
+    diam_n.inputs[1].default_value = 2.0
+
+    ext_n = add_node(g, 'ShaderNodeMath', dx, -120, "Ext")
+    ext_n.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Width'], ext_n.inputs[0])
+    g.links.new(gin.outputs['Ext Factor'], ext_n.inputs[1])
+
+    ext_x2 = add_node(g, 'ShaderNodeMath', dx * 2, -120, "Ext*2")
+    ext_x2.operation = 'MULTIPLY'
+    g.links.new(ext_n.outputs[0], ext_x2.inputs[0])
+    ext_x2.inputs[1].default_value = 2.0
+
+    ext_vec = add_node(g, 'ShaderNodeVectorMath', dx * 3, -120, "ExtVec")
+    ext_vec.operation = 'SCALE'
+    g.links.new(gin.outputs['Axis Mask'], ext_vec.inputs[0])
+    g.links.new(ext_x2.outputs[0], ext_vec.inputs['Scale'])
+
+    base_sz = add_node(g, 'ShaderNodeCombineXYZ', dx * 3, 0, "BaseSz")
+    g.links.new(diam_n.outputs[0], base_sz.inputs['X'])
+    g.links.new(diam_n.outputs[0], base_sz.inputs['Y'])
+    g.links.new(diam_n.outputs[0], base_sz.inputs['Z'])
+
+    cube_sz = add_node(g, 'ShaderNodeVectorMath', dx * 4, 0, "CubeSz")
+    cube_sz.operation = 'ADD'
+    g.links.new(base_sz.outputs['Vector'], cube_sz.inputs[0])
+    g.links.new(ext_vec.outputs['Vector'], cube_sz.inputs[1])
+
+    _frame_section(g,
+        "EXTENSION — Width slider stretches the cube along one axis"
+        " to create the pill midsection",
+        'strings', [diam_n, ext_n, ext_x2, ext_vec, base_sz, cube_sz])
+
+    # --- Subdivided cube mesh ---
+    cube = add_node(g, 'GeometryNodeMeshCube', dx * 5, 0, "Cube")
+    g.links.new(cube_sz.outputs['Vector'], cube.inputs['Size'])
+    g.links.new(gin.outputs['Subdivisions'], cube.inputs['Vertices X'])
+    g.links.new(gin.outputs['Subdivisions'], cube.inputs['Vertices Y'])
+    g.links.new(gin.outputs['Subdivisions'], cube.inputs['Vertices Z'])
+
+    # --- Minkowski clamp + sphere projection ---
+    pos_in = add_node(g, 'GeometryNodeInputPosition', dx * 5, -120, "Pos")
+
+    cl_hi_v = add_node(g, 'ShaderNodeVectorMath', dx * 4, -220, "+Ext")
+    cl_hi_v.operation = 'SCALE'
+    g.links.new(gin.outputs['Axis Mask'], cl_hi_v.inputs[0])
+    g.links.new(ext_n.outputs[0], cl_hi_v.inputs['Scale'])
+
+    cl_lo_v = add_node(g, 'ShaderNodeVectorMath', dx * 4, -320, "-Ext")
+    cl_lo_v.operation = 'SCALE'
+    g.links.new(cl_hi_v.outputs['Vector'], cl_lo_v.inputs[0])
+    cl_lo_v.inputs['Scale'].default_value = -1.0
+
+    cl_hi = add_node(g, 'ShaderNodeVectorMath', dx * 6, -120, "ClHi")
+    cl_hi.operation = 'MINIMUM'
+    g.links.new(pos_in.outputs['Position'], cl_hi.inputs[0])
+    g.links.new(cl_hi_v.outputs['Vector'], cl_hi.inputs[1])
+
+    cl_lo = add_node(g, 'ShaderNodeVectorMath', dx * 7, -120, "ClLo")
+    cl_lo.operation = 'MAXIMUM'
+    g.links.new(cl_hi.outputs['Vector'], cl_lo.inputs[0])
+    g.links.new(cl_lo_v.outputs['Vector'], cl_lo.inputs[1])
+
+    offs = add_node(g, 'ShaderNodeVectorMath', dx * 8, -120, "Offs")
+    offs.operation = 'SUBTRACT'
+    g.links.new(pos_in.outputs['Position'], offs.inputs[0])
+    g.links.new(cl_lo.outputs['Vector'], offs.inputs[1])
+
+    nrm = add_node(g, 'ShaderNodeVectorMath', dx * 9, -120, "Norm")
+    nrm.operation = 'NORMALIZE'
+    g.links.new(offs.outputs['Vector'], nrm.inputs[0])
+
+    cap = add_node(g, 'ShaderNodeVectorMath', dx * 10, -120, "xR")
+    cap.operation = 'SCALE'
+    g.links.new(nrm.outputs['Vector'], cap.inputs[0])
+    g.links.new(gin.outputs['Radius'], cap.inputs['Scale'])
+
+    final = add_node(g, 'ShaderNodeVectorMath', dx * 11, -120, "Final")
+    final.operation = 'ADD'
+    g.links.new(cl_lo.outputs['Vector'], final.inputs[0])
+    g.links.new(cap.outputs['Vector'], final.inputs[1])
+
+    _frame_section(g,
+        "MINKOWSKI SUM — Clamp each vertex to the inner box, then"
+        " project outward onto a sphere of the given radius",
+        'body', [pos_in, cl_hi_v, cl_lo_v, cl_hi, cl_lo,
+                 offs, nrm, cap, final])
+
+    # --- Output ---
+    set_pos = add_node(g, 'GeometryNodeSetPosition', dx * 12, 0, "SetPos")
+    g.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
+    g.links.new(final.outputs['Vector'], set_pos.inputs['Position'])
+
+    gout = add_node(g, 'NodeGroupOutput', dx * 13, 0, "Out")
+    g.links.new(set_pos.outputs['Geometry'], gout.inputs['Geometry'])
+
+    return g
+
+
+def _ensure_ik_group():
+    """Create or retrieve the PP_TwoBoneIK node group.
+
+    Analytical two-bone IK via law of cosines + double cross product.
+    Finds elbow/knee position from shoulder-to-hand or hip-to-foot.
+    Replaces ~25 inline nodes per joint.
+    """
+    existing = bpy.data.node_groups.get("PP_TwoBoneIK")
+    if existing:
+        return existing
+
+    g = bpy.data.node_groups.new("PP_TwoBoneIK", 'GeometryNodeTree')
+    g.interface.clear()
+
+    g.interface.new_socket(
+        "Start", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "End", in_out='INPUT', socket_type='NodeSocketVector')
+    s = g.interface.new_socket(
+        "Upper Ratio", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.5
+    s.min_value = 0.3
+    s.max_value = 0.7
+    s = g.interface.new_socket(
+        "Total Length", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.7
+    g.interface.new_socket(
+        "Bend Axis", in_out='INPUT', socket_type='NodeSocketVector')
+    # Named 'Vector' so callers can use .outputs['Vector'] unchanged
+    g.interface.new_socket(
+        "Vector", in_out='OUTPUT', socket_type='NodeSocketVector')
+
+    dx = 200
+    gin = add_node(g, 'NodeGroupInput', 0, 0, "In")
+
+    # --- Limb segment lengths ---
+    upper = add_node(g, 'ShaderNodeMath', dx, 0, "ULen")
+    upper.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Total Length'], upper.inputs[0])
+    g.links.new(gin.outputs['Upper Ratio'], upper.inputs[1])
+
+    lower = add_node(g, 'ShaderNodeMath', dx, -100, "LLen")
+    lower.operation = 'SUBTRACT'
+    g.links.new(gin.outputs['Total Length'], lower.inputs[0])
+    g.links.new(upper.outputs['Value'], lower.inputs[1])
+
+    _frame_section(g,
+        "SEGMENT LENGTHS — Split total limb length into upper"
+        " and lower segments by ratio",
+        'attach', [upper, lower])
+
+    # --- Shoulder-to-hand vector ---
+    ab = add_node(g, 'ShaderNodeVectorMath', dx * 2, 0, "AB")
+    ab.operation = 'SUBTRACT'
+    g.links.new(gin.outputs['End'], ab.inputs[0])
+    g.links.new(gin.outputs['Start'], ab.inputs[1])
+
+    d_len = add_node(g, 'ShaderNodeVectorMath', dx * 3, 0, "|AB|")
+    d_len.operation = 'LENGTH'
+    g.links.new(ab.outputs['Vector'], d_len.inputs[0])
+
+    ab_dir = add_node(g, 'ShaderNodeVectorMath', dx * 3, -100, "ABdir")
+    ab_dir.operation = 'NORMALIZE'
+    g.links.new(ab.outputs['Vector'], ab_dir.inputs[0])
+
+    # --- Law of cosines: cos(a) = (u² + d² - l²) / (2·u·d) ---
+    u2 = add_node(g, 'ShaderNodeMath', dx * 4, 80, "u2")
+    u2.operation = 'MULTIPLY'
+    g.links.new(upper.outputs['Value'], u2.inputs[0])
+    g.links.new(upper.outputs['Value'], u2.inputs[1])
+
+    d2 = add_node(g, 'ShaderNodeMath', dx * 4, 0, "d2")
+    d2.operation = 'MULTIPLY'
+    g.links.new(d_len.outputs['Value'], d2.inputs[0])
+    g.links.new(d_len.outputs['Value'], d2.inputs[1])
+
+    l2 = add_node(g, 'ShaderNodeMath', dx * 4, -80, "l2")
+    l2.operation = 'MULTIPLY'
+    g.links.new(lower.outputs['Value'], l2.inputs[0])
+    g.links.new(lower.outputs['Value'], l2.inputs[1])
+
+    u2_d2 = add_node(g, 'ShaderNodeMath', dx * 5, 40, "u2+d2")
+    u2_d2.operation = 'ADD'
+    g.links.new(u2.outputs['Value'], u2_d2.inputs[0])
+    g.links.new(d2.outputs['Value'], u2_d2.inputs[1])
+
+    numer = add_node(g, 'ShaderNodeMath', dx * 5, -40, "Num")
+    numer.operation = 'SUBTRACT'
+    g.links.new(u2_d2.outputs['Value'], numer.inputs[0])
+    g.links.new(l2.outputs['Value'], numer.inputs[1])
+
+    two_u = add_node(g, 'ShaderNodeMath', dx * 5, -120, "2u")
+    two_u.operation = 'MULTIPLY'
+    two_u.inputs[0].default_value = 2.0
+    g.links.new(upper.outputs['Value'], two_u.inputs[1])
+
+    two_ud = add_node(g, 'ShaderNodeMath', dx * 6, -120, "2ud")
+    two_ud.operation = 'MULTIPLY'
+    g.links.new(two_u.outputs['Value'], two_ud.inputs[0])
+    g.links.new(d_len.outputs['Value'], two_ud.inputs[1])
+
+    denom = add_node(g, 'ShaderNodeMath', dx * 6, -200, "Den")
+    denom.operation = 'MAXIMUM'
+    g.links.new(two_ud.outputs['Value'], denom.inputs[0])
+    denom.inputs[1].default_value = 0.001
+
+    cos_a = add_node(g, 'ShaderNodeMath', dx * 6, -40, "CosA")
+    cos_a.operation = 'DIVIDE'
+    g.links.new(numer.outputs['Value'], cos_a.inputs[0])
+    g.links.new(denom.outputs['Value'], cos_a.inputs[1])
+
+    ca_min = add_node(g, 'ShaderNodeMath', dx * 7, -40, "Ca<1")
+    ca_min.operation = 'MINIMUM'
+    g.links.new(cos_a.outputs['Value'], ca_min.inputs[0])
+    ca_min.inputs[1].default_value = 1.0
+
+    ca_clamp = add_node(g, 'ShaderNodeMath', dx * 7, -120, "Ca>-1")
+    ca_clamp.operation = 'MAXIMUM'
+    g.links.new(ca_min.outputs['Value'], ca_clamp.inputs[0])
+    ca_clamp.inputs[1].default_value = -1.0
+
+    _frame_section(g,
+        "LAW OF COSINES — Find the angle at the shoulder/hip"
+        " where two limb-length spheres intersect",
+        'physics', [u2, d2, l2, u2_d2, numer, two_u, two_ud,
+                    denom, cos_a, ca_min, ca_clamp])
+
+    # --- Projection along AB + height off line ---
+    proj = add_node(g, 'ShaderNodeMath', dx * 8, 0, "Proj")
+    proj.operation = 'MULTIPLY'
+    g.links.new(upper.outputs['Value'], proj.inputs[0])
+    g.links.new(ca_clamp.outputs['Value'], proj.inputs[1])
+
+    p2 = add_node(g, 'ShaderNodeMath', dx * 8, -80, "p2")
+    p2.operation = 'MULTIPLY'
+    g.links.new(proj.outputs['Value'], p2.inputs[0])
+    g.links.new(proj.outputs['Value'], p2.inputs[1])
+
+    h2 = add_node(g, 'ShaderNodeMath', dx * 8, -160, "h2")
+    h2.operation = 'SUBTRACT'
+    g.links.new(u2.outputs['Value'], h2.inputs[0])
+    g.links.new(p2.outputs['Value'], h2.inputs[1])
+
+    h2_safe = add_node(g, 'ShaderNodeMath', dx * 9, -160, "h2+")
+    h2_safe.operation = 'MAXIMUM'
+    g.links.new(h2.outputs['Value'], h2_safe.inputs[0])
+    h2_safe.inputs[1].default_value = 0.0
+
+    h_val = add_node(g, 'ShaderNodeMath', dx * 9, -80, "h")
+    h_val.operation = 'SQRT'
+    g.links.new(h2_safe.outputs['Value'], h_val.inputs[0])
+
+    along_sc = add_node(g, 'ShaderNodeVectorMath', dx * 9, 0, "Alng")
+    along_sc.operation = 'SCALE'
+    g.links.new(ab_dir.outputs['Vector'], along_sc.inputs[0])
+    g.links.new(proj.outputs['Value'], along_sc.inputs['Scale'])
+
+    along = add_node(g, 'ShaderNodeVectorMath', dx * 10, 0, "AlP")
+    along.operation = 'ADD'
+    g.links.new(gin.outputs['Start'], along.inputs[0])
+    g.links.new(along_sc.outputs['Vector'], along.inputs[1])
+
+    _frame_section(g,
+        "PROJECTION — Distance along the shoulder-hand line"
+        " and perpendicular height where the joint sits",
+        'control', [proj, p2, h2, h2_safe, h_val, along_sc, along])
+
+    # --- Bend direction via double cross product ---
+    side = add_node(g, 'ShaderNodeVectorMath', dx * 9, -260, "Side")
+    side.operation = 'CROSS_PRODUCT'
+    g.links.new(ab_dir.outputs['Vector'], side.inputs[0])
+    g.links.new(gin.outputs['Bend Axis'], side.inputs[1])
+
+    bend = add_node(g, 'ShaderNodeVectorMath', dx * 10, -260, "Bend")
+    bend.operation = 'CROSS_PRODUCT'
+    g.links.new(ab_dir.outputs['Vector'], bend.inputs[0])
+    g.links.new(side.outputs['Vector'], bend.inputs[1])
+
+    bend_n = add_node(g, 'ShaderNodeVectorMath', dx * 10, -160, "BNrm")
+    bend_n.operation = 'NORMALIZE'
+    g.links.new(bend.outputs['Vector'], bend_n.inputs[0])
+
+    perp = add_node(g, 'ShaderNodeVectorMath', dx * 11, -120, "Perp")
+    perp.operation = 'SCALE'
+    g.links.new(bend_n.outputs['Vector'], perp.inputs[0])
+    g.links.new(h_val.outputs['Value'], perp.inputs['Scale'])
+
+    _frame_section(g,
+        "BEND DIRECTION — Double cross product picks which"
+        " side the elbow/knee bends toward (forward or backward)",
+        'float', [side, bend, bend_n, perp])
+
+    # --- Final joint position ---
+    mid = add_node(g, 'ShaderNodeVectorMath', dx * 11, 0, "Mid")
+    mid.operation = 'ADD'
+    g.links.new(along.outputs['Vector'], mid.inputs[0])
+    g.links.new(perp.outputs['Vector'], mid.inputs[1])
+
+    gout = add_node(g, 'NodeGroupOutput', dx * 12, 0, "Out")
+    g.links.new(mid.outputs['Vector'], gout.inputs['Vector'])
+
+    return g
+
+
+def _ensure_float_group():
+    """Create or retrieve the PP_ShoulderFloat node group.
+
+    Jim Rose shoulder float: attachment drifts toward the hand when
+    the arm is pulled past an engage threshold. Max drift = float_amount.
+    Replaces ~12 inline nodes per shoulder.
+    """
+    existing = bpy.data.node_groups.get("PP_ShoulderFloat")
+    if existing:
+        return existing
+
+    g = bpy.data.node_groups.new("PP_ShoulderFloat", 'GeometryNodeTree')
+    g.interface.clear()
+
+    g.interface.new_socket(
+        "Base Attach", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "Endpoint Pos", in_out='INPUT', socket_type='NodeSocketVector')
+    s = g.interface.new_socket(
+        "Float Amount", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = SHOULDER_FLOAT_SLACK
+    s = g.interface.new_socket(
+        "Arm Length", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.7
+    # Named 'Vector' so callers can use .outputs['Vector'] unchanged
+    g.interface.new_socket(
+        "Vector", in_out='OUTPUT', socket_type='NodeSocketVector')
+
+    dx = 200
+    gin = add_node(g, 'NodeGroupInput', 0, 0, "In")
+
+    # --- Drift measurement ---
+    drift = add_node(g, 'ShaderNodeVectorMath', dx, 0, "Drift")
+    drift.operation = 'SUBTRACT'
+    g.links.new(gin.outputs['Endpoint Pos'], drift.inputs[0])
+    g.links.new(gin.outputs['Base Attach'], drift.inputs[1])
+
+    dist = add_node(g, 'ShaderNodeVectorMath', dx * 2, 0, "Dist")
+    dist.operation = 'LENGTH'
+    g.links.new(drift.outputs['Vector'], dist.inputs[0])
+
+    d_dir = add_node(g, 'ShaderNodeVectorMath', dx * 2, -120, "Dir")
+    d_dir.operation = 'NORMALIZE'
+    g.links.new(drift.outputs['Vector'], d_dir.inputs[0])
+
+    _frame_section(g,
+        "DRIFT — How far and which direction the hand"
+        " is pulling from the shoulder base position",
+        'control', [drift, dist, d_dir])
+
+    # --- Engage threshold + clamped excess ---
+    engage = add_node(g, 'ShaderNodeMath', dx * 3, 0, "Engage")
+    engage.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Arm Length'], engage.inputs[0])
+    engage.inputs[1].default_value = SHOULDER_FLOAT_ENGAGE
+
+    excess = add_node(g, 'ShaderNodeMath', dx * 4, 0, "Excess")
+    excess.operation = 'SUBTRACT'
+    g.links.new(dist.outputs['Value'], excess.inputs[0])
+    g.links.new(engage.outputs['Value'], excess.inputs[1])
+
+    exc_clamp = add_node(g, 'ShaderNodeMath', dx * 5, 0, "Exc+")
+    exc_clamp.operation = 'MAXIMUM'
+    g.links.new(excess.outputs['Value'], exc_clamp.inputs[0])
+    exc_clamp.inputs[1].default_value = 0.0
+
+    drift_clamp = add_node(g, 'ShaderNodeMath', dx * 6, 0, "DClp")
+    drift_clamp.operation = 'MINIMUM'
+    g.links.new(exc_clamp.outputs['Value'], drift_clamp.inputs[0])
+    g.links.new(gin.outputs['Float Amount'], drift_clamp.inputs[1])
+
+    _frame_section(g,
+        "SLACK — Only drift after arm exceeds engage distance,"
+        " then cap at Jim Rose's 5/8 inch maximum float",
+        'strings', [engage, excess, exc_clamp, drift_clamp])
+
+    # --- Final floated position ---
+    drift_sc = add_node(g, 'ShaderNodeVectorMath', dx * 6, -120, "DSc")
+    drift_sc.operation = 'SCALE'
+    g.links.new(d_dir.outputs['Vector'], drift_sc.inputs[0])
+    g.links.new(drift_clamp.outputs['Value'], drift_sc.inputs['Scale'])
+
+    floated = add_node(g, 'ShaderNodeVectorMath', dx * 7, 0, "Float")
+    floated.operation = 'ADD'
+    g.links.new(gin.outputs['Base Attach'], floated.inputs[0])
+    g.links.new(drift_sc.outputs['Vector'], floated.inputs[1])
+
+    _frame_section(g,
+        "FLOAT — Shift shoulder attachment toward the hand"
+        " by the clamped drift amount",
+        'body', [drift_sc, floated])
+
+    gout = add_node(g, 'NodeGroupOutput', dx * 8, 0, "Out")
+    g.links.new(floated.outputs['Vector'], gout.inputs['Vector'])
+
+    return g
 
 
 def create_blob_head_materials():
@@ -723,72 +1120,20 @@ def _add_verlet_endpoint(tree, x, y, label,
 def _apply_shoulder_float(tree, x, y, label,
                           base_attach_out, endpoint_pos_out,
                           float_amount_out, arm_length_out):
-    """Compute a floated shoulder attachment that drifts toward the hand.
+    """Compute a floated shoulder via the PP_ShoulderFloat node group.
 
-    Uses the PREVIOUS frame's endpoint position (from sim_in) — no
-    circular dependency. The attachment drifts up to `float_amount`
-    toward the hand when the arm is stretched past an engage threshold.
-
-    Returns the floated attachment position socket.
+    Jim Rose shoulder float: attachment drifts toward the hand when
+    the arm is pulled past an engage threshold.
+    Returns the group node (.outputs['Vector'] = floated position).
     """
-    dx = 200
-
-    # drift_vec = endpoint - base_attachment
-    drift = add_node(tree, 'ShaderNodeVectorMath', x, y, f"{label} Drft")
-    drift.operation = 'SUBTRACT'
-    tree.links.new(endpoint_pos_out, drift.inputs[0])
-    tree.links.new(base_attach_out, drift.inputs[1])
-
-    # drift_dist = length(drift_vec)
-    dist = add_node(tree, 'ShaderNodeVectorMath', x + dx, y, f"{label} Dist")
-    dist.operation = 'LENGTH'
-    tree.links.new(drift.outputs['Vector'], dist.inputs[0])
-
-    # drift_dir = normalize(drift_vec)
-    d_dir = add_node(tree, 'ShaderNodeVectorMath', x + dx, y - 120,
-                     f"{label} Dir")
-    d_dir.operation = 'NORMALIZE'
-    tree.links.new(drift.outputs['Vector'], d_dir.inputs[0])
-
-    # engage_dist = arm_length * SHOULDER_FLOAT_ENGAGE
-    engage = add_node(tree, 'ShaderNodeMath', x + dx * 2, y, f"{label} Eng")
-    engage.operation = 'MULTIPLY'
-    tree.links.new(arm_length_out, engage.inputs[0])
-    engage.inputs[1].default_value = SHOULDER_FLOAT_ENGAGE
-
-    # excess = max(drift_dist - engage_dist, 0)
-    excess = add_node(tree, 'ShaderNodeMath', x + dx * 3, y, f"{label} Exc")
-    excess.operation = 'SUBTRACT'
-    tree.links.new(dist.outputs['Value'], excess.inputs[0])
-    tree.links.new(engage.outputs['Value'], excess.inputs[1])
-
-    exc_clamp = add_node(tree, 'ShaderNodeMath', x + dx * 4, y,
-                         f"{label} Exc+")
-    exc_clamp.operation = 'MAXIMUM'
-    tree.links.new(excess.outputs['Value'], exc_clamp.inputs[0])
-    exc_clamp.inputs[1].default_value = 0.0
-
-    # clamped_drift = min(excess, float_amount)
-    drift_clamp = add_node(tree, 'ShaderNodeMath', x + dx * 5, y,
-                           f"{label} DClp")
-    drift_clamp.operation = 'MINIMUM'
-    tree.links.new(exc_clamp.outputs['Value'], drift_clamp.inputs[0])
-    tree.links.new(float_amount_out, drift_clamp.inputs[1])
-
-    # floated = base_attachment + drift_dir * clamped_drift
-    drift_sc = add_node(tree, 'ShaderNodeVectorMath', x + dx * 5, y - 120,
-                        f"{label} DSc")
-    drift_sc.operation = 'SCALE'
-    tree.links.new(d_dir.outputs['Vector'], drift_sc.inputs[0])
-    tree.links.new(drift_clamp.outputs['Value'], drift_sc.inputs['Scale'])
-
-    floated = add_node(tree, 'ShaderNodeVectorMath', x + dx * 6, y - 60,
-                       f"{label} Float")
-    floated.operation = 'ADD'
-    tree.links.new(base_attach_out, floated.inputs[0])
-    tree.links.new(drift_sc.outputs['Vector'], floated.inputs[1])
-
-    return floated
+    float_tree = _ensure_float_group()
+    grp = add_node(tree, 'GeometryNodeGroup', x, y, label)
+    grp.node_tree = float_tree
+    tree.links.new(base_attach_out, grp.inputs['Base Attach'])
+    tree.links.new(endpoint_pos_out, grp.inputs['Endpoint Pos'])
+    tree.links.new(float_amount_out, grp.inputs['Float Amount'])
+    tree.links.new(arm_length_out, grp.inputs['Arm Length'])
+    return grp
 
 
 # ===================================================================
@@ -799,193 +1144,22 @@ def _compute_mid_joint(tree, x, y, label,
                        start_socket, end_socket,
                        upper_ratio_out, total_length_out,
                        bend_axis):
-    """Compute elbow/knee position analytically from shoulder→hand vector.
+    """Compute elbow/knee position via the PP_TwoBoneIK node group.
 
-    Uses the law of cosines to find the intersection of two spheres
-    (upper limb length from start, lower limb length from end).
-    The bend_axis tuple picks which side the joint bends toward:
-    (0, -1, 0) for elbows (bend backward), (0, 1, 0) for knees (forward).
-
-    Returns the mid-joint position socket.
+    Law of cosines + double cross product finds the joint position.
+    bend_axis: (0,-1,0) for elbows (backward), (0,1,0) for knees (forward).
+    Returns the group node (.outputs['Vector'] = mid-joint position).
     """
-    dx = 200
-
-    # upper_len = total_length * upper_ratio
-    upper = add_node(tree, 'ShaderNodeMath', x, y, f"{label} ULen")
-    upper.operation = 'MULTIPLY'
-    tree.links.new(total_length_out, upper.inputs[0])
-    tree.links.new(upper_ratio_out, upper.inputs[1])
-
-    # lower_len = total_length - upper_len
-    lower = add_node(tree, 'ShaderNodeMath', x, y - 100, f"{label} LLen")
-    lower.operation = 'SUBTRACT'
-    tree.links.new(total_length_out, lower.inputs[0])
-    tree.links.new(upper.outputs['Value'], lower.inputs[1])
-
-    # AB = end - start
-    ab = add_node(tree, 'ShaderNodeVectorMath', x + dx, y, f"{label} AB")
-    ab.operation = 'SUBTRACT'
-    tree.links.new(end_socket, ab.inputs[0])
-    tree.links.new(start_socket, ab.inputs[1])
-
-    # d = length(AB)
-    d_len = add_node(tree, 'ShaderNodeVectorMath', x + dx * 2, y,
-                     f"{label} |AB|")
-    d_len.operation = 'LENGTH'
-    tree.links.new(ab.outputs['Vector'], d_len.inputs[0])
-
-    # ab_dir = normalize(AB)
-    ab_dir = add_node(tree, 'ShaderNodeVectorMath', x + dx * 2, y - 100,
-                      f"{label} ABd")
-    ab_dir.operation = 'NORMALIZE'
-    tree.links.new(ab.outputs['Vector'], ab_dir.inputs[0])
-
-    # cos_a = (upper^2 + d^2 - lower^2) / (2 * upper * d)
-    u2 = add_node(tree, 'ShaderNodeMath', x + dx * 3, y + 80, f"{label} u2")
-    u2.operation = 'MULTIPLY'
-    tree.links.new(upper.outputs['Value'], u2.inputs[0])
-    tree.links.new(upper.outputs['Value'], u2.inputs[1])
-
-    d2 = add_node(tree, 'ShaderNodeMath', x + dx * 3, y, f"{label} d2")
-    d2.operation = 'MULTIPLY'
-    tree.links.new(d_len.outputs['Value'], d2.inputs[0])
-    tree.links.new(d_len.outputs['Value'], d2.inputs[1])
-
-    l2 = add_node(tree, 'ShaderNodeMath', x + dx * 3, y - 80, f"{label} l2")
-    l2.operation = 'MULTIPLY'
-    tree.links.new(lower.outputs['Value'], l2.inputs[0])
-    tree.links.new(lower.outputs['Value'], l2.inputs[1])
-
-    u2_d2 = add_node(tree, 'ShaderNodeMath', x + dx * 4, y + 40,
-                     f"{label} u2+d2")
-    u2_d2.operation = 'ADD'
-    tree.links.new(u2.outputs['Value'], u2_d2.inputs[0])
-    tree.links.new(d2.outputs['Value'], u2_d2.inputs[1])
-
-    numer = add_node(tree, 'ShaderNodeMath', x + dx * 4, y - 40,
-                     f"{label} Num")
-    numer.operation = 'SUBTRACT'
-    tree.links.new(u2_d2.outputs['Value'], numer.inputs[0])
-    tree.links.new(l2.outputs['Value'], numer.inputs[1])
-
-    two_u = add_node(tree, 'ShaderNodeMath', x + dx * 4, y - 120,
-                     f"{label} 2u")
-    two_u.operation = 'MULTIPLY'
-    two_u.inputs[0].default_value = 2.0
-    tree.links.new(upper.outputs['Value'], two_u.inputs[1])
-
-    two_ud = add_node(tree, 'ShaderNodeMath', x + dx * 5, y - 120,
-                      f"{label} 2ud")
-    two_ud.operation = 'MULTIPLY'
-    tree.links.new(two_u.outputs['Value'], two_ud.inputs[0])
-    tree.links.new(d_len.outputs['Value'], two_ud.inputs[1])
-
-    # Prevent division by zero: max(denominator, 0.001)
-    denom_safe = add_node(tree, 'ShaderNodeMath', x + dx * 5, y - 200,
-                          f"{label} Den")
-    denom_safe.operation = 'MAXIMUM'
-    tree.links.new(two_ud.outputs['Value'], denom_safe.inputs[0])
-    denom_safe.inputs[1].default_value = 0.001
-
-    cos_a = add_node(tree, 'ShaderNodeMath', x + dx * 5, y - 40,
-                     f"{label} CosA")
-    cos_a.operation = 'DIVIDE'
-    tree.links.new(numer.outputs['Value'], cos_a.inputs[0])
-    tree.links.new(denom_safe.outputs['Value'], cos_a.inputs[1])
-
-    # Clamp cos_a to [-1, 1]
-    ca_min = add_node(tree, 'ShaderNodeMath', x + dx * 6, y - 40,
-                      f"{label} Ca<1")
-    ca_min.operation = 'MINIMUM'
-    tree.links.new(cos_a.outputs['Value'], ca_min.inputs[0])
-    ca_min.inputs[1].default_value = 1.0
-
-    ca_clamp = add_node(tree, 'ShaderNodeMath', x + dx * 6, y - 120,
-                        f"{label} Ca>-1")
-    ca_clamp.operation = 'MAXIMUM'
-    tree.links.new(ca_min.outputs['Value'], ca_clamp.inputs[0])
-    ca_clamp.inputs[1].default_value = -1.0
-
-    # proj = upper * cos_a (distance along AB)
-    proj = add_node(tree, 'ShaderNodeMath', x + dx * 7, y, f"{label} Proj")
-    proj.operation = 'MULTIPLY'
-    tree.links.new(upper.outputs['Value'], proj.inputs[0])
-    tree.links.new(ca_clamp.outputs['Value'], proj.inputs[1])
-
-    # h = sqrt(max(upper^2 - proj^2, 0)) (height off AB line)
-    p2 = add_node(tree, 'ShaderNodeMath', x + dx * 7, y - 80, f"{label} p2")
-    p2.operation = 'MULTIPLY'
-    tree.links.new(proj.outputs['Value'], p2.inputs[0])
-    tree.links.new(proj.outputs['Value'], p2.inputs[1])
-
-    h2 = add_node(tree, 'ShaderNodeMath', x + dx * 7, y - 160, f"{label} h2")
-    h2.operation = 'SUBTRACT'
-    tree.links.new(u2.outputs['Value'], h2.inputs[0])
-    tree.links.new(p2.outputs['Value'], h2.inputs[1])
-
-    h2_safe = add_node(tree, 'ShaderNodeMath', x + dx * 8, y - 160,
-                       f"{label} h2+")
-    h2_safe.operation = 'MAXIMUM'
-    tree.links.new(h2.outputs['Value'], h2_safe.inputs[0])
-    h2_safe.inputs[1].default_value = 0.0
-
-    h = add_node(tree, 'ShaderNodeMath', x + dx * 8, y - 80, f"{label} h")
-    h.operation = 'SQRT'
-    tree.links.new(h2_safe.outputs['Value'], h.inputs[0])
-
-    # along = start + ab_dir * proj
-    along_sc = add_node(tree, 'ShaderNodeVectorMath', x + dx * 8, y,
-                        f"{label} Alng")
-    along_sc.operation = 'SCALE'
-    tree.links.new(ab_dir.outputs['Vector'], along_sc.inputs[0])
-    tree.links.new(proj.outputs['Value'], along_sc.inputs['Scale'])
-
-    along = add_node(tree, 'ShaderNodeVectorMath', x + dx * 9, y,
-                     f"{label} AlP")
-    along.operation = 'ADD'
-    tree.links.new(start_socket, along.inputs[0])
-    tree.links.new(along_sc.outputs['Vector'], along.inputs[1])
-
-    # Bend direction: cross(ab_dir, bend_axis) → side, cross(side, ab_dir) → bend
-    # Small epsilon in bend_axis prevents degenerate cross when limb is vertical
-    bend_ax = add_node(tree, 'ShaderNodeCombineXYZ', x + dx * 7, y - 260,
-                       f"{label} BAx")
-    bend_ax.inputs['X'].default_value = bend_axis[0] + 0.001
-    bend_ax.inputs['Y'].default_value = bend_axis[1]
-    bend_ax.inputs['Z'].default_value = bend_axis[2]
-
-    side = add_node(tree, 'ShaderNodeVectorMath', x + dx * 8, y - 260,
-                    f"{label} Side")
-    side.operation = 'CROSS_PRODUCT'
-    tree.links.new(ab_dir.outputs['Vector'], side.inputs[0])
-    tree.links.new(bend_ax.outputs['Vector'], side.inputs[1])
-
-    bend = add_node(tree, 'ShaderNodeVectorMath', x + dx * 9, y - 260,
-                    f"{label} Bend")
-    bend.operation = 'CROSS_PRODUCT'
-    tree.links.new(ab_dir.outputs['Vector'], bend.inputs[0])
-    tree.links.new(side.outputs['Vector'], bend.inputs[1])
-
-    bend_n = add_node(tree, 'ShaderNodeVectorMath', x + dx * 9, y - 160,
-                      f"{label} BNrm")
-    bend_n.operation = 'NORMALIZE'
-    tree.links.new(bend.outputs['Vector'], bend_n.inputs[0])
-
-    # perp = bend_normalized * h
-    perp = add_node(tree, 'ShaderNodeVectorMath', x + dx * 10, y - 120,
-                    f"{label} Perp")
-    perp.operation = 'SCALE'
-    tree.links.new(bend_n.outputs['Vector'], perp.inputs[0])
-    tree.links.new(h.outputs['Value'], perp.inputs['Scale'])
-
-    # mid_joint = along + perp
-    mid = add_node(tree, 'ShaderNodeVectorMath', x + dx * 10, y,
-                   f"{label} Mid")
-    mid.operation = 'ADD'
-    tree.links.new(along.outputs['Vector'], mid.inputs[0])
-    tree.links.new(perp.outputs['Vector'], mid.inputs[1])
-
-    return mid
+    ik_tree = _ensure_ik_group()
+    grp = add_node(tree, 'GeometryNodeGroup', x, y, label)
+    grp.node_tree = ik_tree
+    tree.links.new(start_socket, grp.inputs['Start'])
+    tree.links.new(end_socket, grp.inputs['End'])
+    tree.links.new(upper_ratio_out, grp.inputs['Upper Ratio'])
+    tree.links.new(total_length_out, grp.inputs['Total Length'])
+    grp.inputs['Bend Axis'].default_value = (
+        bend_axis[0] + 0.001, bend_axis[1], bend_axis[2])
+    return grp
 
 
 # ===================================================================
@@ -1357,6 +1531,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     group_in = add_node(tree, 'NodeGroupInput', -3600, 0, "Input")
     group_out = add_node(tree, 'NodeGroupOutput', 3600, -1000, "Output")
 
+    _s = _snap_nodes(tree)  # snapshot before Section 1
+
     # ------------------------------------------------------------------
     # SECTION 1 — Blob Head Group node + face tracking + customization
     # ------------------------------------------------------------------
@@ -1426,6 +1602,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
             BLOB_HEAD_SCALE, BLOB_HEAD_SCALE, BLOB_HEAD_SCALE)
 
         blob_geo_out = blob_tf.outputs['Geometry']
+
+    _frame_section(tree,
+        "THE FACE — Blob head + ARKit face tracking (15 channels)"
+        " + 37 customization sliders",
+        'face', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
     # SECTION 2 — Body center (fixed) + head rotation → movement
@@ -1577,6 +1759,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     torso_twist.operation = 'MULTIPLY'
     tree.links.new(group_in.outputs['headRotZ'], torso_twist.inputs[0])
     torso_twist.inputs[1].default_value = 0.15  # subtle — 15% of head roll
+
+    _frame_section(tree,
+        "THE CONTROL BAR — Head rotation maps to body movement:"
+        " lean=gait, extend=arms, mouth=step, smile/frown=gesture",
+        'control', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
     # SECTION 3 — Torso positions + sway + walking bob + eyebrow lift
@@ -1892,6 +2080,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         tree.links.new(dynamic_head.outputs['Vector'],
                        blob_tf.inputs['Translation'])
 
+    _frame_section(tree,
+        "THE STRINGS — Torso sway (lean + mouth), walking bob,"
+        " eyebrow/jaw lift, head follows chest",
+        'strings', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
     # ------------------------------------------------------------------
     # SECTION 3.5 — Attachment points (visual + physics split)
     # ------------------------------------------------------------------
@@ -1968,6 +2162,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tree.links.new(head_base_pos.outputs['Vector'], head_pos.inputs[0])
     tree.links.new(head_lift.outputs['Vector'], head_pos.inputs[1])
 
+    _frame_section(tree,
+        "ATTACHMENT POINTS — Where strings meet the body:"
+        " visual joints (on torso) + physics anchors (with movement deltas)",
+        'attach', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
     # ------------------------------------------------------------------
     # SECTION 4 — Rest positions (attachment + down vector)
     # ------------------------------------------------------------------
@@ -2006,6 +2206,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     rest_fl = _make_rest("FL", hipl_visual, drop_leg, -700)
     rest_fr = _make_rest("FR", hipr_visual, drop_leg, -850)
 
+    _frame_section(tree,
+        "REST POSE — Dead-hang positions: where limbs"
+        " dangle when no input (attachment + gravity down)",
+        'rest', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
     # ------------------------------------------------------------------
     # SECTION 5 — Simulation Zone
     # ------------------------------------------------------------------
@@ -2030,6 +2236,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # Momentum will be re-implemented at the Python/OSC level instead
     # (smoothing the raw headRot values before they reach the modifier).
     # The Momentum slider remains in the interface for future use.
+
+    _frame_section(tree,
+        "SIMULATION ZONE — Physics boundary: state persists"
+        " across frames (positions, velocities, shoulder float)",
+        'simzone', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
     # SECTION 6 — Shared physics nodes (inside sim zone)
@@ -2074,6 +2286,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     const_one.inputs[0].default_value = 1.0
     const_one.inputs[1].default_value = 0.0
 
+    _frame_section(tree,
+        "PHYSICS CORE — Shared by all limbs:"
+        " gravity vector, timestep, first-frame initialization",
+        'physics', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
     # ------------------------------------------------------------------
     # SECTION 6.5 — Shoulder float (uses previous-frame endpoint pos)
     # ------------------------------------------------------------------
@@ -2101,6 +2319,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                    sim_out.inputs['floated_shl'])
     tree.links.new(floated_shr.outputs['Vector'],
                    sim_out.inputs['floated_shr'])
+
+    _frame_section(tree,
+        "SHOULDER FLOAT — Jim Rose: real marionettes have 5/8\""
+        " slack. Attachment drifts toward hand when arm pulls taut",
+        'float', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
     # SECTION 7 — Per-endpoint Verlet physics + hinge constraints
@@ -2159,6 +2383,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     tree.links.new(const_one.outputs['Value'],
                    sim_out.inputs['initialized'])
+
+    _frame_section(tree,
+        "VERLET PHYSICS — Per-limb: velocity + gravity + distance"
+        " constraint + joint hinges + ground collision + friction",
+        'verlet', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
     # SECTION 8 — Visual body parts (capsules + customization colors)
@@ -2430,6 +2660,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                      hipr_visual.outputs['Vector'], body_mats['joint'],
                      mat_socket=group_in.outputs['Joint Material'])
 
+    _frame_section(tree,
+        "THE PUPPET'S BODY — Minkowski capsules (chest, pelvis,"
+        " hands, feet, shoulders) + sphere joints + materials",
+        'body', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
     # ------------------------------------------------------------------
     # SECTION 9 — Limb curves + neck
     # ------------------------------------------------------------------
@@ -2609,6 +2845,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                    spine_mt.inputs['Material'])
     parts_geo.append(spine_mt.outputs['Geometry'])
 
+    _frame_section(tree,
+        "THE SKELETON — Two-bone IK (law of cosines) for"
+        " elbows/knees + limb tubes + neck + spine",
+        'skeleton', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
     # ------------------------------------------------------------------
     # SECTION 10 — Join blob head + body → output
     # ------------------------------------------------------------------
@@ -2624,6 +2866,11 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         tree.links.new(geo_socket, join.inputs['Geometry'])
 
     tree.links.new(join.outputs['Geometry'], group_out.inputs['Geometry'])
+
+    _frame_section(tree,
+        "FINAL ASSEMBLY — Join blob head + all body"
+        " parts into single output geometry",
+        'output', _new_nodes(tree, _s))
 
 
 # ===================================================================
@@ -2659,7 +2906,9 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
             if mat:
                 bpy.data.materials.remove(mat)
 
-        for ng_name in ("PPParty_Marionette", "GN_BlobPuppet"):
+        for ng_name in ("PPParty_Marionette", "GN_BlobPuppet",
+                        "PP_DynCapsule", "PP_TwoBoneIK",
+                        "PP_ShoulderFloat"):
             ng = bpy.data.node_groups.get(ng_name)
             if ng:
                 bpy.data.node_groups.remove(ng)

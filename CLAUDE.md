@@ -289,97 +289,112 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - `G_Ready_Source.zip` — Ministry of Flat wrapper (full-featured, 30+ parameters)
 - Both are wrappers around proprietary Windows-only .exe — can't use directly, but studied for approach
 
-### PPPARTY — The People's Puppet Party (V0.4.1 — Joint Constraints + 3-Axis Torso)
+### PPPARTY — The People's Puppet Party (V0.9.4 — Material Slots + Mirrored Rotation)
 Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY". Class prefix: `PPPARTY`. Operator prefix: `ppparty.*`. Property prefix: `pp_`.
 
-**Current state (April 10, 2026): Face-tracked blob head on physics marionette body with anatomically correct joint bending, foot spread/midline limits, ground friction, forward hinge bias on legs, 3-axis torso sway, walking bob, eyebrow/jaw lift, mouth lateral sway. Confirmed working on Blender 5.2 Alpha.**
+**Current state (April 11, 2026): Face-tracked blob head fully absorbed from Green Room — all 37 customization sliders + 14 material slots (9 head, 5 body) exposed in N-panel. Minkowski capsule body parts with Width, Rotation, Tilt, Depth sliders. Mirrored L/R rotation on feet (Z-axis) and hands. Geometry density optimized for slider responsiveness. Confirmed working on Blender 5.2 Alpha.**
 
 **Core concept:** A digital marionette where face tracking provides the control input (like a marionette control bar), and Verlet physics makes the puppet body dangle and react. Face tracking drives facial expressions AND body movement. Inspired by traditional puppet rigging — Bunraku threshold toggles, marionette under-actuation, Henson's "maximum expression from minimum controls."
 
 **What exists now:**
-- **Create Marionette operator** (`operators/create_marionette.py`) — one button builds blob head + marionette body + sim zone physics + materials. Creates PP_Marionette mesh, PP_Armature (hidden, single "head" bone), ARKitShapeKeys.Dummy mesh.
-- **Blob head** — loaded from `assets/blob_puppet.blend` as GN Group node (GN_BlobPuppet). Same head as Green Room. Scaled 0.6, positioned at (0, 0, 0.48).
+- **Create Marionette operator** (`operators/create_marionette.py`, ~2700 lines) — one button builds blob head + marionette body + sim zone physics + materials. Creates PP_Marionette mesh, PP_Armature (hidden, single "head" bone), ARKitShapeKeys.Dummy mesh.
+- **Blob head (absorbed from Green Room V0.7.0)** — loaded from `assets/blob_puppet.blend` as GN Group node (GN_BlobPuppet). All 37 customization sliders + 9 material sockets pass through automatically via `blob_custom` extraction loop. Renamed: Body→Head (Width/Height/Rotation→Tilt, Body Material→Head Material).
 - **Face tracking** — 15 ARKit shape keys (jawOpen, blink, smile, frown, pucker, eye look, etc.) + 3 head rotation axes. All wired as GN Group Inputs on the modifier.
-- **Multi-channel body movement** — 6 face tracking channels drive body:
+- **Multi-channel body movement** — 7 face tracking channels drive body:
   - headRotY (lean) → lateral torso sway + contralateral gait
   - headRotX (extend) → forward/backward torso sway + Z dip + arm spread
   - abs(headRotY) → walking bob (vertical rise during stride)
-  - mouthLeft/Right → lateral torso shift (0.3 chest, 0.2 pelvis)
-  - eyeWideL/R avg → Z lift ("pick up" puppet, Lift Strength slider)
+  - mouthLeft/Right → lateral torso shift (0.3 chest, 0.2 pelvis) + contralateral knee lift
+  - eyeWideL/R avg → Z lift ("pick up" puppet) + arm spread outward
   - jawOpen → Z lift booster (stacks with brow lift)
-- **Analytical two-bone IK** for elbows/knees — `_compute_mid_joint()` uses law of cosines + double cross product to compute joint position from attachment→endpoint vector. `bend_axis` parameter controls bend direction.
-- **GN simulation zone physics** — Verlet integration + distance constraints. 9 state items: 4 endpoints, 4 previous, 1 initialized flag.
+  - smile/frown → arm gestures (celebration/defeat)
+- **Analytical two-bone IK** for elbows/knees — `_compute_mid_joint()` uses law of cosines + double cross product. `bend_axis` parameter controls bend direction.
+- **GN simulation zone physics** — Verlet integration + distance constraints. 11 state items: 4 endpoints, 4 previous, 2 floated shoulders, 1 initialized flag.
 - **Joint constraints per endpoint:**
-  - Arms: Y-axis hinge (prevents hyperextension), inward limit (prevents crossing body), midline clamp (hard stop at center)
-  - Legs: -Y hinge with forward bias (`LEG_HINGE_BIAS = -0.06` → feet forced slightly forward), spread limit (`FOOT_SPREAD_DIR = 0.5`), midline clamp (`FOOT_MIDLINE = 0.08`)
-  - Ground friction on feet (proximity-based XY velocity damping near floor)
+  - Arms: Y-axis hinge, inward limit, midline clamp (`MIDLINE_MARGIN = 0.18` — keeps hands outside chest)
+  - Legs: -Y hinge with forward bias (`LEG_HINGE_BIAS = -0.12`), spread limit, midline clamp
+  - Ground friction on feet (X-axis only — leaves Y free for hinge forward-bias)
   - Ground collision (Z clamp at floor height)
-- **OSC receiver** (`core/osc_receiver.py`) — ported from Green Room, standalone. Threaded UDP, 13 active ARKit blend shapes. Pushes values directly to GN modifier (bypasses broken 5.2 drivers). Probe system: RNA → IDProperty → interface default_value fallback.
+- **Material slots (V0.9.4)** — 14 NodeSocketMaterial sockets: Head Material, Eye Material, Iris Material, Pupil Material, Mouth Material, Lip Material, Nose Material, Ear Material, Eyebrow Material (from blob passthrough) + Body Part Material, Hand Material, Foot Material, Joint Material, Limb Material (body parts). Full Blender material assignment via N-panel dropdowns.
+- **Mirrored rotation (V0.9.4)** — Foot Rotation on Z-axis (yaw) with additive splay base. Right foot/hand mirrors left via negated deg→rad conversion. `negate_rot`/`negate_tilt` params on `_add_capsule_part`.
+- **Customization sliders (V0.9.2+)** — Body Width, Hand Size/Width/Rotation/Tilt, Foot Size/Width/Depth/Rotation, Shoulder Width/Rotation. All in "Make It Yours" N-panel section.
+- **OSC receiver** (`core/osc_receiver.py`) — ported from Green Room, standalone. Threaded UDP, 13 active ARKit blend shapes. Pushes values directly to GN modifier (bypasses broken 5.2 drivers).
 - **Phone connect** (`operators/connect_phone.py`, `core/phone_connect.py`) — one button: creates dummy mesh, starts receiver, finds PP_ armature, reports IP/port.
-- **N-panel** (`ui/panels.py`) — Create Marionette, Body Movement sliders (Lean Strength, Extend Strength, Lift Strength), Physics sliders (Gravity, Damping, Arm/Leg Length, Ground Friction), Proportions, Connect Phone (3 states), Debug (collapsed), How to Use (collapsed).
+- **N-panel** (`ui/panels.py`) — Create Marionette, Body Movement, Physics, Proportions, Make It Yours (Hands/Feet/Shoulders sub-groups), Materials (Body/Head sections with material pickers), Head Design (Shape/Eyes/Mouth/Nose/Ears/Eyebrows/Lips sub-groups), Connect Phone (3 states), Debug (collapsed).
 - **Debug operator** (`operators/debug_modifier.py`) — dumps ALL modifier properties to "PPParty_Debug" text block.
 - **Reset Physics operator** — jumps to frame 1 (re-initializes sim zone)
 
-**Body parts:**
-- **Chest** — oblate UV Sphere (radius 0.2, scaled 1.1 × 0.8 × 1.05)
-- **Pelvis** — oblate UV Sphere (radius 0.17, scaled 1.0 × 0.85 × 0.9)
-- **Waist joint** — connects chest to pelvis
-- **Head** — blob puppet (GN Group node from blob_puppet.blend)
-- **Hands** — UV Spheres (radius 0.1) at physics endpoint positions
-- **Feet** — UV Spheres (radius 0.12) with 15° splay angle
-- **Elbows/Knees** — joint spheres at analytical IK midpoints
-- **Limbs** — split into upper/lower segments with joint sphere between
-- **Neck** — tube connecting chest top to head bottom, follows chest sway
-- **6 materials**: PP_Body, PP_Head, PP_Hand, PP_Foot, PP_Joint, PP_Limb
+**Body parts (all dynamic Minkowski capsules except joints):**
+- **Chest** — capsule (radius 0.2, scaled 1.1×0.8×1.05), extends X via Body Width, subdivs=6
+- **Pelvis** — capsule (radius 0.17, scaled 1.0×0.85×0.9), same Body Width, subdivs=6
+- **Waist joint** — small sphere (radius 0.05), segments=8, rings=6
+- **Head** — blob puppet (GN Group node from blob_puppet.blend), scaled 0.6
+- **Hands** — capsules (radius 0.1), Width/Rotation(Y)/Tilt(X), subdivs=4
+- **Feet** — capsules (radius 0.12), Width/Rotation(Z mirrored)/Depth(Y), 15° splay, subdivs=4
+- **Shoulders** — capsules (radius 0.06), Width/Rotation, subdivs=3
+- **Elbows/Knees** — spheres at analytical IK midpoints, segments=8, rings=6
+- **Hips** — spheres (radius 0.06), segments=8, rings=6
+- **Limbs** — curve tubes (profile resolution=6) split into upper/lower with joint sphere
+- **Neck** — tube connecting chest top to head bottom
+- **14 materials**: 9 head (PP_HeadSkin, PP_Mouth, PP_EyeWhite, PP_Iris, PP_Pupil, PP_Ear, PP_Brow, PP_Lip, PP_Nose) + 5 body (PP_Body, PP_Hand, PP_Foot, PP_Joint, PP_Limb)
 
 **3-axis torso sway (V0.4.0+):**
 - **X (lateral):** lean × 1.0 (chest), × 0.7 (pelvis) + mouth lateral shift
-- **Y (forward/back):** extend × 0.5 (chest), × 0.35 (pelvis) — tilt head forward, body follows
+- **Y (forward/back):** extend × 0.5 (chest), × 0.35 (pelvis)
 - **Z (vertical):** walking bob + dip + eyebrow/jaw lift
-- Head follows chest sway on all 3 axes so no gap opens during movement
+- Head follows chest sway on all 3 axes
 
-**Architecture decisions (V0.2.0+):**
-- **Blob head as GN Group node**: `_load_blob_head_tree()` loads GN_BlobPuppet from blob_puppet.blend via `bpy.data.libraries.load()`. Independent copy (not linked).
+**Architecture decisions:**
+- **Blob head absorption (V0.9.0)**: Green Room's blob head is now fully contained within PPParty. `_BLOB_SKIP` excludes face tracking inputs (wired separately). `_BLOB_RENAME` maps Body→Head to avoid collision with marionette body sliders. `blob_custom` list auto-extracted from blob template interface before PPParty interface is built.
+- **Automated passthrough**: `blob_custom` loop reads ALL blob template sockets (Float + Material), creates matching PPParty sockets, then wires `group_in.outputs[pp_name]` → `blob_group.inputs[blob_name]`. Adding new sliders to the blob template automatically exposes them in PPParty.
 - **Direct modifier push (no drivers)**: Blender 5.2 broke driver paths. OSC receiver writes values directly via `mod[sid] = value` + `puppet.update_tag()`.
 - **CRITICAL: `update_tag()` required**: After writing any GN modifier values in Blender 5.2, must call `obj.update_tag()` or the modifier won't re-evaluate.
-- **Analytical mid-joint IK**: `_compute_mid_joint()` — law of cosines for projection distance, then perpendicular offset via double cross product: `side = ab_dir × bend_axis`, `bend = ab_dir × side` (note: inputs swapped from standard `side × ab_dir` to get correct anatomical bend direction). Knees bend forward with `bend_axis=(0,1,0)`, elbows backward with `(0,-1,0)`.
-- **Forward hinge bias on legs**: `LEG_HINGE_BIAS = -0.06` → hinge computes `max(dir_Y, 0.06)` forcing foot direction slightly forward. Prevents backward foot drag that plagued earlier versions.
+- **Mirrored rotation math**: `negate_rot=True` flips `math.pi/180` → `-math.pi/180` in the deg→rad conversion. When a static base rotation exists on the driven axis (e.g., foot splay), an ADD node combines `base + slider_rad` so neither overrides the other.
+- **Material sockets**: `_add_capsule_part`, `_add_sphere_part`, `_add_limb` all accept `mat_socket=None`. When provided, links `group_in` socket to Set Material node; otherwise uses hardcoded material. `execute()` sets defaults via `_mat_defaults` dict → `mod[item.identifier] = mat`.
+- **Performance optimization (V0.9.4)**: Geometry density tiered by visibility — chest/pelvis subdivs=6, hands/feet subdivs=4, shoulders subdivs=3, joint spheres 8×6 (was 12×8), tube profiles 6 (was 8). Cuts ~40% vertex math on small parts.
+- **Analytical mid-joint IK**: `_compute_mid_joint()` — law of cosines + double cross product. `side = ab_dir × bend_axis`, `bend = ab_dir × side`. Knees bend forward with `bend_axis=(0,1,0)`, elbows backward with `(0,-1,0)`.
 - **Per-endpoint constraint system**: `_add_verlet_endpoint()` takes optional `hinge_axis`, `hinge_limit`, `inward_limit`, `midline_clamp`, `ground_z_out`, `ground_friction_out` parameters. All constraint types composable per-endpoint.
 
-**Blender 5.2 Alpha physics research (April 9, 2026):**
+**Blender 5.2 Alpha research (April 9, 2026):**
 - **Simulation zones** (stable since 3.6): Unchanged in 5.2. DIY Verlet physics proven.
 - **Bone Info node** (new in 5.1): Reads armature bone transforms in GN. Useful for future versions.
 - **XPBD solver** (PR #154435): Cosserat Rod support. **Still NOT merged.** Target: 5.3 (Nov 2026).
-- **RNA property refactor (BREAKING CHANGE in 5.2)**: GN modifier properties use real RNA paths. **Will break Green Room's driver paths when Green Room moves to 5.2 stable.**
+- **RNA property refactor (BREAKING CHANGE in 5.2)**: GN modifier properties use real RNA paths. **Green Room's driver paths are broken on 5.2 — PPParty bypasses this via direct modifier push.**
 
-**Tracking input (TBD — two paths under research):**
-- **Webcam pivot:** MediaPipe on local USB webcam → face mesh + hand tracking. No phone, no network.
-- **Phone baseline:** Phone for face (existing pipeline) + separate hand tracking source.
+**Relationship to Green Room:** Green Room's blob head is now absorbed into PPParty for Blender 5.2 compatibility. Green Room stays at V0.7.0 for Blender 5.0 (driver-based). If Green Room needs to work on 5.2, it will need the same direct-push approach PPParty uses. ~80% code overlap in `osc_receiver.py` and `phone_connect.py`.
 
-**Key design principle:** Same "ancient methodology → modern tool" pattern as Green Room. Don't add more tracking inputs — design the puppet rig so that existing inputs trigger richer responses at different thresholds.
+**Performance notes (April 11, 2026):**
+- **217 total GN nodes** in the tree — every one re-evaluates on any slider change
+- **8 dynamic Minkowski capsules** each with ~20 nodes of per-vertex math
+- **Slider lag observed** during CADRE 40th demo prep. Mitigated by reducing geometry density on small parts. Remaining lag is inherent to the tree size — future optimization: instance L/R pairs from single capsule mesh, or convert static parts to non-dynamic capsules.
+- **Sim zone re-evaluates on every input change**, not just frame changes. Physics nodes inside the zone are recalculated unnecessarily on slider adjustments.
 
-**Relationship to Green Room:** Completely separate project. Green Room stays stable at V0.7.0. PPParty is the experimental sandbox for full-body puppetry. ~80% code overlap in `osc_receiver.py` and `phone_connect.py` — future refactor could extract shared OSC module, but low priority since projects are intentionally independent.
-
-**Known issues (V0.4.1):**
+**Known issues (V0.9.4):**
+- **Slider lag**: ~217 nodes re-evaluate on every slider change. Noticeable on complex customization. See performance notes above.
 - **Grey materials**: Body parts render grey in Solid mode. Need Material Preview / EEVEE for colors.
-- **Foot backward drag**: Forward hinge bias helps but feet can still drift backward during extreme lean. May need stronger bias or per-frame forward nudge.
-- **`build_marionette_tree()` is 1071 lines**: Should be refactored into sub-functions (blob head, torso, limbs, output).
+- **`build_marionette_tree()` is ~1600 lines**: Should be refactored into sub-functions.
+- **No momentum/heavy feel yet**: Torso momentum was attempted (V0.7.0) but created sim zone circular dependency. Needs to be implemented at OSC/Python level instead.
 
-**Version history (this session, April 10, 2026):**
-- V0.3.6 — Foot spread limits (inward_limit + midline_clamp on feet)
-- V0.3.7 — Lean sensitivity boost (chest 0.7→1.0, pelvis 0.5→0.7), wider foot midline (0.02→0.08)
-- V0.3.8 — Cross product swap to fix inverted knee/elbow bend direction
-- V0.3.9 — Reverted bend_axis to original values (two negations were canceling; kept only cross product swap)
-- V0.4.0 — 3-axis torso sway (added Y forward/back from headRotX), head follows on all axes
-- V0.4.1 — Forward hinge bias on legs (`LEG_HINGE_BIAS = -0.06`), prevents backward foot drag
+**Version history:**
+- V0.9.4 — Material slots (14 sockets), mirrored foot/hand rotation, geometry density optimization
+- V0.9.3 — Foot Depth + Hand Tilt sliders
+- V0.9.2 — Capsule Width + Rotation on hands, feet, shoulders
+- V0.9.1 — Eyebrow raise → arm spread gesture, arm torso clipping fix (MIDLINE_MARGIN 0.02→0.18, shoulders ±0.35→±0.42)
+- V0.9.0 — Head Design passthrough (37 blob head sliders auto-exposed in PPParty)
+- V0.8.0 — Minkowski capsule body parts, Body Width slider, Hand/Foot Size
+- V0.5.0 — Contralateral knee lift, arm gestures (smile/frown), headRotZ torso rotation
+- V0.4.1 — Forward hinge bias on legs (`LEG_HINGE_BIAS = -0.12`)
+- V0.4.0 — 3-axis torso sway
+- V0.3.5 — Walking bob, mouth sway, jaw lift, ground friction
+- V0.3.3 — Visual/physics split, chest+pelvis, analytical two-bone IK
+- V0.2.0 — Face-tracked marionette (blob head + body movement from phone)
+- V0.1.0 — Dangling puppet (Verlet physics, GN visual tree, N-panel)
 
 **Next steps:**
-- **V0.5.0** — Contralateral knee lift from mouth (mouthLeft raises right knee, mouthRight raises left knee). New expression channel for deliberate stepping.
-- **V0.6.0** — Arm gestures from face (smile lifts hands, frown drops them), head tilt → torso rotation
-- **V0.7.0** — Torso momentum/lag (one-frame blend for heavy puppet feel), threshold-triggered stepping poses (Bunraku concept)
-- **V0.8.0** — Minkowski capsule body parts, customization sliders
+- **Performance** — Instance L/R capsule pairs (halves capsule computation), move constant nodes outside sim zone, explore OSC-level smoothing for "heavy puppet" momentum feel
 - **V1.0.0** — Recording + bake pipeline (keyframes, Alembic, video export)
-- **Summer** — Webcam/hand tracking (MediaPipe), custom iOS face capture app
+- **CADRE demo polish** — David preparing for CADRE 40th anniversary demo (April 11, 2026 afternoon). College students + professors audience, not kids. Material slots enable design-quality presentation.
+- **Summer** — Kid demo (late summer), webcam/hand tracking (MediaPipe), custom iOS face capture app
 
 ## Dependencies Policy
 - **ZERO paid dependencies.** Non-negotiable.
@@ -429,14 +444,13 @@ Git is initialized in this folder. Use `git log` to see history. Always commit w
 
 **Commit history:**
 ```
-PENDING PPParty V0.4.1 — Forward hinge bias on legs, prevents backward foot drag
-PENDING PPParty V0.4.0 — 3-axis torso sway, correct joint bending, foot constraints
-PENDING PPParty V0.3.5 — Walking bob, mouth sway, jaw lift, ground friction
-PENDING PPParty V0.3.3 — Visual/physics split, chest+pelvis, analytical two-bone IK
-PENDING PPParty V0.2.0 — Face-tracked marionette (blob head + body movement from phone)
-PENDING PPParty V0.1.1 — Simulation zone physics (replaces Python Verlet handler)
-PENDING PPParty V0.1.0 — Dangling puppet (Verlet physics, GN visual tree, N-panel)
-PENDING V0.7.0 — Nose, QR removal, latency optimization (UDP buffer, caching, UV strip)
+01d736e PPParty V0.9.4 — Reduce geometry density for slider performance
+ac86bfe PPParty V0.9.4 — Fix hand mirroring (remove Y/X negation)
+ed34cf9 PPParty V0.9.4 — Mirrored rotation on feet (Z-axis) + hands
+a20e946 PPParty V0.9.4 — Material slots for all body + head parts
+f49eb7b PPParty V0.9.3 — Foot Depth + Hand Tilt sliders
+1c88712 PPParty V0.9.2 — Capsule Width + Rotation on hands, feet, shoulders
+... (earlier PPParty V0.5.0–V0.9.1 committed in prior sessions)
 b28aebe V0.6.0 — Reactive eyebrow rotation, mouth lateral shift, calibration UI fix
 6c7d23d V0.5.1 — Fix sideways blink, mirror eyebrow rotation
 2af933c V0.5.0 — Dynamic capsules on ALL body parts (eyes, ears, brows, irises, pupils)
@@ -446,8 +460,6 @@ b28aebe V0.6.0 — Reactive eyebrow rotation, mouth lateral shift, calibration U
 9978eff V0.3.1 — Organized customize panels, independent eyebrow position controls
 6a2dbe7 V0.3.0 — Eyebrows, mouth frown/shift, color controls, position sliders
 96cd580 V0.2.0 — Template loader, puppet picker, customization sliders, latency fix
-2de54b3 Add latency research notes — head tracking skips on fast movement
-35170ce Update CLAUDE.md — Green Room V0.1.0 documented, priorities reordered
 3a3796c V0.1.0 — Green Room addon + blob puppet template (geometry nodes)
 2fffee1 V0.3.3 — Cleaner UI + a student's testing guide (PaWrappa)
 f8757bf V0.3.2 — Student-ready UI + restored exact V0.3.0 algorithm (PaWrappa)
