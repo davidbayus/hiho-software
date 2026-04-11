@@ -72,10 +72,32 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         col4 = box4.column(align=True)
         _draw_slider_group(col4, mod, ["Body Width", "Hand Size",
                                         "Foot Size"])
-        col4.separator()
-        _draw_slider_group(col4, mod, ["Body Color", "Hand Color",
-                                        "Foot Color", "Joint Color",
-                                        "Limb Color"])
+
+        # --- Colors (direct material color pickers) ---
+        layout.separator()
+        box_c = layout.box()
+        box_c.label(text="Colors", icon='COLOR')
+        col_c = box_c.column(align=True)
+        _draw_material_colors(col_c, [
+            ("PP_HeadSkin", "Head"),
+            ("PP_Body", "Body"),
+            ("PP_Hand", "Hand"),
+            ("PP_Foot", "Foot"),
+            ("PP_Joint", "Joint"),
+            ("PP_Limb", "Limb"),
+        ])
+        col_c.separator()
+        col_c.label(text="Face:")
+        _draw_material_colors(col_c, [
+            ("PP_EyeWhite", "Eye White"),
+            ("PP_Iris", "Iris"),
+            ("PP_Pupil", "Pupil"),
+            ("PP_Mouth", "Mouth"),
+            ("PP_Lip", "Lip"),
+            ("PP_Nose", "Nose"),
+            ("PP_Ear", "Ear"),
+            ("PP_Brow", "Eyebrow"),
+        ])
 
         # --- Head Design (blob head customization passthrough) ---
         layout.separator()
@@ -253,3 +275,14 @@ def _draw_slider_group(col, mod, names):
                 and item.name in names):
             prop_path = f'["{item.identifier}"]'
             col.prop(mod, prop_path, text=item.name)
+
+
+def _draw_material_colors(col, mat_labels):
+    """Draw color pickers for Principled BSDF Base Color on named materials."""
+    for mat_name, label in mat_labels:
+        mat = bpy.data.materials.get(mat_name)
+        if mat and mat.use_nodes:
+            bsdf = mat.node_tree.nodes.get("Principled BSDF")
+            if bsdf:
+                col.prop(bsdf.inputs["Base Color"], "default_value",
+                         text=label)

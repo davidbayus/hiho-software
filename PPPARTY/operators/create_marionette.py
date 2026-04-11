@@ -58,8 +58,8 @@ from mathutils import Vector
 # Fixed body position (no empties — head rotation drives everything)
 BODY_CENTER = Vector((0.0, 0.0, 0.0))
 HEAD_OFFSET = Vector((0.0, 0.0, 0.48))
-SHOULDER_L_OFFSET = Vector((-0.35, 0.0, 0.15))
-SHOULDER_R_OFFSET = Vector((0.35, 0.0, 0.15))
+SHOULDER_L_OFFSET = Vector((-0.42, 0.0, 0.15))
+SHOULDER_R_OFFSET = Vector((0.42, 0.0, 0.15))
 HIP_L_OFFSET = Vector((-0.2, 0.0, -0.3))
 HIP_R_OFFSET = Vector((0.2, 0.0, -0.3))
 
@@ -86,7 +86,7 @@ KNEE_JOINT_RADIUS = 0.06
 FOOT_SPLAY_ANGLE = 0.262       # 15 degrees in radians
 HINGE_LIMIT = 0.04             # max Y-component in forbidden direction (was 0.08)
 INWARD_LIMIT = 0.3             # max X-direction toward body center (~17°)
-MIDLINE_MARGIN = 0.02          # hard X position safety margin from center
+MIDLINE_MARGIN = 0.18          # hard X clamp — keeps hands outside chest (radius 0.2)
 ARM_BEND_BIAS = 0.0            # removed: was accumulating drift per frame
 LEG_BEND_BIAS = 0.0            # removed: was accumulating drift per frame
 FOOT_SPREAD_DIR = 0.5          # max X-direction away from body (limits lateral splay)
@@ -1258,30 +1258,10 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.min_value = 0.3
     s.max_value = 2.0
 
-    s = tree.interface.new_socket(
-        "Body Color", in_out='INPUT', socket_type='NodeSocketColor',
-        parent=cust_panel)
-    s.default_value = (0.85, 0.55, 0.35, 1.0)
-
-    s = tree.interface.new_socket(
-        "Hand Color", in_out='INPUT', socket_type='NodeSocketColor',
-        parent=cust_panel)
-    s.default_value = (0.95, 0.75, 0.55, 1.0)
-
-    s = tree.interface.new_socket(
-        "Foot Color", in_out='INPUT', socket_type='NodeSocketColor',
-        parent=cust_panel)
-    s.default_value = (0.6, 0.4, 0.25, 1.0)
-
-    s = tree.interface.new_socket(
-        "Joint Color", in_out='INPUT', socket_type='NodeSocketColor',
-        parent=cust_panel)
-    s.default_value = (0.5, 0.5, 0.5, 1.0)
-
-    s = tree.interface.new_socket(
-        "Limb Color", in_out='INPUT', socket_type='NodeSocketColor',
-        parent=cust_panel)
-    s.default_value = (0.25, 0.25, 0.25, 1.0)
+    # NOTE: Color sockets removed in V0.9.0 — colors are now controlled
+    # directly via material Base Color pickers in the "Colors" N-panel
+    # section. This avoids the GN limitation of not being able to change
+    # material colors per-instance.
 
     # ------------------------------------------------------------------
     # HEAD CUSTOMIZATION — passthrough from blob head template
@@ -1610,6 +1590,33 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     z_lift.operation = 'ADD'
     tree.links.new(brow_lift.outputs['Value'], z_lift.inputs[0])
     tree.links.new(jaw_lift_sc.outputs['Value'], z_lift.inputs[1])
+
+    # --- Eyebrow raise → arms spread outward (V0.9.0) ---
+    # Raised brows push hands away from body on X axis
+    brow_spread = add_node(tree, 'ShaderNodeMath', x_sw + 400, 890,
+                           "Brow Spread")
+    brow_spread.operation = 'MULTIPLY'
+    tree.links.new(brow_avg.outputs['Value'], brow_spread.inputs[0])
+    tree.links.new(group_in.outputs['Gesture Strength'],
+                   brow_spread.inputs[1])
+
+    # Right hand: extend + spread (outward = +X)
+    shr_x_total = add_node(tree, 'ShaderNodeMath', x_sw + 600, 890,
+                           "ShR X+Spr")
+    shr_x_total.operation = 'ADD'
+    tree.links.new(extend.outputs[0], shr_x_total.inputs[0])
+    tree.links.new(brow_spread.outputs['Value'], shr_x_total.inputs[1])
+
+    # Left hand: neg_extend - spread (outward = -X)
+    shl_x_total = add_node(tree, 'ShaderNodeMath', x_sw + 600, 830,
+                           "ShL X-Spr")
+    shl_x_total.operation = 'SUBTRACT'
+    tree.links.new(neg_extend.outputs[0], shl_x_total.inputs[0])
+    tree.links.new(brow_spread.outputs['Value'], shl_x_total.inputs[1])
+
+    # Re-wire shoulder delta X to include brow spread
+    tree.links.new(shr_x_total.outputs['Value'], shr_delta.inputs['X'])
+    tree.links.new(shl_x_total.outputs['Value'], shl_delta.inputs['X'])
 
     # --- Mouth lateral → torso lateral shift ---
     # mouthRight pushes torso +X, mouthLeft pushes -X
