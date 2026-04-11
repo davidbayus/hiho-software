@@ -1252,11 +1252,53 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.max_value = 2.0
 
     s = tree.interface.new_socket(
+        "Hand Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Hand Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+
+    s = tree.interface.new_socket(
         "Foot Size", in_out='INPUT', socket_type='NodeSocketFloat',
         parent=cust_panel)
     s.default_value = 1.0
     s.min_value = 0.3
     s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Foot Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Foot Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+
+    s = tree.interface.new_socket(
+        "Shoulder Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Shoulder Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
 
     # NOTE: Color sockets removed in V0.9.0 — colors are now controlled
     # directly via material Base Color pickers in the "Colors" N-panel
@@ -2129,12 +2171,18 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     def _add_capsule_part(y, label, radius, pos_socket, mat,
                           scale=(1, 1, 1), rotation=(0, 0, 0),
                           width_output=None, ext_factor=0.3, axis='Z',
-                          subdivs=6, uniform_scale_out=None):
+                          subdivs=6, uniform_scale_out=None,
+                          rotation_output=None, rot_axis='Y'):
         """Create one body part: capsule + transform + material + smooth.
 
         uniform_scale_out: optional socket driving uniform XYZ scale
             (e.g. Hand Size slider). Multiplied with the static scale.
+        rotation_output: optional socket driving rotation (degrees).
+            Converted to radians, applied on rot_axis. Static rotation
+            components on other axes are preserved.
         """
+        import math
+
         capsule = add_dynamic_capsule(
             tree, x_part - 1200, y, label,
             radius=radius, subdivs=subdivs,
@@ -2145,7 +2193,28 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         tree.links.new(capsule.outputs['Geometry'],
                        tf.inputs['Geometry'])
         tree.links.new(pos_socket, tf.inputs['Translation'])
-        tf.inputs['Rotation'].default_value = rotation
+
+        if rotation_output is not None:
+            # Degrees → radians
+            rot_rad = add_node(tree, 'ShaderNodeMath',
+                               x_part + 50, y - 160, f"{label} D→R")
+            rot_rad.operation = 'MULTIPLY'
+            rot_rad.inputs[1].default_value = math.pi / 180.0
+            tree.links.new(rotation_output, rot_rad.inputs[0])
+
+            # Build rotation vector: static base on non-driven axes,
+            # slider radians on driven axis
+            rot_vec = add_node(tree, 'ShaderNodeCombineXYZ',
+                               x_part + 200, y - 160, f"{label} RotV")
+            rot_vec.inputs['X'].default_value = rotation[0]
+            rot_vec.inputs['Y'].default_value = rotation[1]
+            rot_vec.inputs['Z'].default_value = rotation[2]
+            tree.links.new(rot_rad.outputs[0],
+                           rot_vec.inputs[rot_axis])
+            tree.links.new(rot_vec.outputs['Vector'],
+                           tf.inputs['Rotation'])
+        else:
+            tf.inputs['Rotation'].default_value = rotation
 
         if uniform_scale_out is not None:
             # Build dynamic scale: static_scale * uniform_size
@@ -2217,29 +2286,51 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _add_sphere_part(-460, "Waist Jnt", WAIST_JOINT_RADIUS,
                      waist_mid.outputs['Vector'], body_mats['joint'])
 
-    # Hands: static capsules, uniform scale from Hand Size slider
+    # Hands: capsules with Width + Rotation, uniform scale from Hand Size
     _add_capsule_part(-620, "Hand L", HAND_RADIUS,
                       sim_out.outputs['pos_hand_l'], body_mats['hand'],
-                      uniform_scale_out=group_in.outputs['Hand Size'])
+                      width_output=group_in.outputs['Hand Width'],
+                      ext_factor=0.3, axis='Z',
+                      uniform_scale_out=group_in.outputs['Hand Size'],
+                      rotation_output=group_in.outputs['Hand Rotation'])
     _add_capsule_part(-780, "Hand R", HAND_RADIUS,
                       sim_out.outputs['pos_hand_r'], body_mats['hand'],
-                      uniform_scale_out=group_in.outputs['Hand Size'])
+                      width_output=group_in.outputs['Hand Width'],
+                      ext_factor=0.3, axis='Z',
+                      uniform_scale_out=group_in.outputs['Hand Size'],
+                      rotation_output=group_in.outputs['Hand Rotation'])
 
-    # Feet: static capsules with splay, uniform scale from Foot Size
+    # Feet: capsules with Width + Rotation, splay preserved on Z
     _add_capsule_part(-940, "Foot L", FOOT_RADIUS,
                       sim_out.outputs['pos_foot_l'], body_mats['foot'],
                       rotation=(0, 0, FOOT_SPLAY_ANGLE),
-                      uniform_scale_out=group_in.outputs['Foot Size'])
+                      width_output=group_in.outputs['Foot Width'],
+                      ext_factor=0.3, axis='Y',
+                      uniform_scale_out=group_in.outputs['Foot Size'],
+                      rotation_output=group_in.outputs['Foot Rotation'],
+                      rot_axis='X')
     _add_capsule_part(-1100, "Foot R", FOOT_RADIUS,
                       sim_out.outputs['pos_foot_r'], body_mats['foot'],
                       rotation=(0, 0, -FOOT_SPLAY_ANGLE),
-                      uniform_scale_out=group_in.outputs['Foot Size'])
+                      width_output=group_in.outputs['Foot Width'],
+                      ext_factor=0.3, axis='Y',
+                      uniform_scale_out=group_in.outputs['Foot Size'],
+                      rotation_output=group_in.outputs['Foot Rotation'],
+                      rot_axis='X')
 
-    # Joints (small spheres at attachment points)
-    _add_sphere_part(-1260, "Jnt ShL", JOINT_RADIUS,
-                     sim_out.outputs['floated_shl'], body_mats['joint'])
-    _add_sphere_part(-1360, "Jnt ShR", JOINT_RADIUS,
-                     sim_out.outputs['floated_shr'], body_mats['joint'])
+    # Shoulder joints: capsules with Width + Rotation
+    _add_capsule_part(-1260, "Jnt ShL", JOINT_RADIUS,
+                      sim_out.outputs['floated_shl'], body_mats['joint'],
+                      width_output=group_in.outputs['Shoulder Width'],
+                      ext_factor=0.3, axis='Z',
+                      rotation_output=group_in.outputs['Shoulder Rotation'])
+    _add_capsule_part(-1360, "Jnt ShR", JOINT_RADIUS,
+                      sim_out.outputs['floated_shr'], body_mats['joint'],
+                      width_output=group_in.outputs['Shoulder Width'],
+                      ext_factor=0.3, axis='Z',
+                      rotation_output=group_in.outputs['Shoulder Rotation'])
+
+    # Hip joints (small spheres — stay spherical)
     _add_sphere_part(-1460, "Jnt HipL", JOINT_RADIUS,
                      hipl_visual.outputs['Vector'], body_mats['joint'])
     _add_sphere_part(-1560, "Jnt HipR", JOINT_RADIUS,

@@ -70,8 +70,19 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         box4 = layout.box()
         box4.label(text="Make It Yours", icon='BRUSH_DATA')
         col4 = box4.column(align=True)
-        _draw_slider_group(col4, mod, ["Body Width", "Hand Size",
-                                        "Foot Size"])
+        _draw_slider_group(col4, mod, ["Body Width"])
+        col4.separator()
+        col4.label(text="Hands:")
+        _draw_slider_group(col4, mod, ["Hand Size", "Hand Width",
+                                        "Hand Rotation"])
+        col4.separator()
+        col4.label(text="Feet:")
+        _draw_slider_group(col4, mod, ["Foot Size", "Foot Width",
+                                        "Foot Rotation"])
+        col4.separator()
+        col4.label(text="Shoulders:")
+        _draw_slider_group(col4, mod, ["Shoulder Width",
+                                        "Shoulder Rotation"])
 
         # --- Colors (direct material color pickers) ---
         layout.separator()
