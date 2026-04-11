@@ -74,14 +74,16 @@ def ensure_dummy_mesh():
     return obj
 
 
-def decode_live_link_face(raw_bytes):
-    """Decode a binary Live Link Face UDP packet.
+def _parse_packet(raw_bytes):
+    """Parse Live Link Face UDP packet header and extract 61 float values.
 
-    The packet contains 61 floats: 52 ARKit blend shape weights,
-    3 head rotation values, 3 left eye rotation values, and
-    3 right eye rotation values.
+    Binary format (FOSCAP/Live Link Face protocol):
+      Bytes 41-44: name_length (big-endian int32)
+      Bytes 45..name_end: device name string
+      After name: frame info header (17 bytes: int, float, 2 shorts, byte)
+      After header: 61 big-endian floats (52 blend shapes + 9 rotation values)
 
-    Returns a list of tuples, or None on failure.
+    Returns the 61-float tuple, or None on failure.
     """
     try:
         name_length = struct.unpack('!i', raw_bytes[41:45])[0]
@@ -97,8 +99,22 @@ def decode_live_link_face(raw_bytes):
         if count != 61:
             return None
 
-        data = struct.unpack("!61f", raw_bytes[name_end + 17:])
+        return struct.unpack("!61f", raw_bytes[name_end + 17:])
     except (struct.error, IndexError):
+        return None
+
+
+def decode_live_link_face(raw_bytes):
+    """Decode a binary Live Link Face UDP packet.
+
+    The packet contains 61 floats: 52 ARKit blend shape weights,
+    3 head rotation values, 3 left eye rotation values, and
+    3 right eye rotation values.
+
+    Returns a list of tuples, or None on failure.
+    """
+    data = _parse_packet(raw_bytes)
+    if data is None:
         return None
 
     result = []
@@ -121,18 +137,8 @@ def decode_all_blendshapes(raw_bytes):
     which ones correspond to eyebrow movements, etc.
     Returns dict of {index: value} for values > 0.05, or None on failure.
     """
-    try:
-        name_length = struct.unpack('!i', raw_bytes[41:45])[0]
-        name_end = 45 + name_length
-        if len(raw_bytes) <= name_end + 16:
-            return None
-        _frame, _subframe, _fps, _denom, count = struct.unpack(
-            "!if2ib", raw_bytes[name_end:name_end + 17]
-        )
-        if count != 61:
-            return None
-        data = struct.unpack("!61f", raw_bytes[name_end + 17:])
-    except (struct.error, IndexError):
+    data = _parse_packet(raw_bytes)
+    if data is None:
         return None
 
     active = {}
@@ -165,6 +171,9 @@ class OSCReceiver:
         self._last_redraw_time = 0.0
         self._target_armature = None
         self._target_bone = None
+        # Cached references — avoid per-frame lookups
+        self._cached_key_blocks = None
+        self._cached_bone = None
 
     @property
     def is_running(self):
@@ -197,6 +206,9 @@ class OSCReceiver:
         self._target_bone = target_bone
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Bigger receive buffer for busy WiFi — prevents packet drops
+        # when other phones/devices share the travel router network
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
         try:
             self._sock.bind(('0.0.0.0', port))
         except OSError:
@@ -228,6 +240,9 @@ class OSCReceiver:
         with self._lock:
             self._pending.clear()
             self._latest.clear()
+
+        self._cached_key_blocks = None
+        self._cached_bone = None
 
         if bpy.app.timers.is_registered(self._apply_updates):
             bpy.app.timers.unregister(self._apply_updates)
@@ -265,18 +280,27 @@ class OSCReceiver:
         if not self._running:
             return None  # Unregister timer
 
-        dummy = bpy.data.objects.get(DUMMY_MESH_NAME)
-        if not dummy or not dummy.data.shape_keys:
-            return 0.01
+        # Lazy-cache shape key blocks and pose bone (avoids per-frame lookups)
+        if self._cached_key_blocks is None:
+            dummy = bpy.data.objects.get(DUMMY_MESH_NAME)
+            if not dummy or not dummy.data.shape_keys:
+                return 0.01
+            self._cached_key_blocks = dummy.data.shape_keys.key_blocks
+            # Cache the pose bone too
+            if self._target_armature and self._target_bone:
+                arm = self._target_armature
+                if arm.type == 'ARMATURE':
+                    self._cached_bone = arm.pose.bones.get(self._target_bone)
 
+        # Swap pending dict — O(1) instead of copying
         with self._lock:
-            updates = dict(self._pending)
-            self._pending.clear()
+            updates = self._pending
+            self._pending = {}
 
         if not updates:
             return 0.01
 
-        key_blocks = dummy.data.shape_keys.key_blocks
+        key_blocks = self._cached_key_blocks
 
         # Apply shape key values (each key appears once — latest value only)
         for name, value in updates.items():
@@ -288,14 +312,10 @@ class OSCReceiver:
 
         # Apply head rotation
         head_euler = updates.get('_head_rotation')
-        if head_euler and self._target_armature and self._target_bone:
-            arm = self._target_armature
-            if arm.type == 'ARMATURE':
-                bone = arm.pose.bones.get(self._target_bone)
-                if bone:
-                    bone.rotation_euler = mathutils.Euler(head_euler, 'XYZ')
+        if head_euler and self._cached_bone:
+            self._cached_bone.rotation_euler = mathutils.Euler(head_euler, 'XYZ')
 
-        # Refresh viewport at ~30fps (was 0.5s — caused visible skipping)
+        # Refresh viewport at ~30fps
         now = time.time()
         if now - self._last_redraw_time > 0.033:
             self._last_redraw_time = now

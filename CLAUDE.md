@@ -64,7 +64,8 @@ A puppet template is a `.blend` file with a standard structure so the addon can 
 6. **Metadata** — template name, author, thumbnail, recommended age range
 
 ## Target Blender Version
-- Blender 5.0+ (David's current version, confirmed working)
+- **Green Room:** Blender 5.0+ (confirmed working)
+- **PPParty:** Blender 5.2 Alpha (David installed April 9, 2026 — from builder.blender.org — to access experimental XPBD solver features)
 - Must run in EEVEE real-time (engine name is `BLENDER_EEVEE` in 5.0, NOT `BLENDER_EEVEE_NEXT`)
 
 ## Project Structure
@@ -204,31 +205,32 @@ Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/fo
 
 **Note:** While QUADRE is in beta, use Exoside for test meshes when testing PaWrappa to isolate variables.
 
-### Green Room Addon (V0.5.0-WIP — Dynamic Capsules on ALL Body Parts)
+### Green Room Addon (V0.7.0 — Nose + Latency Optimization)
 Puppet show addon lives in `green_room/`. N-panel tab is "Green Room". Class prefix: `GREENROOM`. Operator prefix: `greenroom.*`. Property prefix: `gr_`.
 
-**Current state (April 4, 2026): ALL body parts now use dynamic Minkowski capsules with Width + Rotation sliders. Eyes, irises, pupils, ears, eyebrows — every part can be pill-shaped and tilted. Mouth/lips unchanged (curve-based).**
+**Current state (April 8, 2026): Nose added, QR code removed (pending fix), OSC receiver optimized for travel router deployment, node tree trimmed (30 nodes removed — UV Unwrap overhead eliminated for solid-color materials).**
 
-Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile/frown, pucker, eye look direction all working. Blob puppet has eyebrows reactive to face tracking.
+Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile/frown, pucker, eye look direction all working. Blob puppet has reactive eyebrows and nose.
 
 **What exists now:**
-- **OSC Receiver** (`core/osc_receiver.py`) — FOSCAP fork, class-based, threaded, 13 active ARKit blend shapes. Timer callback at 10ms pushes shape key values + head rotation to Blender objects. All mouth indices confirmed working (April 4 calibration).
-- **Phone Connect** (`core/phone_connect.py`) — IP detection + QR code PNG generation, zero external dependencies
-- **QR Generator** (`core/qr_gen.py`) — Complete QR code encoder from scratch (~280 lines). GF(256) arithmetic, Reed-Solomon error correction, versions 1-4, EC level L. Written because pip-installing qrcode in classrooms is a non-starter.
-- **Connect Operator** (`operators/connect_phone.py`) — One button: creates dummy mesh, starts receiver, finds armature with "head" bone, generates QR, shows in panel
+- **OSC Receiver** (`core/osc_receiver.py`) — FOSCAP fork, class-based, threaded, 13 active ARKit blend shapes. Timer callback at 10ms pushes shape key values + head rotation to Blender objects. V0.7.0: 64KB UDP receive buffer (busy WiFi), cached shape key + bone refs, O(1) dict swap.
+- **Phone Connect** (`core/phone_connect.py`) — IP detection, zero external dependencies. QR generation code still present but not called (QR display removed from UI pending fix).
+- **QR Generator** (`core/qr_gen.py`) — Complete QR code encoder from scratch (~280 lines). GF(256) arithmetic, Reed-Solomon error correction, versions 1-4, EC level L. Written because pip-installing qrcode in classrooms is a non-starter. Currently unused — will be re-enabled when QR issues are resolved.
+- **Connect Operator** (`operators/connect_phone.py`) — One button: creates dummy mesh, starts receiver, finds armature with "head" bone, reports IP/port
 - **Template Loader** (`core/template_loader.py`) — Loads .blend puppet templates, validates structure, wires drivers from dummy mesh to geonode inputs
 - **Template Spec** (`core/template_spec.py`) — Validates templates: checks for geonode modifier, armature with "head" bone, face tracking inputs, customization inputs. Groups sockets by panel.
 - **Puppet Picker** (`operators/pick_puppet.py`) — Browse and load available puppet templates
-- **Customize Puppet** (`operators/customize_puppet.py`) — N-panel "Make It Yours" section draws customization sliders grouped by body part (Body, Eyes, Mouth, Ears, Eyebrows). Also exposes Subdivision Surface "Smoothness" slider.
+- **Customize Puppet** (`operators/customize_puppet.py`) — N-panel "Make It Yours" section draws customization sliders grouped by body part (Body, Eyes, Mouth, Nose, Ears, Eyebrows). Also exposes Subdivision Surface "Smoothness" slider.
 - **Calibrate Brows** (`operators/calibrate_brows.py`) — Developer tool: one-shot UDP capture to identify unknown ARKit blend shape indices. Results write to Blender Text Editor ("FaceSnapshot") — no Terminal needed.
-- **N-Panel** (`ui/panels.py`) — Puppet panel (picker + customization sliders) + Connect panel (three states: disconnected, waiting, receiving)
+- **N-Panel** (`ui/panels.py`) — Puppet panel (picker + customization sliders) + Connect panel (three states: disconnected, waiting, receiving). QR code display removed in V0.7.0.
 - **Blob Puppet Template** (`assets/create_blob_template.py` → `assets/templates/blob/blob_puppet.blend`) — Procedural character with:
-  - **Body parts**: Body, eyes, irises, pupils, ears, eyebrows (ALL dynamic capsules), mouth, lips (curve-based)
+  - **Body parts**: Body, eyes, irises, pupils, ears, eyebrows (ALL dynamic capsules), nose (dynamic capsule), mouth, lips (curve-based)
   - **Face tracking** (13 ARKit inputs): jawOpen, mouth smile/frown/funnel/left/right, eye blink/wide/look per side
-  - **Customization panels** (6 groups, 31 sliders):
+  - **Customization panels** (7 groups, 37 sliders):
     - Body: Width (0–2, capsule extension), Height, Rotation (-180°–180°), Color
     - Eyes: Size, Spacing, Height, Depth, Color, Width (0–2, football eye), Rotation (-180°–180°, tilted eye)
     - Mouth: Size, Height, Depth, Color
+    - Nose: Size, Height, Depth, Color, Width (0–2, long nose), Rotation (-180°–180°)
     - Ears: Size, Height, Spread, Depth, Color, Width (0–2, long ear), Rotation (-180°–180°)
     - Eyebrows: Size, Height, Depth, Spread, Color, Width (0–2, wide brow), Rotation (-180°–180°)
     - Lips: Thickness, Color
@@ -236,9 +238,10 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
   - **Shade Smooth** applied to all joined geometry before output
   - **Subdivision Surface** modifier (level 2) with kid-friendly Smoothness slider
   - **Lip tube**: Curve Circle path (24pts) deformed by mouth field → Curve to Mesh with profile circle → 3D tube around mouth opening
-  - **Eyebrow face tracking**: eyeWide lifts (0.15), eyeBlink drops (-0.12), per-side independent
+  - **Eyebrow face tracking**: eyeWide lifts (0.15), eyeBlink drops (-0.12), per-side independent. Reactive rotation: frown+squint → angry inward V, smile+wide eyes → happy outward arch.
+  - **Nose face tracking**: Reactive to jawOpen (drops) and mouthSmileRight (lifts). No dedicated ARKit nose inputs — reuses existing signals for lighter data pipeline.
   - **Mouth deformation**: Per-vertex field (squished circle, jawOpen drops bottom, smile/frown bends corners, funnel narrows, mouthLeft/Right shifts laterally at 0.35 strength)
-  - **Color system**: Store Named Attribute → Attribute material per body part
+  - **Material system**: Solid-color Principled BSDF materials, assigned via Set Material geonode. No UV Unwrap overhead — UVs deferred to future build for texture painting support.
   - Armature with "head" bone (Euler XYZ) for phone rotation
   - **Node tree spacing**: Rows spaced 400+ apart for readability in the Geometry Nodes editor
 
@@ -250,23 +253,22 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - **Round Cube addon threshold gotcha**: The Extra Objects addon's `primitive_round_cube_add` operator has an internal threshold: `size` must exceed `2 * (radius - sagitta)` to produce ANY straight section. With radius=0.5 and arc_div=8, that threshold is ~1.0. Passing size=0.8 produces a sphere, not a capsule. This is why the Object Info approach failed — the reference mesh was just a sphere.
 - **Driver path format**: `modifiers["GeometryNodes"]["Socket_X"]` where Socket_X is the identifier from `tree.interface.items_tree`
 - **Bone rotation mode**: Must be set to `'XYZ'` (Euler) — Blender defaults to Quaternion which ignores `rotation_euler` values from the phone
-- **QR text format**: `"Green Room\nIP: {ip}\nPort: {port}"` — plain text prevents iOS from interpreting as URL
 - **Dummy mesh pattern**: Hidden mesh `ARKitShapeKeys.Dummy` with shape keys matching ARKit blend shape names. OSC receiver writes values here, drivers read them.
 - **Geonode panels**: Blender 5.0 does NOT support nested panels (`new_panel(parent=...)` throws TypeError). Use separate top-level panels instead.
-- **Color materials**: `make_color_attr_material()` creates a material that reads Base Color from a "Color" named attribute. Each body part uses Store Named Attribute → Set Material chain.
+- **Solid-color materials**: `make_material()` creates Principled BSDF with a solid Base Color. Each body part gets a Set Material geonode (no UV overhead). UVs will be re-added in a future build when texture painting support lands.
 - **Mouth deformation**: Flat circle mesh with per-vertex Set Position field. Y squished to 0.12 at rest (thin line). jawOpen pushes bottom verts down. Smile range is bidirectional: `(smile * 0.8 - 0.15) * abs(x)` gives slight frown at rest, full grin at smile=1.
 - **Eyebrow position**: Independent from eyes — Eyebrow Spread/Depth/Height are separate sliders. Height still offsets FROM eyes_height_z so brows track vertically with eyes.
 - **Socket cross-wiring prevention**: `setup_drivers()` maps by socket NAME not index. Adding new interface sockets won't shift existing driver targets. Always include ALL face tracking socket names in the face_inputs list.
 
 **Next steps:**
-- **Reactive eyebrow rotation** (IN PROGRESS) — eyebrows tilt based on face tracking: frown+squint → angry inward V, smile+wide eyes → happy outward arch. Math: `(eyeBlink + frown - eyeWide - smile) * strength` added to manual Eyebrow Rotation slider.
+- **Lightweight UV Unwrap** — Re-add UVs so kids can texture-paint their puppets. Must avoid per-frame recalculation (explore static UV bake or paint-mode-only generation).
+- **QR code fix** — Re-enable QR display in Connect panel once the rendering issue is resolved
 - Asymmetric controls (per-eye size, per-ear size) — David requested this
-- Rebuild `blob_puppet.blend` by running the updated script in Blender
+- Character design variety — needs Will Anderson-style artistic range
 
-**Known issues / next steps:**
-- Character design is basic — needs Will Anderson-style artistic variety
+**Known issues:**
 - **Mouth shape**: Mouth is large and fully open-looking at rest when mouth size is cranked up. May need squish factor to scale with mouth size.
-- Need to rebuild `blob_puppet.blend` by running updated `create_blob_template.py` in Blender
+- **Nose sneer indices**: ARKit noseSneerLeft/Right were not wired (indices couldn't be calibrated). Nose uses reactive movement from jawOpen/smile instead — works well, lighter pipeline.
 
 **Calibration results (April 4, 2026):**
 - **mouthLeft [21] CONFIRMED** — 0.914 when pushing mouth left
@@ -287,6 +289,98 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - `G_Ready_Source.zip` — Ministry of Flat wrapper (full-featured, 30+ parameters)
 - Both are wrappers around proprietary Windows-only .exe — can't use directly, but studied for approach
 
+### PPPARTY — The People's Puppet Party (V0.4.1 — Joint Constraints + 3-Axis Torso)
+Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY". Class prefix: `PPPARTY`. Operator prefix: `ppparty.*`. Property prefix: `pp_`.
+
+**Current state (April 10, 2026): Face-tracked blob head on physics marionette body with anatomically correct joint bending, foot spread/midline limits, ground friction, forward hinge bias on legs, 3-axis torso sway, walking bob, eyebrow/jaw lift, mouth lateral sway. Confirmed working on Blender 5.2 Alpha.**
+
+**Core concept:** A digital marionette where face tracking provides the control input (like a marionette control bar), and Verlet physics makes the puppet body dangle and react. Face tracking drives facial expressions AND body movement. Inspired by traditional puppet rigging — Bunraku threshold toggles, marionette under-actuation, Henson's "maximum expression from minimum controls."
+
+**What exists now:**
+- **Create Marionette operator** (`operators/create_marionette.py`) — one button builds blob head + marionette body + sim zone physics + materials. Creates PP_Marionette mesh, PP_Armature (hidden, single "head" bone), ARKitShapeKeys.Dummy mesh.
+- **Blob head** — loaded from `assets/blob_puppet.blend` as GN Group node (GN_BlobPuppet). Same head as Green Room. Scaled 0.6, positioned at (0, 0, 0.48).
+- **Face tracking** — 15 ARKit shape keys (jawOpen, blink, smile, frown, pucker, eye look, etc.) + 3 head rotation axes. All wired as GN Group Inputs on the modifier.
+- **Multi-channel body movement** — 6 face tracking channels drive body:
+  - headRotY (lean) → lateral torso sway + contralateral gait
+  - headRotX (extend) → forward/backward torso sway + Z dip + arm spread
+  - abs(headRotY) → walking bob (vertical rise during stride)
+  - mouthLeft/Right → lateral torso shift (0.3 chest, 0.2 pelvis)
+  - eyeWideL/R avg → Z lift ("pick up" puppet, Lift Strength slider)
+  - jawOpen → Z lift booster (stacks with brow lift)
+- **Analytical two-bone IK** for elbows/knees — `_compute_mid_joint()` uses law of cosines + double cross product to compute joint position from attachment→endpoint vector. `bend_axis` parameter controls bend direction.
+- **GN simulation zone physics** — Verlet integration + distance constraints. 9 state items: 4 endpoints, 4 previous, 1 initialized flag.
+- **Joint constraints per endpoint:**
+  - Arms: Y-axis hinge (prevents hyperextension), inward limit (prevents crossing body), midline clamp (hard stop at center)
+  - Legs: -Y hinge with forward bias (`LEG_HINGE_BIAS = -0.06` → feet forced slightly forward), spread limit (`FOOT_SPREAD_DIR = 0.5`), midline clamp (`FOOT_MIDLINE = 0.08`)
+  - Ground friction on feet (proximity-based XY velocity damping near floor)
+  - Ground collision (Z clamp at floor height)
+- **OSC receiver** (`core/osc_receiver.py`) — ported from Green Room, standalone. Threaded UDP, 13 active ARKit blend shapes. Pushes values directly to GN modifier (bypasses broken 5.2 drivers). Probe system: RNA → IDProperty → interface default_value fallback.
+- **Phone connect** (`operators/connect_phone.py`, `core/phone_connect.py`) — one button: creates dummy mesh, starts receiver, finds PP_ armature, reports IP/port.
+- **N-panel** (`ui/panels.py`) — Create Marionette, Body Movement sliders (Lean Strength, Extend Strength, Lift Strength), Physics sliders (Gravity, Damping, Arm/Leg Length, Ground Friction), Proportions, Connect Phone (3 states), Debug (collapsed), How to Use (collapsed).
+- **Debug operator** (`operators/debug_modifier.py`) — dumps ALL modifier properties to "PPParty_Debug" text block.
+- **Reset Physics operator** — jumps to frame 1 (re-initializes sim zone)
+
+**Body parts:**
+- **Chest** — oblate UV Sphere (radius 0.2, scaled 1.1 × 0.8 × 1.05)
+- **Pelvis** — oblate UV Sphere (radius 0.17, scaled 1.0 × 0.85 × 0.9)
+- **Waist joint** — connects chest to pelvis
+- **Head** — blob puppet (GN Group node from blob_puppet.blend)
+- **Hands** — UV Spheres (radius 0.1) at physics endpoint positions
+- **Feet** — UV Spheres (radius 0.12) with 15° splay angle
+- **Elbows/Knees** — joint spheres at analytical IK midpoints
+- **Limbs** — split into upper/lower segments with joint sphere between
+- **Neck** — tube connecting chest top to head bottom, follows chest sway
+- **6 materials**: PP_Body, PP_Head, PP_Hand, PP_Foot, PP_Joint, PP_Limb
+
+**3-axis torso sway (V0.4.0+):**
+- **X (lateral):** lean × 1.0 (chest), × 0.7 (pelvis) + mouth lateral shift
+- **Y (forward/back):** extend × 0.5 (chest), × 0.35 (pelvis) — tilt head forward, body follows
+- **Z (vertical):** walking bob + dip + eyebrow/jaw lift
+- Head follows chest sway on all 3 axes so no gap opens during movement
+
+**Architecture decisions (V0.2.0+):**
+- **Blob head as GN Group node**: `_load_blob_head_tree()` loads GN_BlobPuppet from blob_puppet.blend via `bpy.data.libraries.load()`. Independent copy (not linked).
+- **Direct modifier push (no drivers)**: Blender 5.2 broke driver paths. OSC receiver writes values directly via `mod[sid] = value` + `puppet.update_tag()`.
+- **CRITICAL: `update_tag()` required**: After writing any GN modifier values in Blender 5.2, must call `obj.update_tag()` or the modifier won't re-evaluate.
+- **Analytical mid-joint IK**: `_compute_mid_joint()` — law of cosines for projection distance, then perpendicular offset via double cross product: `side = ab_dir × bend_axis`, `bend = ab_dir × side` (note: inputs swapped from standard `side × ab_dir` to get correct anatomical bend direction). Knees bend forward with `bend_axis=(0,1,0)`, elbows backward with `(0,-1,0)`.
+- **Forward hinge bias on legs**: `LEG_HINGE_BIAS = -0.06` → hinge computes `max(dir_Y, 0.06)` forcing foot direction slightly forward. Prevents backward foot drag that plagued earlier versions.
+- **Per-endpoint constraint system**: `_add_verlet_endpoint()` takes optional `hinge_axis`, `hinge_limit`, `inward_limit`, `midline_clamp`, `ground_z_out`, `ground_friction_out` parameters. All constraint types composable per-endpoint.
+
+**Blender 5.2 Alpha physics research (April 9, 2026):**
+- **Simulation zones** (stable since 3.6): Unchanged in 5.2. DIY Verlet physics proven.
+- **Bone Info node** (new in 5.1): Reads armature bone transforms in GN. Useful for future versions.
+- **XPBD solver** (PR #154435): Cosserat Rod support. **Still NOT merged.** Target: 5.3 (Nov 2026).
+- **RNA property refactor (BREAKING CHANGE in 5.2)**: GN modifier properties use real RNA paths. **Will break Green Room's driver paths when Green Room moves to 5.2 stable.**
+
+**Tracking input (TBD — two paths under research):**
+- **Webcam pivot:** MediaPipe on local USB webcam → face mesh + hand tracking. No phone, no network.
+- **Phone baseline:** Phone for face (existing pipeline) + separate hand tracking source.
+
+**Key design principle:** Same "ancient methodology → modern tool" pattern as Green Room. Don't add more tracking inputs — design the puppet rig so that existing inputs trigger richer responses at different thresholds.
+
+**Relationship to Green Room:** Completely separate project. Green Room stays stable at V0.7.0. PPParty is the experimental sandbox for full-body puppetry. ~80% code overlap in `osc_receiver.py` and `phone_connect.py` — future refactor could extract shared OSC module, but low priority since projects are intentionally independent.
+
+**Known issues (V0.4.1):**
+- **Grey materials**: Body parts render grey in Solid mode. Need Material Preview / EEVEE for colors.
+- **Foot backward drag**: Forward hinge bias helps but feet can still drift backward during extreme lean. May need stronger bias or per-frame forward nudge.
+- **`build_marionette_tree()` is 1071 lines**: Should be refactored into sub-functions (blob head, torso, limbs, output).
+
+**Version history (this session, April 10, 2026):**
+- V0.3.6 — Foot spread limits (inward_limit + midline_clamp on feet)
+- V0.3.7 — Lean sensitivity boost (chest 0.7→1.0, pelvis 0.5→0.7), wider foot midline (0.02→0.08)
+- V0.3.8 — Cross product swap to fix inverted knee/elbow bend direction
+- V0.3.9 — Reverted bend_axis to original values (two negations were canceling; kept only cross product swap)
+- V0.4.0 — 3-axis torso sway (added Y forward/back from headRotX), head follows on all axes
+- V0.4.1 — Forward hinge bias on legs (`LEG_HINGE_BIAS = -0.06`), prevents backward foot drag
+
+**Next steps:**
+- **V0.5.0** — Contralateral knee lift from mouth (mouthLeft raises right knee, mouthRight raises left knee). New expression channel for deliberate stepping.
+- **V0.6.0** — Arm gestures from face (smile lifts hands, frown drops them), head tilt → torso rotation
+- **V0.7.0** — Torso momentum/lag (one-frame blend for heavy puppet feel), threshold-triggered stepping poses (Bunraku concept)
+- **V0.8.0** — Minkowski capsule body parts, customization sliders
+- **V1.0.0** — Recording + bake pipeline (keyframes, Alembic, video export)
+- **Summer** — Webcam/hand tracking (MediaPipe), custom iOS face capture app
+
 ## Dependencies Policy
 - **ZERO paid dependencies.** Non-negotiable.
 - Blender's bundled Python + standard library = always OK
@@ -304,12 +398,24 @@ The addon must run on "Scrap in a Box" hardware — repurposed e-waste machines 
 - No internet required after install (phone connects via local WiFi)
 - Phone/tablet for face tracking (student's own device)
 
+### Networking: Travel Router (Standard Deployment)
+School and campus WiFi networks block device-to-device communication (client isolation). Instead of fighting IT at every site, Green Room deploys with its own travel router — a pocket-sized box that creates a private network between the phone and computer.
+
+**Standard kit:** GL.iNet Slate AX (GL-AXT1800) — WiFi 6, 5GHz, USB-C powered, ~$120. Chosen for headroom to support multiple students performing simultaneously in the future.
+
+**Setup:** Plug in router → connect computer and phone to its WiFi → done. No internet needed, no IT involvement, works in any room or outdoors with a battery pack.
+
+**Gotchas:**
+- macOS will warn "no internet" — dismiss it. In Wi-Fi settings, turn OFF "Limit IP Address Tracking" on the router's network.
+- iPhone will also warn "no internet" — tap "Use Without Internet" or it silently switches back to cellular and the connection drops.
+- Router's default WiFi name and password are printed on the bottom of the device.
+
 ## Code Style
 - PEP 8
 - Type hints where possible
 - Every operator needs a docstring explaining what it does in plain English
-- Blender class naming: `PAWRAPPA_OT_edge_score`, `PAWRAPPA_PT_uv_panel` (UV addon), `GREENROOM_OT_connect_phone` (puppet show addon)
-- Prefix all custom properties with `gr_` (Green Room / puppet show) or `pw_` (PaWrappa) to avoid namespace collisions
+- Blender class naming: `PAWRAPPA_OT_edge_score`, `PAWRAPPA_PT_uv_panel` (UV addon), `GREENROOM_OT_connect_phone` (puppet show addon), `PPPARTY_OT_*` (marionette addon)
+- Prefix all custom properties with `gr_` (Green Room / puppet show), `pw_` (PaWrappa), or `pp_` (PPParty) to avoid namespace collisions
 
 ## Communication Style
 David talks like an artist, not an engineer. When explaining what you've built or asking questions:
@@ -323,7 +429,15 @@ Git is initialized in this folder. Use `git log` to see history. Always commit w
 
 **Commit history:**
 ```
-PENDING V0.6.0 — Reactive eyebrow rotation (emotion-driven tilt from face tracking)
+PENDING PPParty V0.4.1 — Forward hinge bias on legs, prevents backward foot drag
+PENDING PPParty V0.4.0 — 3-axis torso sway, correct joint bending, foot constraints
+PENDING PPParty V0.3.5 — Walking bob, mouth sway, jaw lift, ground friction
+PENDING PPParty V0.3.3 — Visual/physics split, chest+pelvis, analytical two-bone IK
+PENDING PPParty V0.2.0 — Face-tracked marionette (blob head + body movement from phone)
+PENDING PPParty V0.1.1 — Simulation zone physics (replaces Python Verlet handler)
+PENDING PPParty V0.1.0 — Dangling puppet (Verlet physics, GN visual tree, N-panel)
+PENDING V0.7.0 — Nose, QR removal, latency optimization (UDP buffer, caching, UV strip)
+b28aebe V0.6.0 — Reactive eyebrow rotation, mouth lateral shift, calibration UI fix
 6c7d23d V0.5.1 — Fix sideways blink, mirror eyebrow rotation
 2af933c V0.5.0 — Dynamic capsules on ALL body parts (eyes, ears, brows, irises, pupils)
 7aa1056 V0.4.1 — Dynamic Minkowski capsule body, rotation slider, width min=0

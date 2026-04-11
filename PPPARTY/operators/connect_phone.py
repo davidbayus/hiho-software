@@ -1,14 +1,14 @@
-"""Connect My Phone — one-button phone connection for face tracking."""
+"""Connect My Phone — one-button phone connection for PPParty face tracking."""
 
 import bpy
 
 from ..core.phone_connect import get_local_ip
 
 
-class GREENROOM_OT_connect_phone(bpy.types.Operator):
+class PPPARTY_OT_connect_phone(bpy.types.Operator):
     """Start listening for your phone's face tracking data"""
 
-    bl_idname = "greenroom.connect_phone"
+    bl_idname = "ppparty.connect_phone"
     bl_label = "Connect My Phone"
 
     def execute(self, context):
@@ -22,17 +22,17 @@ class GREENROOM_OT_connect_phone(bpy.types.Operator):
         # Make sure the dummy mesh exists to receive face data
         ensure_dummy_mesh()
 
-        # Get connection settings
-        settings = context.scene.greenroom
-        port = settings.gr_port
+        # Get port from scene settings
+        settings = context.scene.ppparty
+        port = settings.pp_port
 
-        # Find the armature with a "head" bone for head rotation
+        # Find the PPParty armature with a "head" bone
         target_armature = None
         target_bone = None
         for obj in context.scene.objects:
-            if obj.type == 'ARMATURE':
+            if obj.type == 'ARMATURE' and obj.name.startswith('PP_'):
                 for bone in obj.data.bones:
-                    if bone.name.lower() == 'head':
+                    if bone.name == 'head':
                         target_armature = obj
                         target_bone = 'head'
                         break
@@ -43,11 +43,11 @@ class GREENROOM_OT_connect_phone(bpy.types.Operator):
         if not receiver.start(port=port,
                               target_armature=target_armature,
                               target_bone=target_bone):
-            self.report({'ERROR'}, f"Could not start — port {port} may be in use")
+            self.report({'ERROR'}, f"Could not start -- port {port} may be in use")
             return {'CANCELLED'}
 
         ip = get_local_ip() or "unknown"
-        self.report({'INFO'}, f"Listening on {ip}:{port} — connect your phone!")
+        self.report({'INFO'}, f"Listening on {ip}:{port} -- connect your phone!")
 
         # Force panel redraw
         for area in context.screen.areas:
@@ -57,10 +57,10 @@ class GREENROOM_OT_connect_phone(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class GREENROOM_OT_disconnect_phone(bpy.types.Operator):
+class PPPARTY_OT_disconnect_phone(bpy.types.Operator):
     """Stop listening for face tracking data"""
 
-    bl_idname = "greenroom.disconnect_phone"
+    bl_idname = "ppparty.disconnect_phone"
     bl_label = "Disconnect"
 
     def execute(self, context):

@@ -20,18 +20,26 @@ class GREENROOM_PT_puppet_panel(bpy.types.Panel):
         layout = self.layout
         settings = context.scene.greenroom
 
-        # --- Pick Your Puppet button ---
-        row = layout.row()
-        row.scale_y = 1.8
-        if settings.gr_active_template:
+        if not settings.gr_active_template:
+            # --- Welcome state ---
+            box = layout.box()
+            col = box.column(align=True)
+            col.scale_y = 1.3
+            col.label(text="Welcome to the Green Room!", icon='LIGHT')
+            col.label(text="Pick a puppet to get started.")
+
+            layout.separator()
+            row = layout.row()
+            row.scale_y = 1.8
+            row.operator("greenroom.pick_puppet", icon='ARMATURE_DATA')
+        else:
+            # --- Puppet loaded ---
+            row = layout.row()
+            row.scale_y = 1.8
             row.operator("greenroom.pick_puppet",
                          text=f"Puppet: {settings.gr_active_template}",
                          icon='ARMATURE_DATA')
-        else:
-            row.operator("greenroom.pick_puppet", icon='ARMATURE_DATA')
 
-        # --- Customization sliders (if a template is loaded) ---
-        if settings.gr_active_template:
             layout.separator()
             draw_customize_sliders(layout, context)
 
@@ -81,21 +89,11 @@ class GREENROOM_PT_connect_panel(bpy.types.Panel):
 
     def _draw_waiting(self, layout, settings):
         """Connected and listening — show instructions for phone setup."""
-        from .. import preview_collections
-
         layout.label(text="Waiting for your phone...", icon='SORTTIME')
         layout.separator()
 
         ip = get_local_ip() or "Could not detect IP"
         port = settings.gr_port
-
-        # --- QR Code (if available) ---
-        pcoll = preview_collections.get("main")
-        if pcoll and "qr_code" in pcoll:
-            row = layout.row()
-            row.alignment = 'CENTER'
-            row.template_icon(icon_value=pcoll["qr_code"].icon_id, scale=10.0)
-            layout.separator()
 
         # --- Connection info (big and clear) ---
         box = layout.box()

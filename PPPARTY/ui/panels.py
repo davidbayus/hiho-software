@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""PPParty N-panel — marionette controls, connection, physics sliders.
+
+V0.8.0: Added Make It Yours customization (Body Width, sizes, colors).
+V0.7.0: Added Momentum slider.
+V0.5.0: Added Step Strength, Gesture Strength sliders.
+Physics, body movement, and joint constraint sliders read from GN modifier.
+"""
+
+import bpy
+
+
+class PPPARTY_PT_main_panel(bpy.types.Panel):
+    """PPParty control panel in the 3D Viewport sidebar."""
+
+    bl_label = "PPParty"
+    bl_idname = "PPPARTY_PT_main_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "PPPARTY"
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.ppparty
+
+        # --- Create button ---
+        layout.operator("ppparty.create_marionette",
+                        icon='OUTLINER_OB_ARMATURE')
+
+        puppet_name = settings.pp_active_puppet
+        puppet = bpy.data.objects.get(puppet_name) if puppet_name else None
+
+        if not puppet:
+            layout.label(text="No marionette in scene.", icon='INFO')
+            return
+
+        mod = puppet.modifiers.get("PPParty_Physics")
+        if not mod or not mod.node_group:
+            return
+
+        # --- Body Movement sliders ---
+        layout.separator()
+        box = layout.box()
+        box.label(text="Body Movement", icon='CON_ROTLIKE')
+        col = box.column(align=True)
+        _draw_slider_group(col, mod, ["Lean Strength", "Extend Strength",
+                                        "Lift Strength", "Step Strength",
+                                        "Gesture Strength", "Momentum"])
+
+        # --- Physics sliders ---
+        layout.separator()
+        box2 = layout.box()
+        box2.label(text="Physics", icon='PHYSICS')
+        col2 = box2.column(align=True)
+        _draw_slider_group(col2, mod, ["Gravity", "Damping",
+                                        "Ground Height",
+                                        "Ground Friction",
+                                        "Shoulder Float"])
+
+        box3 = layout.box()
+        box3.label(text="Proportions", icon='CON_SIZELIMIT')
+        col3 = box3.column(align=True)
+        _draw_slider_group(col3, mod, ["Arm Length", "Leg Length",
+                                        "Upper Arm Ratio",
+                                        "Upper Leg Ratio"])
+
+        # --- Make It Yours (customization) ---
+        layout.separator()
+        box4 = layout.box()
+        box4.label(text="Make It Yours", icon='BRUSH_DATA')
+        col4 = box4.column(align=True)
+        _draw_slider_group(col4, mod, ["Body Width", "Hand Size",
+                                        "Foot Size"])
+        col4.separator()
+        _draw_slider_group(col4, mod, ["Body Color", "Hand Color",
+                                        "Foot Color", "Joint Color",
+                                        "Limb Color"])
+
+        # --- Reset ---
+        layout.separator()
+        layout.operator("ppparty.reset_physics", icon='FILE_REFRESH')
+
+
+class PPPARTY_PT_connect_panel(bpy.types.Panel):
+    """Phone connection panel — connect your phone for face tracking."""
+
+    bl_label = "Connect Phone"
+    bl_idname = "PPPARTY_PT_connect_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "PPPARTY"
+    bl_order = 1
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.ppparty
+
+        from .. import receiver
+        from ..core.phone_connect import get_local_ip
+
+        if not receiver.is_running:
+            # --- Disconnected ---
+            layout.prop(settings, "pp_port")
+            layout.operator("ppparty.connect_phone", icon='PLAY')
+
+            box = layout.box()
+            box.label(text="Setup:", icon='QUESTION')
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text="1. Create a marionette first")
+            col.label(text="2. Connect phone + computer")
+            col.label(text="   to the same WiFi")
+            col.label(text="3. Open Live Link Face app")
+            col.label(text="4. Enter the IP shown here")
+            col.label(text="5. Hit Connect above")
+
+        elif not receiver.is_receiving:
+            # --- Waiting for data ---
+            ip = get_local_ip() or "unknown"
+            layout.label(text=f"Listening on {ip}:{receiver.port}",
+                         icon='SORTTIME')
+            layout.label(text="Waiting for phone...")
+            layout.separator()
+
+            box = layout.box()
+            box.label(text="On your phone:", icon='PHONE')
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text=f"1. Open Live Link Face")
+            col.label(text=f"2. Set target IP to: {ip}")
+            col.label(text=f"3. Set port to: {receiver.port}")
+            col.label(text=f"4. Hit Stream")
+
+            layout.separator()
+            layout.operator("ppparty.disconnect_phone", icon='PAUSE')
+
+        else:
+            # --- Receiving face data ---
+            layout.label(text="Face tracking active!", icon='CHECKMARK')
+
+            # Show live values
+            values = receiver.get_latest_values()
+            if values:
+                box = layout.box()
+                box.label(text="Live Data:", icon='FACE_MAPS')
+                col = box.column(align=True)
+                col.scale_y = 0.8
+                for key in ('jawOpen', 'eyeBlinkLeft', 'eyeBlinkRight',
+                            'mouthSmileRight'):
+                    v = values.get(key, 0.0)
+                    col.label(text=f"  {key}: {v:.2f}")
+
+            layout.separator()
+            layout.operator("ppparty.disconnect_phone", icon='PAUSE')
+
+
+class PPPARTY_PT_debug_panel(bpy.types.Panel):
+    """Debug tools — inspect modifier properties for Blender 5.2."""
+
+    bl_label = "Debug"
+    bl_idname = "PPPARTY_PT_debug_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "PPPARTY"
+    bl_order = 2
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("ppparty.debug_modifier", icon='VIEWZOOM')
+        layout.label(text="Results → Text Editor", icon='TEXT')
+        layout.label(text="(open 'PPParty_Debug')")
+
+
+class PPPARTY_PT_instructions_panel(bpy.types.Panel):
+    """Usage instructions."""
+
+    bl_label = "How to Use"
+    bl_idname = "PPPARTY_PT_instructions_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "PPPARTY"
+    bl_order = 3
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        col = box.column(align=True)
+        col.scale_y = 0.8
+        col.label(text="1. Click 'Create Marionette'")
+        col.label(text="2. Press Play on the timeline")
+        col.label(text="3. Connect your phone")
+        col.label(text="4. Tilt head left/right = walk")
+        col.label(text="5. Lean back = arms extend")
+        col.label(text="6. Push mouth left/right = step")
+        col.label(text="7. Smile = hands up, frown = down")
+        col.label(text="8. Face expressions drive the head")
+        col.label(text="")
+        col.label(text="Tune sliders in Body Movement")
+        col.label(text="to adjust responsiveness.")
+
+
+# ===================================================================
+# HELPERS
+# ===================================================================
+
+def _draw_slider_group(col, mod, names):
+    """Draw GN modifier sliders for the given socket names."""
+    for item in mod.node_group.interface.items_tree:
+        if (hasattr(item, 'item_type')
+                and item.item_type == 'SOCKET'
+                and item.in_out == 'INPUT'
+                and item.name in names):
+            prop_path = f'["{item.identifier}"]'
+            col.prop(mod, prop_path, text=item.name)

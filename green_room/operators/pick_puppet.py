@@ -1,7 +1,7 @@
 """Pick Your Puppet — browse and load puppet templates."""
 
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import EnumProperty
 
 from ..core.template_loader import discover_templates, load_template, unload_template
 

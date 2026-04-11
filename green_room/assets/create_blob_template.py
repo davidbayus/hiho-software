@@ -8,7 +8,10 @@ The character has:
 - Body (UV Sphere, scalable)
 - Two eyes with irises (blink, widen, look direction)
 - A mouth (jaw open, smile, pucker)
+- A nose (dynamic capsule, reactive to jaw/smile)
 - Two ears (scalable)
+- Two eyebrows (reactive to face tracking)
+- Lips (beveled curve tube around mouth)
 - Face tracking Group Inputs driven by ARKitShapeKeys.Dummy
 - Customization Group Inputs (body size, eye size, colors)
 - Armature with "head" bone for phone rotation
@@ -60,46 +63,22 @@ def make_material(name, color):
     return mat
 
 
-def make_color_attr_material(name, fallback_color):
-    """Create a material that reads its Base Color from a named attribute 'Color'.
-
-    This allows the geonode tree to control per-body-part colors via
-    Store Named Attribute → material reads it back. The fallback_color
-    is used if no attribute is present (e.g. viewing the mesh standalone).
-    """
-    mat = bpy.data.materials.new(name)
-    mat.use_nodes = True
-    nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
-    bsdf = nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = fallback_color
-    bsdf.inputs["Roughness"].default_value = 0.8
-
-    attr = nodes.new('ShaderNodeAttribute')
-    attr.attribute_name = "Color"
-    attr.attribute_type = 'GEOMETRY'
-    attr.location = (-300, 300)
-    links.new(attr.outputs['Color'], bsdf.inputs['Base Color'])
-
-    return mat
-
-
 def create_materials():
-    """Create the color palette.
+    """Create the default material palette.
 
-    Body, iris, mouth, and ear use attribute-reading materials so their
-    colors can be controlled from the Customize panel. Eye whites and
-    pupils stay fixed.
+    Each body part gets its own material with a default color. Users can
+    swap any material via the N-panel (material sockets on the geonode tree).
     """
     return {
-        'body': make_color_attr_material("Blob_Body", (1.0, 0.78, 0.65, 1.0)),
-        'mouth': make_color_attr_material("Blob_Mouth", (0.25, 0.12, 0.08, 1.0)),
+        'body': make_material("Blob_Body", (1.0, 0.78, 0.65, 1.0)),
+        'mouth': make_material("Blob_Mouth", (0.25, 0.12, 0.08, 1.0)),
         'eye_white': make_material("Blob_EyeWhite", (1.0, 1.0, 1.0, 1.0)),
-        'iris': make_color_attr_material("Blob_Iris", (0.2, 0.65, 0.7, 1.0)),
+        'iris': make_material("Blob_Iris", (0.2, 0.65, 0.7, 1.0)),
         'pupil': make_material("Blob_Pupil", (0.05, 0.05, 0.05, 1.0)),
-        'ear': make_color_attr_material("Blob_Ear", (1.0, 0.7, 0.55, 1.0)),
-        'brow': make_color_attr_material("Blob_Brow", (0.18, 0.09, 0.05, 1.0)),
-        'lip': make_color_attr_material("Blob_Lip", (0.85, 0.45, 0.45, 1.0)),
+        'ear': make_material("Blob_Ear", (1.0, 0.7, 0.55, 1.0)),
+        'brow': make_material("Blob_Brow", (0.18, 0.09, 0.05, 1.0)),
+        'lip': make_material("Blob_Lip", (0.85, 0.45, 0.45, 1.0)),
+        'nose': make_material("Blob_Nose", (1.0, 0.72, 0.58, 1.0)),
     }
 
 
@@ -298,6 +277,33 @@ def add_dynamic_capsule(tree, x, y, label, radius=0.5, subdivs=6,
     return set_pos
 
 
+def add_material(tree, geom_output, mat_output, x, y, label):
+    """Assign a material to a body part.
+
+    Blob puppet uses solid-color materials — no textures, no UVs needed.
+    Skipping UV Unwrap + Store Named Attribute saves 2 nodes per body part
+    and avoids per-frame UV recalculation on animated parts.
+
+    Args:
+        tree: The geometry node tree
+        geom_output: Output socket providing the geometry (e.g. xform output)
+        mat_output: Material socket from the Group Input
+        x: X position of the Set Material node
+        y: Y position
+        label: Base name for the nodes
+
+    Returns:
+        The Set Material node (use its Geometry output for join)
+    """
+    mat_node = add_node(tree, 'GeometryNodeSetMaterial', x, y,
+                        f"{label} Material")
+
+    tree.links.new(geom_output, mat_node.inputs['Geometry'])
+    tree.links.new(mat_output, mat_node.inputs['Material'])
+
+    return mat_node
+
+
 def build_geometry_nodes(mats):
     """Build the entire blob character as a geometry nodes tree.
 
@@ -443,6 +449,7 @@ def build_geometry_nodes(mats):
     body_panel = tree.interface.new_panel("Body")
     eyes_panel = tree.interface.new_panel("Eyes")
     mouth_panel = tree.interface.new_panel("Mouth")
+    nose_panel = tree.interface.new_panel("Nose")
     ears_panel = tree.interface.new_panel("Ears")
     brows_panel = tree.interface.new_panel("Eyebrows")
     lips_panel = tree.interface.new_panel("Lips")
@@ -474,11 +481,10 @@ def build_geometry_nodes(mats):
     s.max_value = 180.0
     s.subtype = 'NONE'
 
-    s = tree.interface.new_socket(
-        "Body Color", in_out='INPUT', socket_type='NodeSocketColor',
+    tree.interface.new_socket(
+        "Body Material", in_out='INPUT', socket_type='NodeSocketMaterial',
         parent=body_panel
     )
-    s.default_value = (1.0, 0.78, 0.65, 1.0)
 
     # --- Eyes ---
 
@@ -514,11 +520,20 @@ def build_geometry_nodes(mats):
     s.min_value = 0.5
     s.max_value = 1.5
 
-    s = tree.interface.new_socket(
-        "Eye Color", in_out='INPUT', socket_type='NodeSocketColor',
+    tree.interface.new_socket(
+        "Eye Material", in_out='INPUT', socket_type='NodeSocketMaterial',
         parent=eyes_panel
     )
-    s.default_value = (0.2, 0.65, 0.7, 1.0)
+
+    tree.interface.new_socket(
+        "Iris Material", in_out='INPUT', socket_type='NodeSocketMaterial',
+        parent=eyes_panel
+    )
+
+    tree.interface.new_socket(
+        "Pupil Material", in_out='INPUT', socket_type='NodeSocketMaterial',
+        parent=eyes_panel
+    )
 
     s = tree.interface.new_socket(
         "Eye Width", in_out='INPUT', socket_type='NodeSocketFloat',
@@ -563,11 +578,58 @@ def build_geometry_nodes(mats):
     s.min_value = 0.5
     s.max_value = 1.5
 
-    s = tree.interface.new_socket(
-        "Mouth Color", in_out='INPUT', socket_type='NodeSocketColor',
+    tree.interface.new_socket(
+        "Mouth Material", in_out='INPUT', socket_type='NodeSocketMaterial',
         parent=mouth_panel
     )
-    s.default_value = (0.25, 0.12, 0.08, 1.0)  # dark brown
+
+    # --- Nose ---
+
+    s = tree.interface.new_socket(
+        "Nose Size", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=nose_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Nose Height", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=nose_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    s = tree.interface.new_socket(
+        "Nose Depth", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=nose_panel
+    )
+    s.default_value = 1.0
+    s.min_value = 0.5
+    s.max_value = 1.5
+
+    tree.interface.new_socket(
+        "Nose Material", in_out='INPUT', socket_type='NodeSocketMaterial',
+        parent=nose_panel
+    )
+
+    s = tree.interface.new_socket(
+        "Nose Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=nose_panel
+    )
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Nose Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=nose_panel
+    )
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+    s.subtype = 'NONE'
 
     # --- Ears ---
 
@@ -603,11 +665,10 @@ def build_geometry_nodes(mats):
     s.min_value = 0.5
     s.max_value = 1.5
 
-    s = tree.interface.new_socket(
-        "Ear Color", in_out='INPUT', socket_type='NodeSocketColor',
+    tree.interface.new_socket(
+        "Ear Material", in_out='INPUT', socket_type='NodeSocketMaterial',
         parent=ears_panel
     )
-    s.default_value = (1.0, 0.7, 0.55, 1.0)
 
     s = tree.interface.new_socket(
         "Ear Width", in_out='INPUT', socket_type='NodeSocketFloat',
@@ -660,11 +721,10 @@ def build_geometry_nodes(mats):
     s.min_value = 0.5
     s.max_value = 2.0
 
-    s = tree.interface.new_socket(
-        "Eyebrow Color", in_out='INPUT', socket_type='NodeSocketColor',
+    tree.interface.new_socket(
+        "Eyebrow Material", in_out='INPUT', socket_type='NodeSocketMaterial',
         parent=brows_panel
     )
-    s.default_value = (0.18, 0.09, 0.05, 1.0)  # dark brown
 
     s = tree.interface.new_socket(
         "Eyebrow Width", in_out='INPUT', socket_type='NodeSocketFloat',
@@ -693,11 +753,10 @@ def build_geometry_nodes(mats):
     s.min_value = 0.2
     s.max_value = 3.0
 
-    s = tree.interface.new_socket(
-        "Lip Color", in_out='INPUT', socket_type='NodeSocketColor',
+    tree.interface.new_socket(
+        "Lip Material", in_out='INPUT', socket_type='NodeSocketMaterial',
         parent=lips_panel
     )
-    s.default_value = (0.85, 0.45, 0.45, 1.0)  # pinkish-red
 
     # ------------------------------------------------------------------
     # NODES — organized left to right, top to bottom
@@ -727,6 +786,7 @@ def build_geometry_nodes(mats):
     BROW_L_Y = -3700
     BROW_R_Y = -4100
     LIP_Y = -4500
+    NOSE_Y = -4900
 
     # --- Group Input & Output ---
     group_in = tree.nodes.new('NodeGroupInput')
@@ -779,6 +839,18 @@ def build_geometry_nodes(mats):
     ears_depth_y.inputs[0].default_value = -0.1
     tree.links.new(group_in.outputs['Ears Depth'], ears_depth_y.inputs[1])
 
+    # Nose Height: base Z = 0.85 (between eyes at 1.25 and mouth at 0.5)
+    nose_height_z = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -680, "Nose Height Z")
+    nose_height_z.operation = 'MULTIPLY'
+    nose_height_z.inputs[0].default_value = 0.85
+    tree.links.new(group_in.outputs['Nose Height'], nose_height_z.inputs[1])
+
+    # Nose Depth: base Y = -0.65 (sticks out more than eyes at -0.55)
+    nose_depth_y = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -720, "Nose Depth Y")
+    nose_depth_y.operation = 'MULTIPLY'
+    nose_depth_y.inputs[0].default_value = -0.65
+    tree.links.new(group_in.outputs['Nose Depth'], nose_depth_y.inputs[1])
+
     # Eye Rotation: degrees → radians, around Y axis (tilts eye in face plane)
     eye_rot_rad = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -740, "Eye Rot Rad")
     eye_rot_rad.operation = 'MULTIPLY'
@@ -800,6 +872,17 @@ def build_geometry_nodes(mats):
     ear_rot_vec.inputs['X'].default_value = 0.0
     ear_rot_vec.inputs['Z'].default_value = 0.0
     tree.links.new(ear_rot_rad.outputs[0], ear_rot_vec.inputs['Y'])
+
+    # Nose Rotation: degrees → radians, around Y axis
+    nose_rot_rad = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -830, "Nose Rot Rad")
+    nose_rot_rad.operation = 'MULTIPLY'
+    nose_rot_rad.inputs[1].default_value = math.pi / 180.0
+    tree.links.new(group_in.outputs['Nose Rotation'], nose_rot_rad.inputs[0])
+
+    nose_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', INPUT_X + 500, -830, "Nose Rot Vec")
+    nose_rot_vec.inputs['X'].default_value = 0.0
+    nose_rot_vec.inputs['Z'].default_value = 0.0
+    tree.links.new(nose_rot_rad.outputs[0], nose_rot_vec.inputs['Y'])
 
     # Eyebrow Rotation: degrees → radians, around Y axis
     brow_rot_rad = add_node(tree, 'ShaderNodeMath', INPUT_X + 300, -860, "Brow Rot Rad")
@@ -978,13 +1061,8 @@ def build_geometry_nodes(mats):
     body_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, BODY_Y, "Body Orient")
     body_xform.inputs['Translation'].default_value = (0, 0, 0.8)
 
-    body_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, BODY_Y, "Body Color")
-    body_color.data_type = 'FLOAT_COLOR'
-    body_color.domain = 'POINT'
-    body_color.inputs['Name'].default_value = "Color"
-
-    body_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, BODY_Y, "Body Material")
-    body_mat.inputs['Material'].default_value = mats['body']
+    # UV + Material (replaces old color attribute chain)
+    # body_mat is created by add_material() after links section
 
     # --- Links: body ---
     # Width → extension → cube size + clamp bounds
@@ -1026,9 +1104,10 @@ def build_geometry_nodes(mats):
 
     tree.links.new(body_set_pos.outputs['Geometry'], body_xform.inputs['Geometry'])
     tree.links.new(body_combine.outputs['Vector'], body_xform.inputs['Scale'])
-    tree.links.new(body_xform.outputs['Geometry'], body_color.inputs['Geometry'])
-    tree.links.new(group_in.outputs['Body Color'], body_color.inputs['Value'])
-    tree.links.new(body_color.outputs['Geometry'], body_mat.inputs['Geometry'])
+
+    body_mat = add_material(tree, body_xform.outputs['Geometry'],
+                               group_in.outputs['Body Material'],
+                               MAT_X, BODY_Y, "Body")
 
     # ------------------------------------------------------------------
     # LEFT EYE — blink drives Z scale
@@ -1079,9 +1158,6 @@ def build_geometry_nodes(mats):
 
     eye_l_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, EYE_L_Y, "Eye L Transform")
 
-    eye_l_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, EYE_L_Y, "Eye L Material")
-    eye_l_mat.inputs['Material'].default_value = mats['eye_white']
-
     # Links: left eye
     tree.links.new(group_in.outputs['eyeBlinkLeft'], eye_l_blink.inputs[0])
     tree.links.new(eye_l_blink.outputs[0], eye_l_open.inputs[1])
@@ -1111,7 +1187,10 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_l_pre_rot.outputs['Geometry'], eye_l_xform.inputs['Geometry'])
     tree.links.new(eye_l_pos.outputs['Vector'], eye_l_xform.inputs['Translation'])
     tree.links.new(eye_l_scale.outputs['Vector'], eye_l_xform.inputs['Scale'])
-    tree.links.new(eye_l_xform.outputs['Geometry'], eye_l_mat.inputs['Geometry'])
+
+    eye_l_mat = add_material(tree, eye_l_xform.outputs['Geometry'],
+                                group_in.outputs['Eye Material'],
+                                MAT_X, EYE_L_Y, "Eye L")
 
     # ------------------------------------------------------------------
     # RIGHT EYE — mirror of left
@@ -1158,9 +1237,6 @@ def build_geometry_nodes(mats):
 
     eye_r_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, EYE_R_Y, "Eye R Transform")
 
-    eye_r_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, EYE_R_Y, "Eye R Material")
-    eye_r_mat.inputs['Material'].default_value = mats['eye_white']
-
     tree.links.new(group_in.outputs['eyeBlinkRight'], eye_r_blink.inputs[0])
     tree.links.new(eye_r_blink.outputs[0], eye_r_open.inputs[1])
     tree.links.new(eye_r_open.outputs[0], eye_r_sz.inputs[0])
@@ -1188,7 +1264,10 @@ def build_geometry_nodes(mats):
     tree.links.new(eye_r_pre_rot.outputs['Geometry'], eye_r_xform.inputs['Geometry'])
     tree.links.new(eye_r_pos.outputs['Vector'], eye_r_xform.inputs['Translation'])
     tree.links.new(eye_r_scale.outputs['Vector'], eye_r_xform.inputs['Scale'])
-    tree.links.new(eye_r_xform.outputs['Geometry'], eye_r_mat.inputs['Geometry'])
+
+    eye_r_mat = add_material(tree, eye_r_xform.outputs['Geometry'],
+                                group_in.outputs['Eye Material'],
+                                MAT_X, EYE_R_Y, "Eye R")
 
     # ------------------------------------------------------------------
     # LEFT IRIS — follows eye blink, driven by eye look
@@ -1233,14 +1312,6 @@ def build_geometry_nodes(mats):
 
     iris_l_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, IRIS_L_Y, "Iris L Transform")
 
-    iris_l_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, IRIS_L_Y, "Iris L Color")
-    iris_l_color.data_type = 'FLOAT_COLOR'
-    iris_l_color.domain = 'POINT'
-    iris_l_color.inputs['Name'].default_value = "Color"
-
-    iris_l_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, IRIS_L_Y, "Iris L Material")
-    iris_l_mat.inputs['Material'].default_value = mats['iris']
-
     tree.links.new(group_in.outputs['eyeBlinkLeft'], iris_l_blink.inputs[0])
     tree.links.new(iris_l_blink.outputs[0], iris_l_open.inputs[1])
     tree.links.new(iris_l_open.outputs[0], iris_l_sz.inputs[0])
@@ -1266,9 +1337,10 @@ def build_geometry_nodes(mats):
     tree.links.new(iris_l_pre_rot.outputs['Geometry'], iris_l_xform.inputs['Geometry'])
     tree.links.new(iris_l_pos.outputs['Vector'], iris_l_xform.inputs['Translation'])
     tree.links.new(iris_l_scale.outputs['Vector'], iris_l_xform.inputs['Scale'])
-    tree.links.new(iris_l_xform.outputs['Geometry'], iris_l_color.inputs['Geometry'])
-    tree.links.new(group_in.outputs['Eye Color'], iris_l_color.inputs['Value'])
-    tree.links.new(iris_l_color.outputs['Geometry'], iris_l_mat.inputs['Geometry'])
+
+    iris_l_mat = add_material(tree, iris_l_xform.outputs['Geometry'],
+                                 group_in.outputs['Iris Material'],
+                                 MAT_X, IRIS_L_Y, "Iris L")
 
     # ------------------------------------------------------------------
     # RIGHT IRIS — mirror of left
@@ -1311,14 +1383,6 @@ def build_geometry_nodes(mats):
 
     iris_r_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, IRIS_R_Y, "Iris R Transform")
 
-    iris_r_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, IRIS_R_Y, "Iris R Color")
-    iris_r_color.data_type = 'FLOAT_COLOR'
-    iris_r_color.domain = 'POINT'
-    iris_r_color.inputs['Name'].default_value = "Color"
-
-    iris_r_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, IRIS_R_Y, "Iris R Material")
-    iris_r_mat.inputs['Material'].default_value = mats['iris']
-
     tree.links.new(group_in2.outputs['eyeBlinkRight'], iris_r_blink.inputs[0])
     tree.links.new(iris_r_blink.outputs[0], iris_r_open.inputs[1])
     tree.links.new(iris_r_open.outputs[0], iris_r_sz.inputs[0])
@@ -1344,9 +1408,10 @@ def build_geometry_nodes(mats):
     tree.links.new(iris_r_pre_rot.outputs['Geometry'], iris_r_xform.inputs['Geometry'])
     tree.links.new(iris_r_pos.outputs['Vector'], iris_r_xform.inputs['Translation'])
     tree.links.new(iris_r_scale.outputs['Vector'], iris_r_xform.inputs['Scale'])
-    tree.links.new(iris_r_xform.outputs['Geometry'], iris_r_color.inputs['Geometry'])
-    tree.links.new(group_in2.outputs['Eye Color'], iris_r_color.inputs['Value'])
-    tree.links.new(iris_r_color.outputs['Geometry'], iris_r_mat.inputs['Geometry'])
+
+    iris_r_mat = add_material(tree, iris_r_xform.outputs['Geometry'],
+                                 group_in2.outputs['Iris Material'],
+                                 MAT_X, IRIS_R_Y, "Iris R")
 
     # ------------------------------------------------------------------
     # LEFT PUPIL — small dark sphere inside iris
@@ -1380,9 +1445,6 @@ def build_geometry_nodes(mats):
     # Share the X position from iris
     pupil_l_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, PUPIL_L_Y, "Pupil L Transform")
 
-    pupil_l_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, PUPIL_L_Y, "Pupil L Material")
-    pupil_l_mat.inputs['Material'].default_value = mats['pupil']
-
     # Blink → scale Z
     tree.links.new(group_in.outputs['eyeBlinkLeft'], pupil_l_blink.inputs[0])
     tree.links.new(pupil_l_blink.outputs[0], pupil_l_open.inputs[1])
@@ -1405,7 +1467,10 @@ def build_geometry_nodes(mats):
     tree.links.new(pupil_l_pre_rot.outputs['Geometry'], pupil_l_xform.inputs['Geometry'])
     tree.links.new(pupil_l_pos.outputs['Vector'], pupil_l_xform.inputs['Translation'])
     tree.links.new(pupil_l_scale.outputs['Vector'], pupil_l_xform.inputs['Scale'])
-    tree.links.new(pupil_l_xform.outputs['Geometry'], pupil_l_mat.inputs['Geometry'])
+
+    pupil_l_mat = add_material(tree, pupil_l_xform.outputs['Geometry'],
+                                  group_in.outputs['Pupil Material'],
+                                  MAT_X, PUPIL_L_Y, "Pupil L")
 
     # ------------------------------------------------------------------
     # RIGHT PUPIL
@@ -1438,9 +1503,6 @@ def build_geometry_nodes(mats):
 
     pupil_r_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, PUPIL_R_Y, "Pupil R Transform")
 
-    pupil_r_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, PUPIL_R_Y, "Pupil R Material")
-    pupil_r_mat.inputs['Material'].default_value = mats['pupil']
-
     # Blink → scale Z
     tree.links.new(group_in.outputs['eyeBlinkRight'], pupil_r_blink.inputs[0])
     tree.links.new(pupil_r_blink.outputs[0], pupil_r_open.inputs[1])
@@ -1463,7 +1525,10 @@ def build_geometry_nodes(mats):
     tree.links.new(pupil_r_pre_rot.outputs['Geometry'], pupil_r_xform.inputs['Geometry'])
     tree.links.new(pupil_r_pos.outputs['Vector'], pupil_r_xform.inputs['Translation'])
     tree.links.new(pupil_r_scale.outputs['Vector'], pupil_r_xform.inputs['Scale'])
-    tree.links.new(pupil_r_xform.outputs['Geometry'], pupil_r_mat.inputs['Geometry'])
+
+    pupil_r_mat = add_material(tree, pupil_r_xform.outputs['Geometry'],
+                                  group_in2.outputs['Pupil Material'],
+                                  MAT_X, PUPIL_R_Y, "Pupil R")
 
     # ------------------------------------------------------------------
     # MOUTH — curve-profile with per-vertex deformation
@@ -1673,16 +1738,9 @@ def build_geometry_nodes(mats):
     tree.links.new(mouth_scale_vec.outputs['Vector'], mouth_xform.inputs['Scale'])
     tree.links.new(mouth_rot.outputs['Vector'], mouth_xform.inputs['Rotation'])
 
-    mouth_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, MOUTH_Y, "Mouth Color")
-    mouth_color.data_type = 'FLOAT_COLOR'
-    mouth_color.domain = 'POINT'
-    mouth_color.inputs['Name'].default_value = "Color"
-
-    mouth_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, MOUTH_Y, "Mouth Material")
-    mouth_mat.inputs['Material'].default_value = mats['mouth']
-    tree.links.new(mouth_xform.outputs['Geometry'], mouth_color.inputs['Geometry'])
-    tree.links.new(group_in2.outputs['Mouth Color'], mouth_color.inputs['Value'])
-    tree.links.new(mouth_color.outputs['Geometry'], mouth_mat.inputs['Geometry'])
+    mouth_mat = add_material(tree, mouth_xform.outputs['Geometry'],
+                                group_in2.outputs['Mouth Material'],
+                                MAT_X, MOUTH_Y, "Mouth")
 
     # ------------------------------------------------------------------
     # EARS — simple spheres, scalable
@@ -1710,13 +1768,7 @@ def build_geometry_nodes(mats):
 
     ear_l_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, EAR_L_Y, "Ear L Transform")
 
-    ear_l_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, EAR_L_Y, "Ear L Color")
-    ear_l_color.data_type = 'FLOAT_COLOR'
-    ear_l_color.domain = 'POINT'
-    ear_l_color.inputs['Name'].default_value = "Color"
-
-    ear_l_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, EAR_L_Y, "Ear L Material")
-    ear_l_mat.inputs['Material'].default_value = mats['ear']
+    # ear_l_mat created below after links
 
     tree.links.new(group_in2.outputs['Ear Size'], ear_l_scale_x.inputs[1])
     tree.links.new(group_in2.outputs['Ear Size'], ear_l_scale_y.inputs[1])
@@ -1731,9 +1783,10 @@ def build_geometry_nodes(mats):
     tree.links.new(ear_l_pos.outputs['Vector'], ear_l_xform.inputs['Translation'])
     tree.links.new(ear_l_scale.outputs['Vector'], ear_l_xform.inputs['Scale'])
     tree.links.new(ear_rot_vec.outputs['Vector'], ear_l_xform.inputs['Rotation'])
-    tree.links.new(ear_l_xform.outputs['Geometry'], ear_l_color.inputs['Geometry'])
-    tree.links.new(group_in2.outputs['Ear Color'], ear_l_color.inputs['Value'])
-    tree.links.new(ear_l_color.outputs['Geometry'], ear_l_mat.inputs['Geometry'])
+
+    ear_l_mat = add_material(tree, ear_l_xform.outputs['Geometry'],
+                                group_in2.outputs['Ear Material'],
+                                MAT_X, EAR_L_Y, "Ear L")
 
     # Right ear
     ear_r_rnd = add_dynamic_capsule(
@@ -1758,13 +1811,7 @@ def build_geometry_nodes(mats):
 
     ear_r_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, EAR_R_Y, "Ear R Transform")
 
-    ear_r_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, EAR_R_Y, "Ear R Color")
-    ear_r_color.data_type = 'FLOAT_COLOR'
-    ear_r_color.domain = 'POINT'
-    ear_r_color.inputs['Name'].default_value = "Color"
-
-    ear_r_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, EAR_R_Y, "Ear R Material")
-    ear_r_mat.inputs['Material'].default_value = mats['ear']
+    # ear_r_mat created below after links
 
     tree.links.new(group_in2.outputs['Ear Size'], ear_r_scale_x.inputs[1])
     tree.links.new(group_in2.outputs['Ear Size'], ear_r_scale_y.inputs[1])
@@ -1779,9 +1826,9 @@ def build_geometry_nodes(mats):
     tree.links.new(ear_r_pos.outputs['Vector'], ear_r_xform.inputs['Translation'])
     tree.links.new(ear_r_scale.outputs['Vector'], ear_r_xform.inputs['Scale'])
     tree.links.new(ear_rot_vec.outputs['Vector'], ear_r_xform.inputs['Rotation'])
-    tree.links.new(ear_r_xform.outputs['Geometry'], ear_r_color.inputs['Geometry'])
-    tree.links.new(group_in2.outputs['Ear Color'], ear_r_color.inputs['Value'])
-    tree.links.new(ear_r_color.outputs['Geometry'], ear_r_mat.inputs['Geometry'])
+    ear_r_mat = add_material(tree, ear_r_xform.outputs['Geometry'],
+                                group_in2.outputs['Ear Material'],
+                                MAT_X, EAR_R_Y, "Ear R")
 
     # ------------------------------------------------------------------
     # EYEBROWS — squished ovals above each eye
@@ -1889,21 +1936,15 @@ def build_geometry_nodes(mats):
 
     brow_l_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, BROW_L_Y, "Brow L Transform")
 
-    brow_l_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, BROW_L_Y, "Brow L Color")
-    brow_l_color.data_type = 'FLOAT_COLOR'
-    brow_l_color.domain = 'POINT'
-    brow_l_color.inputs['Name'].default_value = "Color"
-
-    brow_l_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, BROW_L_Y, "Brow L Material")
-    brow_l_mat.inputs['Material'].default_value = mats['brow']
+    # brow_l_mat created below after links
 
     tree.links.new(brow_l_rnd.outputs['Geometry'], brow_l_xform.inputs['Geometry'])
     tree.links.new(brow_l_pos.outputs['Vector'], brow_l_xform.inputs['Translation'])
     tree.links.new(brow_l_scale.outputs['Vector'], brow_l_xform.inputs['Scale'])
     tree.links.new(brow_rot_vec.outputs['Vector'], brow_l_xform.inputs['Rotation'])
-    tree.links.new(brow_l_xform.outputs['Geometry'], brow_l_color.inputs['Geometry'])
-    tree.links.new(group_in2.outputs['Eyebrow Color'], brow_l_color.inputs['Value'])
-    tree.links.new(brow_l_color.outputs['Geometry'], brow_l_mat.inputs['Geometry'])
+    brow_l_mat = add_material(tree, brow_l_xform.outputs['Geometry'],
+                                 group_in2.outputs['Eyebrow Material'],
+                                 MAT_X, BROW_L_Y, "Brow L")
 
     # --- Right Eyebrow (mirror of left) ---
     brow_r_rnd = add_dynamic_capsule(
@@ -1947,21 +1988,14 @@ def build_geometry_nodes(mats):
 
     brow_r_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, BROW_R_Y, "Brow R Transform")
 
-    brow_r_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, BROW_R_Y, "Brow R Color")
-    brow_r_color.data_type = 'FLOAT_COLOR'
-    brow_r_color.domain = 'POINT'
-    brow_r_color.inputs['Name'].default_value = "Color"
-
-    brow_r_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, BROW_R_Y, "Brow R Material")
-    brow_r_mat.inputs['Material'].default_value = mats['brow']
-
     tree.links.new(brow_r_rnd.outputs['Geometry'], brow_r_xform.inputs['Geometry'])
     tree.links.new(brow_r_pos.outputs['Vector'], brow_r_xform.inputs['Translation'])
     tree.links.new(brow_r_scale.outputs['Vector'], brow_r_xform.inputs['Scale'])
     tree.links.new(brow_rot_vec_r.outputs['Vector'], brow_r_xform.inputs['Rotation'])
-    tree.links.new(brow_r_xform.outputs['Geometry'], brow_r_color.inputs['Geometry'])
-    tree.links.new(group_in2.outputs['Eyebrow Color'], brow_r_color.inputs['Value'])
-    tree.links.new(brow_r_color.outputs['Geometry'], brow_r_mat.inputs['Geometry'])
+
+    brow_r_mat = add_material(tree, brow_r_xform.outputs['Geometry'],
+                                 group_in2.outputs['Eyebrow Material'],
+                                 MAT_X, BROW_R_Y, "Brow R")
 
     # ------------------------------------------------------------------
     # LIPS — beveled curve tube that wraps around the mouth opening
@@ -2026,17 +2060,83 @@ def build_geometry_nodes(mats):
     tree.links.new(lip_scale_vec.outputs['Vector'], lip_xform.inputs['Scale'])
     tree.links.new(mouth_rot.outputs['Vector'], lip_xform.inputs['Rotation'])
 
-    # --- Material: color attribute + lip material ---
-    lip_color = add_node(tree, 'GeometryNodeStoreNamedAttribute', MAT_X - 150, LIP_Y, "Lip Color")
-    lip_color.data_type = 'FLOAT_COLOR'
-    lip_color.domain = 'POINT'
-    lip_color.inputs['Name'].default_value = "Color"
+    lip_mat = add_material(tree, lip_xform.outputs['Geometry'],
+                              group_in2.outputs['Lip Material'],
+                              MAT_X, LIP_Y, "Lip")
 
-    lip_mat = add_node(tree, 'GeometryNodeSetMaterial', MAT_X, LIP_Y, "Lip Material")
-    lip_mat.inputs['Material'].default_value = mats['lip']
-    tree.links.new(lip_xform.outputs['Geometry'], lip_color.inputs['Geometry'])
-    tree.links.new(group_in2.outputs['Lip Color'], lip_color.inputs['Value'])
-    tree.links.new(lip_color.outputs['Geometry'], lip_mat.inputs['Geometry'])
+    # ------------------------------------------------------------------
+    # NOSE — dynamic capsule, centered on face between eyes and mouth
+    #
+    # Clone of the body capsule pattern. Extends along Z (vertical pill
+    # for a long nose). Positioned center of face, pushed forward.
+    # Nose sneer from face tracking lifts the nose up slightly.
+    # ------------------------------------------------------------------
+
+    nose_rnd = add_dynamic_capsule(
+        tree, PRIM_X, NOSE_Y, "Nose", radius=0.12, subdivs=5,
+        width_output=group_in2.outputs['Nose Width'], ext_factor=0.18, axis='Z')
+
+    # Scale: slightly taller than wide, thinner front-to-back
+    nose_sx = add_node(tree, 'ShaderNodeMath', MATH_X, NOSE_Y, "Nose Sx")
+    nose_sx.operation = 'MULTIPLY'
+    nose_sx.inputs[0].default_value = 0.8
+    tree.links.new(group_in2.outputs['Nose Size'], nose_sx.inputs[1])
+
+    nose_sy = add_node(tree, 'ShaderNodeMath', MATH_X, NOSE_Y - 60, "Nose Sy")
+    nose_sy.operation = 'MULTIPLY'
+    nose_sy.inputs[0].default_value = 0.6  # thin front-to-back
+    tree.links.new(group_in2.outputs['Nose Size'], nose_sy.inputs[1])
+
+    nose_sz = add_node(tree, 'ShaderNodeMath', MATH_X, NOSE_Y - 120, "Nose Sz")
+    nose_sz.operation = 'MULTIPLY'
+    nose_sz.inputs[0].default_value = 1.0  # tallest axis
+    tree.links.new(group_in2.outputs['Nose Size'], nose_sz.inputs[1])
+
+    nose_scale = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, NOSE_Y, "Nose Scale")
+    tree.links.new(nose_sx.outputs[0], nose_scale.inputs['X'])
+    tree.links.new(nose_sy.outputs[0], nose_scale.inputs['Y'])
+    tree.links.new(nose_sz.outputs[0], nose_scale.inputs['Z'])
+
+    # --- Reactive nose movement from existing face tracking ---
+    # Smile lifts nose (natural — smiling pulls face up)
+    nose_smile_lift = add_node(tree, 'ShaderNodeMath', MATH_X, NOSE_Y - 200, "Smile Lift")
+    nose_smile_lift.operation = 'MULTIPLY'
+    nose_smile_lift.inputs[1].default_value = 0.05
+    tree.links.new(group_in2.outputs['mouthSmileRight'], nose_smile_lift.inputs[0])
+
+    # Jaw open drops nose (natural — opening mouth pulls nose down)
+    nose_jaw_drop = add_node(tree, 'ShaderNodeMath', MATH_X, NOSE_Y - 260, "Jaw Drop")
+    nose_jaw_drop.operation = 'MULTIPLY'
+    nose_jaw_drop.inputs[1].default_value = -0.04
+    tree.links.new(group_in2.outputs['jawOpen'], nose_jaw_drop.inputs[0])
+
+    # Combine: smile lift + jaw drop
+    nose_react = add_node(tree, 'ShaderNodeMath', MATH_X + 150, NOSE_Y - 230, "Nose React")
+    nose_react.operation = 'ADD'
+    tree.links.new(nose_smile_lift.outputs[0], nose_react.inputs[0])
+    tree.links.new(nose_jaw_drop.outputs[0], nose_react.inputs[1])
+
+    # Nose Z = base height + reactive offset
+    nose_z_final = add_node(tree, 'ShaderNodeMath', COMBINE_X - 150, NOSE_Y - 200, "Nose Z Final")
+    nose_z_final.operation = 'ADD'
+    tree.links.new(nose_height_z.outputs[0], nose_z_final.inputs[0])
+    tree.links.new(nose_react.outputs[0], nose_z_final.inputs[1])
+
+    # Position: X=0 (centered), Y=depth, Z=height+sneer
+    nose_pos = add_node(tree, 'ShaderNodeCombineXYZ', COMBINE_X, NOSE_Y + 60, "Nose Pos")
+    nose_pos.inputs['X'].default_value = 0.0
+    tree.links.new(nose_depth_y.outputs[0], nose_pos.inputs['Y'])
+    tree.links.new(nose_z_final.outputs[0], nose_pos.inputs['Z'])
+
+    nose_xform = add_node(tree, 'GeometryNodeTransform', XFORM_X, NOSE_Y, "Nose Transform")
+    tree.links.new(nose_rnd.outputs['Geometry'], nose_xform.inputs['Geometry'])
+    tree.links.new(nose_pos.outputs['Vector'], nose_xform.inputs['Translation'])
+    tree.links.new(nose_scale.outputs['Vector'], nose_xform.inputs['Scale'])
+    tree.links.new(nose_rot_vec.outputs['Vector'], nose_xform.inputs['Rotation'])
+
+    nose_mat = add_material(tree, nose_xform.outputs['Geometry'],
+                               group_in2.outputs['Nose Material'],
+                               MAT_X, NOSE_Y, "Nose")
 
     # ------------------------------------------------------------------
     # JOIN GEOMETRY — combine all parts
@@ -2045,6 +2145,7 @@ def build_geometry_nodes(mats):
     join = add_node(tree, 'GeometryNodeJoinGeometry', JOIN_X, -400, "Join All Parts")
 
     # Connect all parts to join (order = draw order, bottom connects first)
+    tree.links.new(nose_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(brow_r_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(brow_l_mat.outputs['Geometry'], join.inputs['Geometry'])
     tree.links.new(ear_r_mat.outputs['Geometry'], join.inputs['Geometry'])
@@ -2099,16 +2200,38 @@ def create_armature():
 # 5. CREATE THE CHARACTER OBJECT WITH GEONODE MODIFIER
 # ===================================================================
 
-def create_character(tree, armature):
+def create_character(tree, armature, mats):
     """Create a mesh object and apply the geometry nodes modifier."""
     # Empty mesh — geonodes generates everything
-    mesh = bpy.data.meshes.new("BlobPuppet")
-    obj = bpy.data.objects.new("BlobPuppet", mesh)
+    mesh = bpy.data.meshes.new("Manny Faces")
+    obj = bpy.data.objects.new("Manny Faces", mesh)
     bpy.context.collection.objects.link(obj)
 
     # Add geometry nodes modifier
     mod = obj.modifiers.new("GeometryNodes", 'NODES')
     mod.node_group = tree
+
+    # Set default materials on material sockets
+    socket_map = {}
+    for item in tree.interface.items_tree:
+        if hasattr(item, 'in_out') and item.in_out == 'INPUT':
+            socket_map[item.name] = item.identifier
+
+    mat_defaults = {
+        'Body Material': mats['body'],
+        'Eye Material': mats['eye_white'],
+        'Iris Material': mats['iris'],
+        'Pupil Material': mats['pupil'],
+        'Mouth Material': mats['mouth'],
+        'Ear Material': mats['ear'],
+        'Eyebrow Material': mats['brow'],
+        'Lip Material': mats['lip'],
+        'Nose Material': mats['nose'],
+    }
+    for name, mat in mat_defaults.items():
+        sock_id = socket_map.get(name)
+        if sock_id:
+            mod[sock_id] = mat
 
     # Add Subdivision Surface modifier — smooths everything out.
     # Sits AFTER geonodes so it subdivides the final joined geometry.
@@ -2249,8 +2372,8 @@ def main():
     armature = create_armature()
     print("  [+] Armature with 'head' bone")
 
-    obj = create_character(tree, armature)
-    print("  [+] Character object with geonode modifier")
+    obj = create_character(tree, armature, mats)
+    print("  [+] Character object with geonode modifier + material slots")
 
     setup_drivers(obj)
     print("  [+] All face tracking drivers connected")
@@ -2264,17 +2387,21 @@ def main():
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
 
-    print("\n=== Blob Puppet Template V2 Complete! ===")
-    print("\nOpen the Geometry Nodes editor to see the full character graph.")
-    print("Customization sliders are in the modifier panel:")
-    print("  - Body Width / Body Height")
-    print("  - Eye Size / Eye Spacing")
-    print("  - Ear Size / Mouth Size")
-    print("\nFace tracking (driven by ARKitShapeKeys.Dummy):")
-    print("  - jawOpen, mouthSmileRight, mouthFunnel")
-    print("  - eyeBlinkLeft/Right, eyeWideLeft/Right")
-    print("  - eyeLookInLeft/Right")
-    print("  - Head rotation → armature 'head' bone")
+    print("\n=== Manny Faces Template Complete! ===")
+
+    # Auto-save to the templates folder so the addon can find it
+    try:
+        script_dir = Path(__file__).parent
+        save_dir = script_dir / "templates" / "manny_faces"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = str(save_dir / "manny_faces.blend")
+        bpy.ops.wm.save_as_mainfile(filepath=save_path, copy=True)
+        print(f"  [+] Template saved to: {save_path}")
+    except Exception as e:
+        print(f"  [!] Could not auto-save: {e}")
+        print("      Save manually: File → Save As → manny_faces.blend")
+
+    print("\nDone! The template is ready for the Green Room addon.")
 
 
 if __name__ == "__main__":

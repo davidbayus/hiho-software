@@ -8,7 +8,7 @@ bl_info = {
     "category": "3D View",
     "description": "A virtual puppet show for K-12 students. Pick a puppet, connect your phone, and perform!",
     "author": "David Bayus, CADRE Lab @ SJSU",
-    "version": (0, 1, 0),
+    "version": (0, 7, 0),
 }
 
 import bpy

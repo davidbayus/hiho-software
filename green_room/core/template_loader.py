@@ -97,12 +97,13 @@ def load_template(blend_path):
         data_to.materials = data_from.materials
         data_to.armatures = data_from.armatures
 
-    # Link newly appended objects into the active collection
+    # Link only mesh and armature objects (skip cameras, lights, etc.)
     new_objects = []
     for obj in data_to.objects:
         if obj is not None and obj.name not in existing_objects:
-            bpy.context.collection.objects.link(obj)
-            new_objects.append(obj)
+            if obj.type in ('MESH', 'ARMATURE'):
+                bpy.context.collection.objects.link(obj)
+                new_objects.append(obj)
 
     if not new_objects:
         info = TemplateInfo()
