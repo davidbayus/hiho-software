@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""PPParty — Create Marionette V0.8.0: Capsule body parts + customization.
+"""PPParty — Create Marionette V0.9.0: Head Design passthrough.
+
+V0.9.0:
+- Head customization passthrough: all 27 blob head sliders (eyes, mouth,
+  nose, ears, eyebrows, lips, head shape) automatically read from the
+  blob template's interface and exposed on PPParty's modifier.
+- Green Room's blob head is now fully designable inside PPParty.
+- "Head Design" section in N-panel with organized sub-groups.
 
 V0.8.0:
 - Minkowski capsule body parts (chest, pelvis, hands, feet) — same math
@@ -104,6 +111,22 @@ FACE_INPUTS = [
 ADDON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(ADDON_DIR, "assets")
 BLOB_HEAD_BLEND = os.path.join(ASSETS_DIR, "blob_puppet.blend")
+
+# Blob head inputs to SKIP when passing through customization
+# (face tracking is wired separately, materials are assigned by PPParty)
+_BLOB_SKIP = set(FACE_INPUTS) | {
+    'Body Material', 'Eye Material', 'Iris Material', 'Pupil Material',
+    'Mouth Material', 'Nose Material', 'Ear Material', 'Eyebrow Material',
+    'Lip Material',
+}
+
+# Rename blob "Body X" → "Head X" to avoid collision with marionette body
+_BLOB_RENAME = {
+    'Body Width': 'Head Width',
+    'Body Height': 'Head Height',
+    'Body Rotation': 'Head Tilt',
+}
+_BLOB_UNRENAME = {v: k for k, v in _BLOB_RENAME.items()}
 
 
 # ===================================================================
@@ -1044,6 +1067,34 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tree.interface.clear()
 
     # ------------------------------------------------------------------
+    # PRE-LOAD blob head tree so we can read its customization sockets
+    # and create matching passthrough sockets on PPParty's interface.
+    # ------------------------------------------------------------------
+    blob_tree = _load_blob_head_tree()
+    blob_custom = []   # list of (pp_name, blob_name, default, min, max, subtype, panel)
+    if blob_tree:
+        for item in blob_tree.interface.items_tree:
+            if not (hasattr(item, 'item_type') and item.item_type == 'SOCKET'
+                    and item.in_out == 'INPUT'):
+                continue
+            if item.name in _BLOB_SKIP:
+                continue
+            if item.socket_type != 'NodeSocketFloat':
+                continue
+            pp_name = _BLOB_RENAME.get(item.name, item.name)
+            panel = item.parent.name if item.parent else 'Other'
+            if panel == 'Body':
+                panel = 'Head Shape'
+            blob_custom.append((
+                pp_name, item.name,
+                item.default_value,
+                getattr(item, 'min_value', 0.0),
+                getattr(item, 'max_value', 1.0),
+                getattr(item, 'subtype', 'NONE'),
+                panel,
+            ))
+
+    # ------------------------------------------------------------------
     # INTERFACE — all modifier-level inputs
     # ------------------------------------------------------------------
 
@@ -1232,6 +1283,23 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         parent=cust_panel)
     s.default_value = (0.25, 0.25, 0.25, 1.0)
 
+    # ------------------------------------------------------------------
+    # HEAD CUSTOMIZATION — passthrough from blob head template
+    # Auto-creates sockets matching the blob's customization interface.
+    # ------------------------------------------------------------------
+    head_panels = {}
+    for pp_name, blob_name, default, mn, mx, subtype, panel in blob_custom:
+        if panel not in head_panels:
+            head_panels[panel] = tree.interface.new_panel(panel)
+        s = tree.interface.new_socket(
+            pp_name, in_out='INPUT', socket_type='NodeSocketFloat',
+            parent=head_panels[panel])
+        s.default_value = default
+        s.min_value = mn
+        s.max_value = mx
+        if subtype and subtype != 'NONE':
+            s.subtype = subtype
+
     # Geometry output
     tree.interface.new_socket(
         "Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
@@ -1243,9 +1311,9 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     group_out = add_node(tree, 'NodeGroupOutput', 3600, -1000, "Output")
 
     # ------------------------------------------------------------------
-    # SECTION 1 — Blob Head Group node + face tracking wiring
+    # SECTION 1 — Blob Head Group node + face tracking + customization
     # ------------------------------------------------------------------
-    blob_tree = _load_blob_head_tree()
+    # blob_tree was loaded earlier (before interface) to read its sockets.
     blob_geo_out = None
     blob_tf = None
     head_pos_fixed = None
@@ -1265,6 +1333,15 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                 try:
                     tree.links.new(group_in.outputs[name],
                                    blob_group.inputs[name])
+                except KeyError:
+                    pass
+
+        # Wire head customization passthrough: PPParty slider → blob input
+        for pp_name, blob_name, *_ in blob_custom:
+            if blob_name in blob_input_names:
+                try:
+                    tree.links.new(group_in.outputs[pp_name],
+                                   blob_group.inputs[blob_name])
                 except KeyError:
                     pass
 

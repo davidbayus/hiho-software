@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """PPParty N-panel — marionette controls, connection, physics sliders.
 
+V0.9.0: Head Design — blob head customization sliders (eyes, mouth, nose,
+        ears, eyebrows, lips) passed through from Green Room blob template.
 V0.8.0: Added Make It Yours customization (Body Width, sizes, colors).
-V0.7.0: Added Momentum slider.
 V0.5.0: Added Step Strength, Gesture Strength sliders.
 Physics, body movement, and joint constraint sliders read from GN modifier.
 """
@@ -75,6 +76,44 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         _draw_slider_group(col4, mod, ["Body Color", "Hand Color",
                                         "Foot Color", "Joint Color",
                                         "Limb Color"])
+
+        # --- Head Design (blob head customization passthrough) ---
+        layout.separator()
+        box5 = layout.box()
+        box5.label(text="Head Design", icon='SCULPTMODE_HLT')
+
+        col5 = box5.column(align=True)
+        col5.label(text="Shape:")
+        _draw_slider_group(col5, mod, ["Head Width", "Head Height",
+                                        "Head Tilt"])
+        col5.separator()
+        col5.label(text="Eyes:")
+        _draw_slider_group(col5, mod, ["Eye Size", "Eye Spacing",
+                                        "Eyes Height", "Eyes Depth",
+                                        "Eye Width", "Eye Rotation"])
+        col5.separator()
+        col5.label(text="Mouth:")
+        _draw_slider_group(col5, mod, ["Mouth Size", "Mouth Height",
+                                        "Mouth Depth"])
+        col5.separator()
+        col5.label(text="Nose:")
+        _draw_slider_group(col5, mod, ["Nose Size", "Nose Height",
+                                        "Nose Depth", "Nose Width",
+                                        "Nose Rotation"])
+        col5.separator()
+        col5.label(text="Ears:")
+        _draw_slider_group(col5, mod, ["Ear Size", "Ears Height",
+                                        "Ears Spread", "Ears Depth",
+                                        "Ear Width", "Ear Rotation"])
+        col5.separator()
+        col5.label(text="Eyebrows:")
+        _draw_slider_group(col5, mod, ["Eyebrow Size", "Eyebrow Height",
+                                        "Eyebrow Depth", "Eyebrow Spread",
+                                        "Eyebrow Width",
+                                        "Eyebrow Rotation"])
+        col5.separator()
+        col5.label(text="Lips:")
+        _draw_slider_group(col5, mod, ["Lip Thickness"])
 
         # --- Reset ---
         layout.separator()

@@ -6,11 +6,11 @@
 bl_info = {
     "name": "The People's Puppet Party",
     "author": "David Bayus — CADRE Lab, SJSU",
-    "version": (0, 8, 0),
+    "version": (0, 9, 0),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > PPPARTY",
-    "description": "Face-tracked marionette — capsule body, customization, "
-                   "momentum, knee lift, arm gestures",
+    "description": "Face-tracked marionette — head design, capsule body, "
+                   "customization, knee lift, arm gestures",
     "category": "Animation",
 }
 
