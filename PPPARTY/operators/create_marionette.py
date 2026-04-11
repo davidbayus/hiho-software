@@ -2316,7 +2316,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         parts_geo.append(mt.outputs['Geometry'])
 
     def _add_sphere_part(y, label, radius, pos_socket, mat,
-                         segments=12, rings=8, mat_socket=None):
+                         segments=8, rings=6, mat_socket=None):
         """Small sphere for joints (no capsule needed)."""
         sphere = add_node(tree, 'GeometryNodeMeshUVSphere', x_part, y,
                           label)
@@ -2368,7 +2368,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _add_capsule_part(-620, "Hand L", HAND_RADIUS,
                       sim_out.outputs['pos_hand_l'], body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
-                      ext_factor=0.3, axis='Z',
+                      ext_factor=0.3, axis='Z', subdivs=4,
                       uniform_scale_out=group_in.outputs['Hand Size'],
                       rotation_output=group_in.outputs['Hand Rotation'],
                       tilt_output=group_in.outputs['Hand Tilt'],
@@ -2377,7 +2377,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _add_capsule_part(-780, "Hand R", HAND_RADIUS,
                       sim_out.outputs['pos_hand_r'], body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
-                      ext_factor=0.3, axis='Z',
+                      ext_factor=0.3, axis='Z', subdivs=4,
                       uniform_scale_out=group_in.outputs['Hand Size'],
                       rotation_output=group_in.outputs['Hand Rotation'],
                       tilt_output=group_in.outputs['Hand Tilt'],
@@ -2389,7 +2389,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       sim_out.outputs['pos_foot_l'], body_mats['foot'],
                       rotation=(0, 0, FOOT_SPLAY_ANGLE),
                       width_output=group_in.outputs['Foot Width'],
-                      ext_factor=0.3, axis='Y',
+                      ext_factor=0.3, axis='Y', subdivs=4,
                       uniform_scale_out=group_in.outputs['Foot Size'],
                       rotation_output=group_in.outputs['Foot Rotation'],
                       rot_axis='Z',
@@ -2400,7 +2400,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       sim_out.outputs['pos_foot_r'], body_mats['foot'],
                       rotation=(0, 0, -FOOT_SPLAY_ANGLE),
                       width_output=group_in.outputs['Foot Width'],
-                      ext_factor=0.3, axis='Y',
+                      ext_factor=0.3, axis='Y', subdivs=4,
                       uniform_scale_out=group_in.outputs['Foot Size'],
                       rotation_output=group_in.outputs['Foot Rotation'],
                       rot_axis='Z', negate_rot=True,
@@ -2412,13 +2412,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _add_capsule_part(-1260, "Jnt ShL", JOINT_RADIUS,
                       sim_out.outputs['floated_shl'], body_mats['joint'],
                       width_output=group_in.outputs['Shoulder Width'],
-                      ext_factor=0.3, axis='Z',
+                      ext_factor=0.3, axis='Z', subdivs=3,
                       rotation_output=group_in.outputs['Shoulder Rotation'],
                       mat_socket=group_in.outputs['Joint Material'])
     _add_capsule_part(-1360, "Jnt ShR", JOINT_RADIUS,
                       sim_out.outputs['floated_shr'], body_mats['joint'],
                       width_output=group_in.outputs['Shoulder Width'],
-                      ext_factor=0.3, axis='Z',
+                      ext_factor=0.3, axis='Z', subdivs=3,
                       rotation_output=group_in.outputs['Shoulder Rotation'],
                       mat_socket=group_in.outputs['Joint Material'])
 
@@ -2439,7 +2439,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                        x_limb - 200, -1400, "Tube Profile")
     profile.mode = 'RADIUS'
     profile.inputs['Radius'].default_value = LIMB_TUBE_RADIUS
-    profile.inputs['Resolution'].default_value = 8
+    profile.inputs['Resolution'].default_value = 6
 
     def _add_limb(y, label, start_socket, end_socket, mat,
                   mat_socket=None):
@@ -2584,7 +2584,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                              x_limb - 200, -1550, "Waist Profile")
     waist_profile.mode = 'RADIUS'
     waist_profile.inputs['Radius'].default_value = WAIST_TUBE_RADIUS
-    waist_profile.inputs['Resolution'].default_value = 8
+    waist_profile.inputs['Resolution'].default_value = 6
 
     spine_ln = add_node(tree, 'GeometryNodeCurvePrimitiveLine',
                         x_limb, -1200, "Spine Ln")
