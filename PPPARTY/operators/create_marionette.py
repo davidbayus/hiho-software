@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""PPParty — Create Marionette V0.9.0: Head Design passthrough.
+"""PPParty — Create Marionette V0.9.4: Material slots for all parts.
 
 V0.9.0:
 - Head customization passthrough: all 27 blob head sliders (eyes, mouth,
@@ -113,18 +113,15 @@ ASSETS_DIR = os.path.join(ADDON_DIR, "assets")
 BLOB_HEAD_BLEND = os.path.join(ASSETS_DIR, "blob_puppet.blend")
 
 # Blob head inputs to SKIP when passing through customization
-# (face tracking is wired separately, materials are assigned by PPParty)
-_BLOB_SKIP = set(FACE_INPUTS) | {
-    'Body Material', 'Eye Material', 'Iris Material', 'Pupil Material',
-    'Mouth Material', 'Nose Material', 'Ear Material', 'Eyebrow Material',
-    'Lip Material',
-}
+# (face tracking is wired separately)
+_BLOB_SKIP = set(FACE_INPUTS)
 
 # Rename blob "Body X" → "Head X" to avoid collision with marionette body
 _BLOB_RENAME = {
     'Body Width': 'Head Width',
     'Body Height': 'Head Height',
     'Body Rotation': 'Head Tilt',
+    'Body Material': 'Head Material',
 }
 _BLOB_UNRENAME = {v: k for k, v in _BLOB_RENAME.items()}
 
@@ -1071,7 +1068,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # and create matching passthrough sockets on PPParty's interface.
     # ------------------------------------------------------------------
     blob_tree = _load_blob_head_tree()
-    blob_custom = []   # list of (pp_name, blob_name, default, min, max, subtype, panel)
+    blob_custom = []   # list of (pp_name, blob_name, socket_type, default, min, max, subtype, panel)
     if blob_tree:
         for item in blob_tree.interface.items_tree:
             if not (hasattr(item, 'item_type') and item.item_type == 'SOCKET'
@@ -1079,15 +1076,16 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                 continue
             if item.name in _BLOB_SKIP:
                 continue
-            if item.socket_type != 'NodeSocketFloat':
+            if item.socket_type not in ('NodeSocketFloat',
+                                         'NodeSocketMaterial'):
                 continue
             pp_name = _BLOB_RENAME.get(item.name, item.name)
             panel = item.parent.name if item.parent else 'Other'
             if panel == 'Body':
                 panel = 'Head Shape'
             blob_custom.append((
-                pp_name, item.name,
-                item.default_value,
+                pp_name, item.name, item.socket_type,
+                getattr(item, 'default_value', None),
                 getattr(item, 'min_value', 0.0),
                 getattr(item, 'max_value', 1.0),
                 getattr(item, 'subtype', 'NONE'),
@@ -1314,27 +1312,40 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.min_value = -180.0
     s.max_value = 180.0
 
-    # NOTE: Color sockets removed in V0.9.0 — colors are now controlled
-    # directly via material Base Color pickers in the "Colors" N-panel
-    # section. This avoids the GN limitation of not being able to change
-    # material colors per-instance.
+    # Body part material sockets — full Blender material assignment
+    tree.interface.new_socket(
+        "Body Part Material", in_out='INPUT',
+        socket_type='NodeSocketMaterial', parent=cust_panel)
+    tree.interface.new_socket(
+        "Hand Material", in_out='INPUT',
+        socket_type='NodeSocketMaterial', parent=cust_panel)
+    tree.interface.new_socket(
+        "Foot Material", in_out='INPUT',
+        socket_type='NodeSocketMaterial', parent=cust_panel)
+    tree.interface.new_socket(
+        "Joint Material", in_out='INPUT',
+        socket_type='NodeSocketMaterial', parent=cust_panel)
+    tree.interface.new_socket(
+        "Limb Material", in_out='INPUT',
+        socket_type='NodeSocketMaterial', parent=cust_panel)
 
     # ------------------------------------------------------------------
     # HEAD CUSTOMIZATION — passthrough from blob head template
     # Auto-creates sockets matching the blob's customization interface.
     # ------------------------------------------------------------------
     head_panels = {}
-    for pp_name, blob_name, default, mn, mx, subtype, panel in blob_custom:
+    for pp_name, blob_name, sock_type, default, mn, mx, subtype, panel in blob_custom:
         if panel not in head_panels:
             head_panels[panel] = tree.interface.new_panel(panel)
         s = tree.interface.new_socket(
-            pp_name, in_out='INPUT', socket_type='NodeSocketFloat',
+            pp_name, in_out='INPUT', socket_type=sock_type,
             parent=head_panels[panel])
-        s.default_value = default
-        s.min_value = mn
-        s.max_value = mx
-        if subtype and subtype != 'NONE':
-            s.subtype = subtype
+        if sock_type == 'NodeSocketFloat':
+            s.default_value = default
+            s.min_value = mn
+            s.max_value = mx
+            if subtype and subtype != 'NONE':
+                s.subtype = subtype
 
     # Geometry output
     tree.interface.new_socket(
@@ -1372,8 +1383,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                 except KeyError:
                     pass
 
-        # Wire head customization passthrough: PPParty slider → blob input
-        for pp_name, blob_name, *_ in blob_custom:
+        # Wire head customization passthrough: PPParty slider/material → blob
+        for pp_name, blob_name, sock_type, *_ in blob_custom:
             if blob_name in blob_input_names:
                 try:
                     tree.links.new(group_in.outputs[pp_name],
@@ -1381,25 +1392,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                 except KeyError:
                     pass
 
-        # Assign PPParty materials to blob head
-        # (overrides whatever came with the .blend append)
-        mat_map = {
-            'Body Material': blob_mats.get('body'),
-            'Mouth Material': blob_mats.get('mouth'),
-            'Eye Material': blob_mats.get('eye_white'),
-            'Iris Material': blob_mats.get('iris'),
-            'Pupil Material': blob_mats.get('pupil'),
-            'Ear Material': blob_mats.get('ear'),
-            'Eyebrow Material': blob_mats.get('brow'),
-            'Lip Material': blob_mats.get('lip'),
-            'Nose Material': blob_mats.get('nose'),
-        }
-        for sock_name, mat in mat_map.items():
-            if mat and sock_name in blob_input_names:
-                try:
-                    blob_group.inputs[sock_name].default_value = mat
-                except (KeyError, TypeError):
-                    pass
+        # Head materials are now passthrough sockets (wired above).
+        # No hardcoded mat_map needed — user picks materials in N-panel.
 
         # Transform blob head: rotate by phone, scale, position at head
         head_rot_vec = add_node(tree, 'ShaderNodeCombineXYZ', -2600, 800,
@@ -2188,13 +2182,16 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                           subdivs=6, uniform_scale_out=None,
                           rotation_output=None, rot_axis='Y',
                           tilt_output=None, tilt_axis='X',
-                          depth_output=None, depth_axis='Y'):
+                          depth_output=None, depth_axis='Y',
+                          mat_socket=None):
         """Create one body part: capsule + transform + material + smooth.
 
         uniform_scale_out: optional socket driving uniform XYZ scale
         rotation_output: optional socket driving rotation (degrees) on rot_axis
         tilt_output: optional SECOND rotation axis (degrees) on tilt_axis
         depth_output: optional position offset along depth_axis
+        mat_socket: optional group_in socket for material assignment
+                    (overrides hardcoded mat when provided)
         """
         import math
 
@@ -2278,11 +2275,14 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         mt = add_node(tree, 'GeometryNodeSetMaterial', x_part + 600, y,
                       f"{label} Mt")
         tree.links.new(sm.outputs['Geometry'], mt.inputs['Geometry'])
-        mt.inputs['Material'].default_value = mat
+        if mat_socket is not None:
+            tree.links.new(mat_socket, mt.inputs['Material'])
+        else:
+            mt.inputs['Material'].default_value = mat
         parts_geo.append(mt.outputs['Geometry'])
 
     def _add_sphere_part(y, label, radius, pos_socket, mat,
-                         segments=12, rings=8):
+                         segments=12, rings=8, mat_socket=None):
         """Small sphere for joints (no capsule needed)."""
         sphere = add_node(tree, 'GeometryNodeMeshUVSphere', x_part, y,
                           label)
@@ -2302,7 +2302,10 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         mt = add_node(tree, 'GeometryNodeSetMaterial', x_part + 600, y,
                       f"{label} Mt")
         tree.links.new(sm.outputs['Geometry'], mt.inputs['Geometry'])
-        mt.inputs['Material'].default_value = mat
+        if mat_socket is not None:
+            tree.links.new(mat_socket, mt.inputs['Material'])
+        else:
+            mt.inputs['Material'].default_value = mat
         parts_geo.append(mt.outputs['Geometry'])
 
     # --- Capsule body parts ---
@@ -2311,18 +2314,21 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       chest_pos.outputs['Vector'], body_mats['body'],
                       scale=(1.1, 0.8, 1.05),
                       width_output=group_in.outputs['Body Width'],
-                      ext_factor=0.15, axis='X')
+                      ext_factor=0.15, axis='X',
+                      mat_socket=group_in.outputs['Body Part Material'])
 
     # Pelvis: dynamic capsule, same width driver (slightly less extension)
     _add_capsule_part(-280, "Pelvis", PELVIS_RADIUS,
                       pelvis_pos.outputs['Vector'], body_mats['body'],
                       scale=(1.0, 0.85, 0.9),
                       width_output=group_in.outputs['Body Width'],
-                      ext_factor=0.12, axis='X')
+                      ext_factor=0.12, axis='X',
+                      mat_socket=group_in.outputs['Body Part Material'])
 
     # Waist joint (small sphere)
     _add_sphere_part(-460, "Waist Jnt", WAIST_JOINT_RADIUS,
-                     waist_mid.outputs['Vector'], body_mats['joint'])
+                     waist_mid.outputs['Vector'], body_mats['joint'],
+                     mat_socket=group_in.outputs['Joint Material'])
 
     # Hands: capsules with Width + Rotation + Tilt
     _add_capsule_part(-620, "Hand L", HAND_RADIUS,
@@ -2332,7 +2338,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       uniform_scale_out=group_in.outputs['Hand Size'],
                       rotation_output=group_in.outputs['Hand Rotation'],
                       tilt_output=group_in.outputs['Hand Tilt'],
-                      tilt_axis='X')
+                      tilt_axis='X',
+                      mat_socket=group_in.outputs['Hand Material'])
     _add_capsule_part(-780, "Hand R", HAND_RADIUS,
                       sim_out.outputs['pos_hand_r'], body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
@@ -2340,7 +2347,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       uniform_scale_out=group_in.outputs['Hand Size'],
                       rotation_output=group_in.outputs['Hand Rotation'],
                       tilt_output=group_in.outputs['Hand Tilt'],
-                      tilt_axis='X')
+                      tilt_axis='X',
+                      mat_socket=group_in.outputs['Hand Material'])
 
     # Feet: capsules with Width + Rotation + Depth (forward offset)
     _add_capsule_part(-940, "Foot L", FOOT_RADIUS,
@@ -2352,7 +2360,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       rotation_output=group_in.outputs['Foot Rotation'],
                       rot_axis='X',
                       depth_output=group_in.outputs['Foot Depth'],
-                      depth_axis='Y')
+                      depth_axis='Y',
+                      mat_socket=group_in.outputs['Foot Material'])
     _add_capsule_part(-1100, "Foot R", FOOT_RADIUS,
                       sim_out.outputs['pos_foot_r'], body_mats['foot'],
                       rotation=(0, 0, -FOOT_SPLAY_ANGLE),
@@ -2362,25 +2371,30 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       rotation_output=group_in.outputs['Foot Rotation'],
                       rot_axis='X',
                       depth_output=group_in.outputs['Foot Depth'],
-                      depth_axis='Y')
+                      depth_axis='Y',
+                      mat_socket=group_in.outputs['Foot Material'])
 
     # Shoulder joints: capsules with Width + Rotation
     _add_capsule_part(-1260, "Jnt ShL", JOINT_RADIUS,
                       sim_out.outputs['floated_shl'], body_mats['joint'],
                       width_output=group_in.outputs['Shoulder Width'],
                       ext_factor=0.3, axis='Z',
-                      rotation_output=group_in.outputs['Shoulder Rotation'])
+                      rotation_output=group_in.outputs['Shoulder Rotation'],
+                      mat_socket=group_in.outputs['Joint Material'])
     _add_capsule_part(-1360, "Jnt ShR", JOINT_RADIUS,
                       sim_out.outputs['floated_shr'], body_mats['joint'],
                       width_output=group_in.outputs['Shoulder Width'],
                       ext_factor=0.3, axis='Z',
-                      rotation_output=group_in.outputs['Shoulder Rotation'])
+                      rotation_output=group_in.outputs['Shoulder Rotation'],
+                      mat_socket=group_in.outputs['Joint Material'])
 
     # Hip joints (small spheres — stay spherical)
     _add_sphere_part(-1460, "Jnt HipL", JOINT_RADIUS,
-                     hipl_visual.outputs['Vector'], body_mats['joint'])
+                     hipl_visual.outputs['Vector'], body_mats['joint'],
+                     mat_socket=group_in.outputs['Joint Material'])
     _add_sphere_part(-1560, "Jnt HipR", JOINT_RADIUS,
-                     hipr_visual.outputs['Vector'], body_mats['joint'])
+                     hipr_visual.outputs['Vector'], body_mats['joint'],
+                     mat_socket=group_in.outputs['Joint Material'])
 
     # ------------------------------------------------------------------
     # SECTION 9 — Limb curves + neck
@@ -2393,7 +2407,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     profile.inputs['Radius'].default_value = LIMB_TUBE_RADIUS
     profile.inputs['Resolution'].default_value = 8
 
-    def _add_limb(y, label, start_socket, end_socket, mat):
+    def _add_limb(y, label, start_socket, end_socket, mat,
+                  mat_socket=None):
         """Curve line from start to end → tube mesh."""
         line = add_node(tree, 'GeometryNodeCurvePrimitiveLine', x_limb, y,
                         f"{label} Ln")
@@ -2414,7 +2429,10 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         mt = add_node(tree, 'GeometryNodeSetMaterial', x_limb + 600, y,
                       f"{label} Mt")
         tree.links.new(sm.outputs['Geometry'], mt.inputs['Geometry'])
-        mt.inputs['Material'].default_value = mat
+        if mat_socket is not None:
+            tree.links.new(mat_socket, mt.inputs['Material'])
+        else:
+            mt.inputs['Material'].default_value = mat
         parts_geo.append(mt.outputs['Geometry'])
 
     # --- Analytical mid-joints (two-bone IK for elbows/knees) ---
@@ -2456,40 +2474,52 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # Arms (floated shoulders → elbow → hand)
     _add_limb(-100, "UArm L",
               sim_out.outputs['floated_shl'],
-              elbow_l.outputs['Vector'], body_mats['limb'])
+              elbow_l.outputs['Vector'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-170, "FArm L",
               elbow_l.outputs['Vector'],
-              sim_out.outputs['pos_hand_l'], body_mats['limb'])
+              sim_out.outputs['pos_hand_l'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-240, "UArm R",
               sim_out.outputs['floated_shr'],
-              elbow_r.outputs['Vector'], body_mats['limb'])
+              elbow_r.outputs['Vector'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-310, "FArm R",
               elbow_r.outputs['Vector'],
-              sim_out.outputs['pos_hand_r'], body_mats['limb'])
+              sim_out.outputs['pos_hand_r'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
 
     # Legs (hips → knee → foot)
     _add_limb(-410, "Thigh L",
               hipl_visual.outputs['Vector'],
-              knee_l.outputs['Vector'], body_mats['limb'])
+              knee_l.outputs['Vector'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-480, "Shin L",
               knee_l.outputs['Vector'],
-              sim_out.outputs['pos_foot_l'], body_mats['limb'])
+              sim_out.outputs['pos_foot_l'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-550, "Thigh R",
               hipr_visual.outputs['Vector'],
-              knee_r.outputs['Vector'], body_mats['limb'])
+              knee_r.outputs['Vector'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-620, "Shin R",
               knee_r.outputs['Vector'],
-              sim_out.outputs['pos_foot_r'], body_mats['limb'])
+              sim_out.outputs['pos_foot_r'], body_mats['limb'],
+              mat_socket=group_in.outputs['Limb Material'])
 
     # Elbow/knee joint spheres
     _add_sphere_part(-1420, "Elbow L", ELBOW_JOINT_RADIUS,
-                     elbow_l.outputs['Vector'], body_mats['joint'])
+                     elbow_l.outputs['Vector'], body_mats['joint'],
+                     mat_socket=group_in.outputs['Joint Material'])
     _add_sphere_part(-1520, "Elbow R", ELBOW_JOINT_RADIUS,
-                     elbow_r.outputs['Vector'], body_mats['joint'])
+                     elbow_r.outputs['Vector'], body_mats['joint'],
+                     mat_socket=group_in.outputs['Joint Material'])
     _add_sphere_part(-1620, "Knee L", KNEE_JOINT_RADIUS,
-                     knee_l.outputs['Vector'], body_mats['joint'])
+                     knee_l.outputs['Vector'], body_mats['joint'],
+                     mat_socket=group_in.outputs['Joint Material'])
     _add_sphere_part(-1720, "Knee R", KNEE_JOINT_RADIUS,
-                     knee_r.outputs['Vector'], body_mats['joint'])
+                     knee_r.outputs['Vector'], body_mats['joint'],
+                     mat_socket=group_in.outputs['Joint Material'])
 
     # Neck (chest top → head bottom) — tracks chest sway
     neck_top_off = add_node(tree, 'ShaderNodeCombineXYZ',
@@ -2512,7 +2542,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     _add_limb(-800, "Neck",
               neck_top.outputs['Vector'],
-              neck_bot.outputs['Vector'], body_mats['body'])
+              neck_bot.outputs['Vector'], body_mats['body'],
+              mat_socket=group_in.outputs['Body Part Material'])
 
     # Spine / waist connector (chest → pelvis, thicker than limbs)
     waist_profile = add_node(tree, 'GeometryNodeCurvePrimitiveCircle',
@@ -2540,7 +2571,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     spine_mt = add_node(tree, 'GeometryNodeSetMaterial',
                         x_limb + 600, -1200, "Spine Mt")
     tree.links.new(spine_sm.outputs['Geometry'], spine_mt.inputs['Geometry'])
-    spine_mt.inputs['Material'].default_value = body_mats['body']
+    tree.links.new(group_in.outputs['Body Part Material'],
+                   spine_mt.inputs['Material'])
     parts_geo.append(spine_mt.outputs['Geometry'])
 
     # ------------------------------------------------------------------
@@ -2618,6 +2650,38 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
         # Build the full GN tree (blob head + physics body)
         context.view_layer.objects.active = puppet
         build_marionette_tree(tree, body_mats, blob_mats, context)
+
+        # Set default materials on modifier sockets (head + body)
+        # The tree has Material sockets — set them to our freshly created mats.
+        _mat_defaults = {
+            # Head materials (passthrough from blob template)
+            'Head Material': blob_mats.get('body'),
+            'Mouth Material': blob_mats.get('mouth'),
+            'Eye Material': blob_mats.get('eye_white'),
+            'Iris Material': blob_mats.get('iris'),
+            'Pupil Material': blob_mats.get('pupil'),
+            'Ear Material': blob_mats.get('ear'),
+            'Eyebrow Material': blob_mats.get('brow'),
+            'Lip Material': blob_mats.get('lip'),
+            'Nose Material': blob_mats.get('nose'),
+            # Body part materials
+            'Body Part Material': body_mats.get('body'),
+            'Hand Material': body_mats.get('hand'),
+            'Foot Material': body_mats.get('foot'),
+            'Joint Material': body_mats.get('joint'),
+            'Limb Material': body_mats.get('limb'),
+        }
+        for item in tree.interface.items_tree:
+            if (hasattr(item, 'item_type') and item.item_type == 'SOCKET'
+                    and item.in_out == 'INPUT'
+                    and item.socket_type == 'NodeSocketMaterial'
+                    and item.name in _mat_defaults):
+                mat = _mat_defaults[item.name]
+                if mat:
+                    try:
+                        mod[item.identifier] = mat
+                    except Exception:
+                        pass
 
         # Ensure dummy mesh exists (OSC receiver writes shape keys here,
         # then pushes values directly to modifier — no drivers needed)

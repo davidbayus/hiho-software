@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """PPParty N-panel — marionette controls, connection, physics sliders.
 
+V0.9.4: Material slots — full Blender material assignment for all body
+        parts and head parts (replaces color pickers).
 V0.9.0: Head Design — blob head customization sliders (eyes, mouth, nose,
         ears, eyebrows, lips) passed through from Green Room blob template.
 V0.8.0: Added Make It Yours customization (Body Width, sizes, colors).
@@ -84,30 +86,22 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         _draw_slider_group(col4, mod, ["Shoulder Width",
                                         "Shoulder Rotation"])
 
-        # --- Colors (direct material color pickers) ---
+        # --- Materials (body part material slots) ---
         layout.separator()
         box_c = layout.box()
-        box_c.label(text="Colors", icon='COLOR')
+        box_c.label(text="Materials", icon='MATERIAL')
         col_c = box_c.column(align=True)
-        _draw_material_colors(col_c, [
-            ("PP_HeadSkin", "Head"),
-            ("PP_Body", "Body"),
-            ("PP_Hand", "Hand"),
-            ("PP_Foot", "Foot"),
-            ("PP_Joint", "Joint"),
-            ("PP_Limb", "Limb"),
+        col_c.label(text="Body:")
+        _draw_material_slots(col_c, mod, [
+            "Body Part Material", "Hand Material", "Foot Material",
+            "Joint Material", "Limb Material",
         ])
         col_c.separator()
-        col_c.label(text="Face:")
-        _draw_material_colors(col_c, [
-            ("PP_EyeWhite", "Eye White"),
-            ("PP_Iris", "Iris"),
-            ("PP_Pupil", "Pupil"),
-            ("PP_Mouth", "Mouth"),
-            ("PP_Lip", "Lip"),
-            ("PP_Nose", "Nose"),
-            ("PP_Ear", "Ear"),
-            ("PP_Brow", "Eyebrow"),
+        col_c.label(text="Head:")
+        _draw_material_slots(col_c, mod, [
+            "Head Material", "Eye Material", "Iris Material",
+            "Pupil Material", "Mouth Material", "Lip Material",
+            "Nose Material", "Ear Material", "Eyebrow Material",
         ])
 
         # --- Head Design (blob head customization passthrough) ---
@@ -288,12 +282,13 @@ def _draw_slider_group(col, mod, names):
             col.prop(mod, prop_path, text=item.name)
 
 
-def _draw_material_colors(col, mat_labels):
-    """Draw color pickers for Principled BSDF Base Color on named materials."""
-    for mat_name, label in mat_labels:
-        mat = bpy.data.materials.get(mat_name)
-        if mat and mat.use_nodes:
-            bsdf = mat.node_tree.nodes.get("Principled BSDF")
-            if bsdf:
-                col.prop(bsdf.inputs["Base Color"], "default_value",
-                         text=label)
+def _draw_material_slots(col, mod, names):
+    """Draw material picker dropdowns for GN modifier Material sockets."""
+    for item in mod.node_group.interface.items_tree:
+        if (hasattr(item, 'item_type')
+                and item.item_type == 'SOCKET'
+                and item.in_out == 'INPUT'
+                and item.socket_type == 'NodeSocketMaterial'
+                and item.name in names):
+            prop_path = f'["{item.identifier}"]'
+            col.prop(mod, prop_path, text=item.name)
