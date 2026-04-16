@@ -235,7 +235,9 @@ def matrix_to_euler(mat):
 
     # Map MediaPipe (Y-up) → Blender (Z-up):
     #   pitch → headRotX (nod),  roll → headRotY (tilt),  yaw → headRotZ (turn)
-    return -pitch, -roll, -yaw
+    # Coordinate transform (MP→Blender) preserves X rotation sign,
+    # negates Y (roll), and maps Y→Z rotation (yaw keeps selfie-mirror negate).
+    return pitch, -roll, -yaw
 
 
 # ---------------------------------------------------------------------------

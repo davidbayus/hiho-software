@@ -2027,6 +2027,53 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     x_bt = x_mv + 900
     bt_factor = group_in.outputs['Body Tracking']
 
+    # Face-heuristic influence factor: (1 - Body Tracking).
+    # When BT is active, face-to-body heuristics (lean→walk, mouth→step,
+    # smile→gesture) are fully muted — real body data is the only input.
+    # NOTE: Face→body is a cool concept we want to bring back as a
+    # "Face Influence" slider. For now, hard-mute during BT for clean test.
+    face_factor = add_node(tree, 'ShaderNodeMath', x_bt - 400, 0,
+                           "Face Factor")
+    face_factor.operation = 'SUBTRACT'
+    face_factor.inputs[0].default_value = 1.0
+    tree.links.new(bt_factor, face_factor.inputs[1])
+
+    # Mute face-heuristic endpoint deltas by face_factor.
+    # Without this, face deltas bleed into the lerp when limb visibility
+    # is partial (BT × vis < 1), causing head tilt to drive legs/arms
+    # even when body tracking is providing real limb positions.
+    shl_delta_muted = add_node(tree, 'ShaderNodeVectorMath', x_bt - 400,
+                                -250, "ShL\u00d7Face")
+    shl_delta_muted.operation = 'SCALE'
+    tree.links.new(shl_delta.outputs['Vector'],
+                   shl_delta_muted.inputs[0])
+    tree.links.new(face_factor.outputs['Value'],
+                   shl_delta_muted.inputs['Scale'])
+
+    shr_delta_muted = add_node(tree, 'ShaderNodeVectorMath', x_bt - 400,
+                                -400, "ShR\u00d7Face")
+    shr_delta_muted.operation = 'SCALE'
+    tree.links.new(shr_delta.outputs['Vector'],
+                   shr_delta_muted.inputs[0])
+    tree.links.new(face_factor.outputs['Value'],
+                   shr_delta_muted.inputs['Scale'])
+
+    hipl_delta_muted = add_node(tree, 'ShaderNodeVectorMath', x_bt - 400,
+                                 -550, "HipL\u00d7Face")
+    hipl_delta_muted.operation = 'SCALE'
+    tree.links.new(hipl_delta.outputs['Vector'],
+                   hipl_delta_muted.inputs[0])
+    tree.links.new(face_factor.outputs['Value'],
+                   hipl_delta_muted.inputs['Scale'])
+
+    hipr_delta_muted = add_node(tree, 'ShaderNodeVectorMath', x_bt - 400,
+                                 -700, "HipR\u00d7Face")
+    hipr_delta_muted.operation = 'SCALE'
+    tree.links.new(hipr_delta.outputs['Vector'],
+                   hipr_delta_muted.inputs[0])
+    tree.links.new(face_factor.outputs['Value'],
+                   hipr_delta_muted.inputs['Scale'])
+
     # Per-limb effective factors: Body Tracking × limb visibility.
     # When a limb drops off camera, vis → 0, factor → 0 → face heuristic.
     arm_l_factor = add_node(tree, 'ShaderNodeMath', x_bt - 200, -150,
@@ -2055,25 +2102,25 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     shl_delta_final = _vector_lerp(
         tree, x_bt, -250, "ShL",
-        shl_delta.outputs['Vector'],
+        shl_delta_muted.outputs['Vector'],
         group_in.outputs['bt_shl_delta'],
         arm_l_factor.outputs['Value']).outputs['Vector']
 
     shr_delta_final = _vector_lerp(
         tree, x_bt, -400, "ShR",
-        shr_delta.outputs['Vector'],
+        shr_delta_muted.outputs['Vector'],
         group_in.outputs['bt_shr_delta'],
         arm_r_factor.outputs['Value']).outputs['Vector']
 
     hipl_delta_final = _vector_lerp(
         tree, x_bt, -550, "HipL",
-        hipl_delta.outputs['Vector'],
+        hipl_delta_muted.outputs['Vector'],
         group_in.outputs['bt_hipl_delta'],
         leg_l_factor.outputs['Value']).outputs['Vector']
 
     hipr_delta_final = _vector_lerp(
         tree, x_bt, -700, "HipR",
-        hipr_delta.outputs['Vector'],
+        hipr_delta_muted.outputs['Vector'],
         group_in.outputs['bt_hipr_delta'],
         leg_r_factor.outputs['Value']).outputs['Vector']
 
@@ -2334,14 +2381,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                    head_lift.inputs['Z'])
 
     # --- Mute face-heuristic sway when body tracking is active ---
-    # Face heuristic sway (head lean → torso shift, mouth → lateral, etc.)
-    # conflicts with real body tracking data. Scale sway by (1 - BT factor)
-    # so it fades to zero when body landmarks are driving the puppet.
-    face_factor = add_node(tree, 'ShaderNodeMath', x_sw + 700, 550,
-                           "Face Factor")
-    face_factor.operation = 'SUBTRACT'
-    face_factor.inputs[0].default_value = 1.0
-    tree.links.new(bt_factor, face_factor.inputs[1])
+    # face_factor (1 - BT) created in Section 2.5.
+    # Same factor mutes both endpoint deltas AND torso sway.
 
     chest_sway_muted = add_node(tree, 'ShaderNodeVectorMath', x_sw + 700,
                                 400, "Chest Sway×Face")
