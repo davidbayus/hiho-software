@@ -1,9 +1,27 @@
-# Green Room — K-12 Blender Puppet Show Addon — Claude Code Project
+# PPParty — The People's Puppet Party — Claude Code Project
 
 ## What This Is
-A Blender Python addon that transforms Blender into a **puppet show** for K-12 students. Kids pick a character, customize it with sliders, connect their phone, and perform — their face drives the puppet in real time. Built as a CADRE Lab collaboration at SJSU, led by David Bayus (Digital Media Art lecturer, 10+ years teaching 3D).
+A Blender Python addon that transforms Blender into a **puppet show** for K-12 and college students. Kids pick a character, customize it with sliders, and perform — their face and body drive the puppet in real time via webcam. Built as a CADRE Lab collaboration at SJSU, led by David Bayus (Digital Media Art lecturer, 10+ years teaching 3D).
 
 This is **local software** — not "Blender for kids" as a product, but Blender re-crafted for specific kids in specific classrooms with specific constraints.
+
+## ARCHITECTURE FORK — V1.0.0 MediaPipe Pivot (April 12, 2026)
+
+**This is a major fork point.** PPParty is moving from phone-based input (Live Link Face app + ARKit) to webcam-based input (MediaPipe face + body tracking). This change touches the entire input pipeline.
+
+**Safe harbor tags in git:**
+- `v0.9.6-phone-era-final` — last working phone-based version, demo'd at CADRE 40th
+- `v0.7.0-greenroom-final` — Green Room retired as separate addon (absorbed into PPParty)
+- To roll back: `git checkout v0.9.6-phone-era-final`
+
+**What changed and why:**
+- **Phone → Webcam:** MediaPipe on a laptop webcam gives 52 ARKit-compatible blend shapes + 33 body landmarks. No phone, no router, no WiFi setup, no app install. "Scrap in a Box" becomes just the laptop.
+- **Face-to-body heuristics → Real body tracking:** The 7-channel face→body mapping hack is replaced by actual body landmark positions from MediaPipe. The Verlet physics + analytical IK compute everything else from just hand/foot/shoulder/hip positions.
+- **Green Room retired:** Green Room (V0.7.0) is fully absorbed into PPParty. Its template system will become a PPParty feature. Its OSC receiver is replaced by the MediaPipe receiver.
+- **Face It integration (Studio Track):** For HS/college students who sculpt/model custom character heads, Face It (GPL-3, V2.3.71) or a similar shape-key binding system will let them use their own geometry with the same tracking pipeline.
+- **Object Info nodes (Studio Track):** Students can plug custom-modeled body parts (torso, legs, feet, etc.) into the geonode tree via Object Info nodes, replacing the default procedural capsules. "Runs at 30fps on the rig" = successful modeling project.
+
+**Research document:** `R&D/BODY_TRACKING_RESEARCH.md` — full technical analysis of MediaPipe, Apple Vision, FreeMoCap, e-waste hardware benchmarks, device availability.
 
 ## Project Lead
 David Bayus is NOT a programmer. He's a visual artist and professor who teaches the 3D character pipeline this addon is based on. He'll describe what things should DO and how they should FEEL. You write the code. Ask clarifying questions when behavior is ambiguous — don't guess.
@@ -14,7 +32,7 @@ David Bayus is NOT a programmer. He's a visual artist and professor who teaches 
 - **7 tools max for the Stage.** Radical tool reduction. Constraint enables creativity.
 - **Performance frames the experience.** The kid isn't learning "3D." They're making a puppet show. The technology disappears.
 - **Start with something, never nothing.** Addon opens with a puppet already on screen, ready to connect.
-- **The "Kid Pix moment":** Kid opens addon → scans QR code → puppet moves with their face. Under 30 seconds. Zero instruction needed.
+- **The "Kid Pix moment":** Kid opens addon → clicks one button → webcam turns on → puppet moves with their face and body. Under 30 seconds. Zero instruction needed.
 
 ## Two-Track Architecture
 
@@ -25,16 +43,15 @@ David Bayus is NOT a programmer. He's a visual artist and professor who teaches 
 
 **Character creation:** Preset procedural characters built as geometry nodes templates. The kid picks a type and adjusts parameters (body shape, colors, eye size). No modeling, no sculpting, no UV unwrapping. Customization IS the creative expression.
 
-**The performance:** Phone face tracking (ARKit → Live Link Face → OSC) drives the character in real time. Kid's facial expressions become the puppet's movements. Can be live (projected in classroom) or recorded.
+**The performance:** Laptop webcam (MediaPipe face + body tracking) drives the character in real time. Kid's facial expressions AND body movement become the puppet's performance. Can be live (projected in classroom) or recorded.
 
 **Target buttons (the entire UI):**
 1. Pick Your Puppet (template browser with thumbnails)
 2. Make It Yours (customization sliders — colors, shape, features)
 3. Pick Your Stage (backdrop/environment selection)
-4. Connect My Phone (one-button phone pairing, ideally QR code)
-5. Start the Show (begins live performance mode with EEVEE viewport)
-6. Record My Show (captures the performance to video)
-7. Share My Show (one-click export)
+4. Start the Show (one button: turns on webcam, begins tracking, enters EEVEE performance mode)
+5. Record My Show (captures the performance to video)
+6. Share My Show (one-click export)
 
 ### Track 2: The Studio (High School / CADRE)
 **Who:** Older students with some 3D basics, CADRE Lab students at SJSU.
@@ -44,10 +61,14 @@ David Bayus is NOT a programmer. He's a visual artist and professor who teaches 
 **What this track includes:**
 - Blockout with primitives (manual — the learning IS the doing)
 - "Clean Up My Shape" (voxel remesh + quad remesh via QRemeshify, one button)
-- Auto-UV on entering paint mode (custom heuristic seam placement)
+- Auto-UV on entering paint mode (custom heuristic seam placement via PaWrappa)
 - Texture painting (manual — direct expression)
-- Geometry-nodes-based character setup with face tracking inputs
+- **Custom body parts via Object Info nodes** — students model/sculpt their own torso, legs, feet, etc. and plug them into the geonode rig. "Runs at 30fps" = successful project.
+- **Face It-style shape key binding** — students who sculpt/model custom heads bind ARKit blend shapes to their geometry. Same 52 blend shapes from MediaPipe drive the sculpted face.
+- Normal map baking, retopology — students learn to optimize for real-time
 - "Publish Template" — package a character as a puppet template for younger students
+
+**The assessment:** The puppet rig is the test bench. Student's custom geometry has to run at 30fps or better on the marionette rig in EEVEE. Getting it there is the "yay I did it" moment — proof they mastered the modeling/sculpting pipeline.
 
 **The ecosystem:** Older students build puppet templates. Younger students perform with them. Each semester the library grows. A CADRE student's final project: "build a puppet template used in three elementary classrooms."
 
@@ -56,17 +77,20 @@ A puppet template is a `.blend` file with a standard structure so the addon can 
 
 1. **Main geometry nodes tree** — procedural character exposing Group Inputs for:
    - Customization (body width, leg count, eye size, color palette — designer's choice)
-   - Face tracking inputs (mouth_open, jaw, eye_blink_L/R, head_rotation — standardized)
-2. **`ARKitShapeKeys.Dummy` mesh** — hidden mesh with 13 active ARKit shape key names for FOSCAP
-3. **Scripted expressions** — connecting shape key values to geonode inputs
-4. **Camera rig** — auto-framing camera that adapts to character shape
-5. **Armature with head bone** — target for head rotation from phone
-6. **Metadata** — template name, author, thumbnail, recommended age range
+   - Face tracking inputs (52 ARKit blend shapes — standardized, from MediaPipe or ARKit)
+   - Body tracking inputs (hand/foot/shoulder/hip positions — from MediaPipe)
+2. **Object Info input sockets (Studio Track)** — optional per-body-part mesh overrides so students can plug in custom-modeled geometry instead of default procedural capsules
+3. **Camera rig** — auto-framing camera that adapts to character shape
+4. **Armature with head bone** — target for head rotation from webcam
+5. **Metadata** — template name, author, thumbnail, recommended age range
+
+**V1.0.0 change:** The `ARKitShapeKeys.Dummy` mesh pattern and scripted expressions from the phone era are replaced by direct modifier push from the MediaPipe receiver. No drivers, no dummy mesh — the receiver writes blend shape values directly to GN modifier inputs via `mod[socket_id] = value` + `update_tag()`.
 
 ## Target Blender Version
-- **Green Room:** Blender 5.0+ (confirmed working)
-- **PPParty:** Blender 5.2 Alpha (David installed April 9, 2026 — from builder.blender.org — to access experimental XPBD solver features)
-- Must run in EEVEE real-time (engine name is `BLENDER_EEVEE` in 5.0, NOT `BLENDER_EEVEE_NEXT`)
+- **PPParty:** Blender 5.2+ (David installed 5.2 Alpha on April 9, 2026 — from builder.blender.org)
+- **Green Room:** Retired. V0.7.0 frozen at Blender 5.0 (tagged `v0.7.0-greenroom-final`)
+- Must run in EEVEE real-time (engine name is `BLENDER_EEVEE` in 5.0+)
+- Must run cross-platform: macOS, Windows, Linux
 
 ## Project Structure
 ```
@@ -109,18 +133,26 @@ green_room/
     └── test_template_spec.py
 ```
 
-## What to Build First (Priority Order)
-1. ~~**FOSCAP integration** — fork the OSC receiver, one-button phone connect~~ ✅ V0.1.0
-2. ~~**Starter puppet template** — one working procedural character~~ ✅ V0.1.0 (blob template)
-3. ~~**QR code phone pairing** — streamlined classroom setup~~ ✅ V0.1.0 (zero-dependency QR generator)
-4. **Research Will Anderson's node setups** — study his videos for character design patterns, shape variety, and artistic style in geometry nodes
-5. **Template loader** — load a puppet template, validate it, instantiate it
-6. **Customization UI** — read geonode Group Inputs, expose as kid-friendly sliders
-7. **Performance mode** — EEVEE viewport, camera rig, live face tracking
-8. **Recording + export** — capture performance to video, one-click share
-9. **Template browser** — thumbnails, stage/backdrop selection
-10. **Studio track tools** — quad remesh (QRemeshify), auto-UV, template publishing
-11. **Polish** — startup scene, tool reduction, workspace setup
+## What to Build Next (V1.0.0 Priority Order)
+
+**Pre-V1.0.0 (Phone Era) — COMPLETED:**
+1. ~~FOSCAP integration — fork the OSC receiver, one-button phone connect~~ ✅ V0.1.0
+2. ~~Starter puppet template — one working procedural character~~ ✅ V0.1.0 (blob template)
+3. ~~QR code phone pairing~~ ✅ V0.1.0 (retired with phone pipeline)
+4. ~~Full-body marionette — Verlet physics, analytical IK, capsule body parts~~ ✅ V0.9.6
+5. ~~Blob head absorption — 37 customization sliders, 14 material slots~~ ✅ V0.9.6
+
+**V1.0.0 (MediaPipe Pivot) — CURRENT:**
+1. **MediaPipe sender script** — standalone Python script: webcam → MediaPipe Tasks API → 52 blend shapes + body landmarks → UDP to Blender. Cross-platform (macOS/Windows/Linux).
+2. **MediaPipe receiver in PPParty** — extend/replace OSC receiver to read MediaPipe UDP packets. Direct modifier push (`mod[socket_id] = value` + `update_tag()`).
+3. **Wire body landmarks to Verlet endpoints** — replace face-to-body heuristic mapping with real hand/foot/shoulder/hip positions from MediaPipe.
+4. **Cheek capsules + character refinements** — new reactive body parts driven by available blend shapes (cheekPuff replaced by design solution).
+5. **Object Info node inputs** — per-body-part mesh override sockets so Studio Track students can plug in custom geometry.
+6. **Template system** (from Green Room) — load/swap puppet templates within PPParty
+7. **Recording + bake pipeline** — record MediaPipe data as numpy arrays, replay as keyframes (FreeMoCap pattern)
+8. **Face It integration (Studio Track)** — shape key binding for sculpted/modeled heads
+9. **Performance mode** — one-button "Start the Show" (webcam on, EEVEE viewport, tracking active)
+10. **Polish** — startup scene, tool reduction, workspace setup
 
 ## Existing Work
 
@@ -205,11 +237,14 @@ Quad remesher addon wrapping QuadWild (open-source). Lives in a separate repo/fo
 
 **Note:** While QUADRE is in beta, use Exoside for test meshes when testing PaWrappa to isolate variables.
 
-### Green Room Addon (V0.7.0 — Nose + Latency Optimization)
-Puppet show addon lives in `green_room/`. N-panel tab is "Green Room". Class prefix: `GREENROOM`. Operator prefix: `greenroom.*`. Property prefix: `gr_`.
+### Green Room Addon (RETIRED — V0.7.0 Final, tagged `v0.7.0-greenroom-final`)
+Green Room is retired as a separate addon. Its functionality is absorbed into PPParty V1.0.0+.
 
-**Current state (April 8, 2026): Nose added, QR code removed (pending fix), OSC receiver optimized for travel router deployment, node tree trimmed (30 nodes removed — UV Unwrap overhead eliminated for solid-color materials).**
+Code remains in `green_room/` for reference. N-panel tab was "Green Room". Class prefix: `GREENROOM`. Operator prefix: `greenroom.*`. Property prefix: `gr_`.
 
+**What was absorbed into PPParty:** OSC receiver, phone connect, blob puppet template (all 37 customization sliders), customization UI. **What will become PPParty features:** template loader/spec, puppet picker/browser. **What's retired:** QR code generator, phone-based connection flow.
+
+**Original architecture (phone era, for reference):**
 Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys → drivers → geometry nodes → puppet moves. Head rotation, eye blink, jaw open, smile/frown, pucker, eye look direction all working. Blob puppet has reactive eyebrows and nose.
 
 **What exists now:**
@@ -279,20 +314,24 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 - Latency fix (viewport redraw 0.5s → 0.033s) was already applied in V0.2.0
 
 ### Reference Material (in R&D/ folder)
+- `BODY_TRACKING_RESEARCH.md` — **V1.0.0 research:** MediaPipe, Apple Vision, FreeMoCap analysis, e-waste hardware benchmarks
+- `freemocap-main/` — FreeMoCap codebase (AGPLv3, markerless mocap). Reference for MediaPipe→Blender pipeline and numpy→keyframe baking.
+- `faceit/` — Face It addon source (GPL-3, V2.3.71). Reference for shape key binding on sculpted/modeled heads (Studio Track).
 - `PUPPET_SHOW_DESIGN_REVISION_2026-04-01.md` — Full design document for the puppet show architecture
 - `REAL TIME_PUPPETRY IN BLENDER.md.txt` — Transcript of Will Anderson's Blender Conference 2025 talk
 - `okgo_impulse_purchase-demo-v005.blend` — OK Go demo file (primary reference)
-- `foscap-1.0.0.zip` — FOSCAP addon source (OSC receiver, GPL-3, ~400 lines)
+- `foscap-1.0.0.zip` — FOSCAP addon source (OSC receiver, GPL-3, ~400 lines) — phone era reference
+- `foscap/` — Extracted FOSCAP source
 
 ### Reference Addons (in FOR_PROFITS_TESTCASES/)
 - `AutoUV.zip` — Ministry of Flat wrapper (simple, Japanese)
 - `G_Ready_Source.zip` — Ministry of Flat wrapper (full-featured, 30+ parameters)
 - Both are wrappers around proprietary Windows-only .exe — can't use directly, but studied for approach
 
-### PPPARTY — The People's Puppet Party (V0.9.4 — Material Slots + Mirrored Rotation)
+### PPPARTY — The People's Puppet Party (V1.0.0-alpha.2 — MediaPipe Body Tracking)
 Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY". Class prefix: `PPPARTY`. Operator prefix: `ppparty.*`. Property prefix: `pp_`.
 
-**Current state (April 11, 2026): Face-tracked blob head fully absorbed from Green Room — all 37 customization sliders + 14 material slots (9 head, 5 body) exposed in N-panel. Minkowski capsule body parts with Width, Rotation, Tilt, Depth sliders. Mirrored L/R rotation on feet (Z-axis) and hands. Geometry density optimized for slider responsiveness. Confirmed working on Blender 5.2 Alpha.**
+**Current state (April 16, 2026): MediaPipe webcam tracking replaces phone pipeline. Sender script captures face (52 blend shapes) + body (33 landmarks) via webcam, sends binary UDP. Receiver auto-detects MediaPipe vs Live Link Face. Body landmarks drive puppet via blended attachment deltas — Body Tracking slider lerps between face-heuristic and real body control. Verlet physics preserved. All existing customization (37 head sliders, 14 materials, capsule body parts) unchanged. Blender 5.2 Alpha.**
 
 **Core concept:** A digital marionette where face tracking provides the control input (like a marionette control bar), and Verlet physics makes the puppet body dangle and react. Face tracking drives facial expressions AND body movement. Inspired by traditional puppet rigging — Bunraku threshold toggles, marionette under-actuation, Henson's "maximum expression from minimum controls."
 
@@ -361,7 +400,7 @@ Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY
 - **XPBD solver** (PR #154435): Cosserat Rod support. **Still NOT merged.** Target: 5.3 (Nov 2026).
 - **RNA property refactor (BREAKING CHANGE in 5.2)**: GN modifier properties use real RNA paths. **Green Room's driver paths are broken on 5.2 — PPParty bypasses this via direct modifier push.**
 
-**Relationship to Green Room:** Green Room's blob head is now absorbed into PPParty for Blender 5.2 compatibility. Green Room stays at V0.7.0 for Blender 5.0 (driver-based). If Green Room needs to work on 5.2, it will need the same direct-push approach PPParty uses. ~80% code overlap in `osc_receiver.py` and `phone_connect.py`.
+**Relationship to Green Room:** Green Room is retired (V0.7.0 final, tagged `v0.7.0-greenroom-final`). All functionality absorbed into PPParty. Template system will be rebuilt as a PPParty feature.
 
 **Performance notes (April 11, 2026):**
 - **217 total GN nodes** in the tree — every one re-evaluates on any slider change
@@ -376,47 +415,71 @@ Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY
 - **No momentum/heavy feel yet**: Torso momentum was attempted (V0.7.0) but created sim zone circular dependency. Needs to be implemented at OSC/Python level instead.
 
 **Version history:**
+
+*--- V1.0.0 FORK POINT (April 12, 2026) --- MediaPipe pivot, Green Room retired ---*
+*Safe harbor: `git checkout v0.9.6-phone-era-final` to return to phone-based version*
+
+- V1.0.0-alpha.2 — Body landmarks → Verlet endpoints via blended deltas ✅
+- V1.0.0-alpha.1 ��� MediaPipe sender script + unified receiver (auto-detect MPPT/LLF) ✅
+- V1.0.0-alpha.3 — (NEXT) Cheek capsules + character refinements, Object Info node inputs
+
+*--- Phone Era (V0.1.0–V0.9.6) --- Live Link Face + ARKit ---*
+
+- V0.9.6 — Node groups + tree organization for CADRE 40th demo (tagged `v0.9.6-phone-era-final`)
 - V0.9.4 — Material slots (14 sockets), mirrored foot/hand rotation, geometry density optimization
 - V0.9.3 — Foot Depth + Hand Tilt sliders
 - V0.9.2 — Capsule Width + Rotation on hands, feet, shoulders
-- V0.9.1 — Eyebrow raise → arm spread gesture, arm torso clipping fix (MIDLINE_MARGIN 0.02→0.18, shoulders ±0.35→±0.42)
+- V0.9.1 — Eyebrow raise → arm spread gesture, arm torso clipping fix
 - V0.9.0 — Head Design passthrough (37 blob head sliders auto-exposed in PPParty)
 - V0.8.0 — Minkowski capsule body parts, Body Width slider, Hand/Foot Size
 - V0.5.0 — Contralateral knee lift, arm gestures (smile/frown), headRotZ torso rotation
-- V0.4.1 — Forward hinge bias on legs (`LEG_HINGE_BIAS = -0.12`)
 - V0.4.0 — 3-axis torso sway
-- V0.3.5 — Walking bob, mouth sway, jaw lift, ground friction
 - V0.3.3 — Visual/physics split, chest+pelvis, analytical two-bone IK
 - V0.2.0 — Face-tracked marionette (blob head + body movement from phone)
 - V0.1.0 — Dangling puppet (Verlet physics, GN visual tree, N-panel)
 
-**Next steps:**
-- **Performance** — Instance L/R capsule pairs (halves capsule computation), move constant nodes outside sim zone, explore OSC-level smoothing for "heavy puppet" momentum feel
-- **V1.0.0** — Recording + bake pipeline (keyframes, Alembic, video export)
-- **CADRE demo polish** — David preparing for CADRE 40th anniversary demo (April 11, 2026 afternoon). College students + professors audience, not kids. Material slots enable design-quality presentation.
-- **Summer** — Kid demo (late summer), webcam/hand tracking (MediaPipe), custom iOS face capture app
+**What's done (alpha.1–alpha.2):**
+- **MediaPipe sender** (`mediapipe_sender.py`) — standalone script: webcam → 52 blend shapes + 33 body landmarks → binary UDP (MPPT format). Auto-downloads models. Preview window optional.
+- **Unified receiver** (`core/osc_receiver.py`) — `TrackingReceiver` auto-detects MPPT (webcam) vs Live Link Face (phone). Three-tier probe (RNA → IDProperty → interface default). Backward-compatible.
+- **Start/Stop Webcam** (`operators/start_webcam.py`) — launches sender as subprocess, finds system Python, manages lifecycle. Phone connect still works as fallback.
+- **Body tracking blend** — 4 new Vector sockets (`bt_shl_delta`, `bt_shr_delta`, `bt_hipl_delta`, `bt_hipr_delta`) + `Body Tracking` float (0–1). `_vector_lerp` blends face-heuristic deltas with real body-tracking deltas on attachment points. Verlet physics untouched ��� puppet still dangles, just driven by real body data. Receiver computes wrist-shoulder and ankle-hip deltas, transforms MediaPipe coords to puppet space (x→x, y→-z, z���-y, scaled 1.5×), auto-sets blend to 1.0 when body detected.
+- **Updated UI** — Connect panel: webcam primary, phone fallback. Body Tracking section in main panel with blend slider and status.
+
+**Next steps (V1.0.0):**
+- **Cheek capsules** — reactive Minkowski capsules driven by mouthSmile/mouthFunnel (design replacement for dead cheekPuff blend shape)
+- **Object Info inputs** — Studio Track students plug custom meshes into body part slots
+- **Face It integration** — Studio Track students bind shape keys to sculpted heads
+- **Performance** — instance L/R capsule pairs, move constant nodes outside sim zone
+- **Recording** — numpy array capture of MediaPipe stream, replay as Blender keyframes (FreeMoCap pattern)
 
 ## Dependencies Policy
 - **ZERO paid dependencies.** Non-negotiable.
 - Blender's bundled Python + standard library = always OK
 - numpy/scipy = OK (bundled with Blender)
-- FOSCAP = OK (GPL-3, open source, we fork it)
-- Live Link Face app = OK (free, runs on student's own phone)
+- MediaPipe = OK (Apache 2.0, runs as separate process, NOT inside Blender's Python)
+- OpenCV = OK (BSD, used by MediaPipe sender script)
+- Face It = OK (GPL-3, open source, for Studio Track shape key binding)
 - Any pip-installable pure Python library = OK but document it
 - Anything requiring user to install external software = NOT OK for the final addon
+- **MediaPipe sender runs as a separate Python process**, not inside Blender. Blender addon only receives UDP data — zero new dependencies inside Blender.
+
+**Retired dependencies:**
+- ~~FOSCAP~~ — replaced by MediaPipe receiver
+- ~~Live Link Face app~~ — replaced by webcam tracking
 
 ## Hardware Target
 The addon must run on "Scrap in a Box" hardware — repurposed e-waste machines for low-income K-12 schools:
 - ~8GB RAM
 - Integrated GPU (no discrete graphics card)
-- Linux or Windows
-- No internet required after install (phone connects via local WiFi)
-- Phone/tablet for face tracking (student's own device)
+- Linux, Windows, or macOS
+- No internet required after install
+- **Built-in laptop webcam** for face + body tracking (no phone, no external hardware)
+- MediaPipe Lite model at 480x360 → expect 10-20fps body tracking on this hardware (see R&D/BODY_TRACKING_RESEARCH.md)
 
-### Networking: Travel Router (Standard Deployment)
-School and campus WiFi networks block device-to-device communication (client isolation). Instead of fighting IT at every site, Green Room deploys with its own travel router — a pocket-sized box that creates a private network between the phone and computer.
+### Networking: Travel Router (Legacy — Phone Era)
+The travel router (GL.iNet Slate AX) is **no longer required for the primary webcam-based pipeline**. Everything runs on localhost — webcam data goes from the MediaPipe sender to Blender via UDP on 127.0.0.1. No network needed.
 
-**Standard kit:** GL.iNet Slate AX (GL-AXT1800) — WiFi 6, 5GHz, USB-C powered, ~$120. Chosen for headroom to support multiple students performing simultaneously in the future.
+The router remains available as a fallback if the phone-based pipeline (V0.9.6) is ever needed, or for future multi-device scenarios.
 
 **Setup:** Plug in router → connect computer and phone to its WiFi → done. No internet needed, no IT involvement, works in any room or outdoors with a battery pack.
 
@@ -429,8 +492,9 @@ School and campus WiFi networks block device-to-device communication (client iso
 - PEP 8
 - Type hints where possible
 - Every operator needs a docstring explaining what it does in plain English
-- Blender class naming: `PAWRAPPA_OT_edge_score`, `PAWRAPPA_PT_uv_panel` (UV addon), `GREENROOM_OT_connect_phone` (puppet show addon), `PPPARTY_OT_*` (marionette addon)
-- Prefix all custom properties with `gr_` (Green Room / puppet show), `pw_` (PaWrappa), or `pp_` (PPParty) to avoid namespace collisions
+- Blender class naming: `PAWRAPPA_OT_edge_score`, `PAWRAPPA_PT_uv_panel` (UV addon), `PPPARTY_OT_*` (puppet show / marionette addon)
+- Prefix all custom properties with `pp_` (PPParty) or `pw_` (PaWrappa) to avoid namespace collisions
+- `gr_` prefix is legacy (Green Room, retired) — do not use for new code
 
 ## Communication Style
 David talks like an artist, not an engineer. When explaining what you've built or asking questions:
@@ -442,8 +506,20 @@ David talks like an artist, not an engineer. When explaining what you've built o
 ## Git
 Git is initialized in this folder. Use `git log` to see history. Always commit working states before making changes.
 
+**Git tags:**
+```
+v0.9.6-phone-era-final    — SAFE HARBOR: last phone-based PPParty (CADRE 40th demo)
+v0.7.0-greenroom-final    — Green Room retired, absorbed into PPParty
+```
+
 **Commit history:**
 ```
+--- V1.0.0 MediaPipe Pivot (April 12, 2026) ---
+ee8deba PPParty V1.0.0-alpha.2 — Body landmark wiring to Verlet endpoints
+bd4864a PPParty V1.0.0-alpha.1 — MediaPipe webcam tracking pipeline
+
+--- Phone Era (tagged v0.9.6-phone-era-final) ---
+a965c61 PPParty V0.9.6 — Node groups + tree organization for CADRE 40th demo
 01d736e PPParty V0.9.4 — Reduce geometry density for slider performance
 ac86bfe PPParty V0.9.4 — Fix hand mirroring (remove Y/X negation)
 ed34cf9 PPParty V0.9.4 — Mirrored rotation on feet (Z-axis) + hands
@@ -452,20 +528,17 @@ f49eb7b PPParty V0.9.3 — Foot Depth + Hand Tilt sliders
 1c88712 PPParty V0.9.2 — Capsule Width + Rotation on hands, feet, shoulders
 ... (earlier PPParty V0.5.0–V0.9.1 committed in prior sessions)
 b28aebe V0.6.0 — Reactive eyebrow rotation, mouth lateral shift, calibration UI fix
-6c7d23d V0.5.1 — Fix sideways blink, mirror eyebrow rotation
-2af933c V0.5.0 — Dynamic capsules on ALL body parts (eyes, ears, brows, irises, pupils)
-7aa1056 V0.4.1 — Dynamic Minkowski capsule body, rotation slider, width min=0
-9d3be18 V0.4.0 — Round cube primitives, shade smooth, subdivision surface
-627aec6 V0.3.2 — Lip tube geometry (beveled curve around mouth opening)
-9978eff V0.3.1 — Organized customize panels, independent eyebrow position controls
-6a2dbe7 V0.3.0 — Eyebrows, mouth frown/shift, color controls, position sliders
+2af933c V0.5.0 — Dynamic capsules on ALL body parts
 96cd580 V0.2.0 — Template loader, puppet picker, customization sliders, latency fix
 3a3796c V0.1.0 — Green Room addon + blob puppet template (geometry nodes)
-2fffee1 V0.3.3 — Cleaner UI + a student's testing guide (PaWrappa)
-f8757bf V0.3.2 — Student-ready UI + restored exact V0.3.0 algorithm (PaWrappa)
-0fccc6b V0.3.1 — Face clusterer validated across 5 shape types (PaWrappa)
+
+--- PaWrappa (unchanged, Studio Track tool) ---
+2fffee1 V0.3.3 — Cleaner UI + a student's testing guide
+f8757bf V0.3.2 — Student-ready UI + restored exact V0.3.0 algorithm
+0fccc6b V0.3.1 — Face clusterer validated across 5 shape types
 47a9490 V0.3.0 — PaWrappa rename + curvature-based face clustering
+
+--- Foundation ---
 dc50fb6 Pivot to puppet show architecture — two-track design
-9221dfc Add session notes for continuity between sessions
 1476272 V0.2.0 — Stable baseline with three working shape modes
 ```
