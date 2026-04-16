@@ -336,6 +336,7 @@ class TrackingReceiver:
         self._body_landmarks = None
         self._bt_socket_ids = None   # bt_*_delta → socket identifier
         self._bt_factor_id = None    # Body Tracking float → socket identifier
+        self._vis_socket_ids = None  # vis_arm_l etc → socket identifier
 
     @property
     def is_running(self):
@@ -424,6 +425,7 @@ class TrackingReceiver:
         self._body_landmarks = None
         self._bt_socket_ids = None
         self._bt_factor_id = None
+        self._vis_socket_ids = None
 
         if bpy.app.timers.is_registered(self._apply_updates):
             bpy.app.timers.unregister(self._apply_updates)
@@ -542,6 +544,7 @@ class TrackingReceiver:
             self._rot_socket_ids = {}
             self._bt_socket_ids = {}
             self._bt_factor_id = None
+            self._vis_socket_ids = {}
             self._iface_map = {}
 
             # Gather ALL known face tracking shape names (union of both pipelines)
@@ -565,6 +568,9 @@ class TrackingReceiver:
                     elif item.name == 'Body Tracking':
                         self._bt_factor_id = item.identifier
                         self._iface_map['Body Tracking'] = item
+                    elif item.name.startswith('vis_'):
+                        self._vis_socket_ids[item.name] = item.identifier
+                        self._iface_map[item.name] = item
                 elif item.socket_type == 'NodeSocketVector':
                     if item.name.startswith('bt_'):
                         self._bt_socket_ids[item.name] = item.identifier
@@ -745,8 +751,10 @@ class TrackingReceiver:
     _LM_L_ANKLE = 27
     _LM_R_ANKLE = 28
 
-    # Scale MediaPipe meters → puppet units (tunable)
-    _BT_SCALE = 1.5
+    # Scale MediaPipe meters → puppet units (tunable).
+    # Bumped 1.5 → 2.5 in alpha.5: larger deltas overcome Verlet damping
+    # so hands feel lighter and more responsive to body movement.
+    _BT_SCALE = 2.5
 
     def _push_body_tracking(self, landmarks, mod):
         """Compute body-tracking deltas from MediaPipe pose landmarks.
@@ -858,6 +866,43 @@ class TrackingReceiver:
                     wrote = True
             except Exception:
                 pass
+
+        # --- Per-limb visibility from landmark confidence scores ---
+        # When a limb drops off camera, its visibility → 0, blending that
+        # limb back to face heuristics (idle pose). Ramp: <0.3→0, >0.7→1.
+        def _limb_vis(idx_a, idx_b):
+            a = landmarks.get(idx_a)
+            b = landmarks.get(idx_b)
+            if not a or not b:
+                return 0.0
+            raw = min(a.get('visibility', 0), b.get('visibility', 0))
+            return max(0.0, min(1.0, (raw - 0.3) / 0.4))
+
+        # Puppet left = MP right (selfie flip), puppet right = MP left
+        vis_scores = {
+            'vis_arm_l': _limb_vis(self._LM_R_SHOULDER, self._LM_R_WRIST),
+            'vis_arm_r': _limb_vis(self._LM_L_SHOULDER, self._LM_L_WRIST),
+            'vis_leg_l': _limb_vis(self._LM_R_HIP, self._LM_R_ANKLE),
+            'vis_leg_r': _limb_vis(self._LM_L_HIP, self._LM_L_ANKLE),
+        }
+
+        if self._vis_socket_ids:
+            for name, score in vis_scores.items():
+                sid = self._vis_socket_ids.get(name)
+                if not sid:
+                    continue
+                try:
+                    if self._write_method == 'idprop':
+                        mod[sid] = score
+                    elif self._write_method == 'default':
+                        iface = self._iface_map.get(name)
+                        if iface:
+                            iface.default_value = score
+                    else:
+                        mod[sid] = score
+                    wrote = True
+                except Exception:
+                    pass
 
         # Enable body tracking blend (set factor to 1.0)
         if wrote:

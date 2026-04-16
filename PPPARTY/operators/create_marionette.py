@@ -1399,6 +1399,18 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.min_value = 0.0
     s.max_value = 5.0
 
+    # Per-limb visibility: receiver pushes 0-1 based on landmark confidence.
+    # When a limb drops off camera, its factor → 0, falling back to face
+    # heuristics (idle pose). Default 1.0 = fully visible.
+    for vis_name in ('vis_arm_l', 'vis_arm_r', 'vis_leg_l', 'vis_leg_r'):
+        s = tree.interface.new_socket(
+            vis_name, in_out='INPUT', socket_type='NodeSocketFloat',
+            parent=bt_panel)
+        s.default_value = 1.0
+        s.min_value = 0.0
+        s.max_value = 1.0
+        s.subtype = 'FACTOR'
+
     # Physics (same as V0.1.1)
     ph_panel = tree.interface.new_panel("Physics")
     s = tree.interface.new_socket(
@@ -1466,6 +1478,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.min_value = 0.3
     s.max_value = 0.7
     s.subtype = 'FACTOR'
+
+    s = tree.interface.new_socket(
+        "Head Gap", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=ph_panel)
+    s.default_value = 0.48
+    s.min_value = 0.1
+    s.max_value = 1.2
 
     # ------------------------------------------------------------------
     # CUSTOMIZATION — "Make It Yours" sliders for body shape + colors
@@ -1704,11 +1723,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                        head_rot_vec.inputs['Z'])
 
         # Head position: body_ctr + HEAD_OFFSET (moves with body tracking)
+        # Z component driven by "Head Gap" slider instead of hardcoded 0.48
         head_off_static = add_node(tree, 'ShaderNodeCombineXYZ', -2800, 600,
                                    "Head Off")
         head_off_static.inputs['X'].default_value = HEAD_OFFSET.x
         head_off_static.inputs['Y'].default_value = HEAD_OFFSET.y
-        head_off_static.inputs['Z'].default_value = HEAD_OFFSET.z
+        tree.links.new(group_in.outputs['Head Gap'],
+                       head_off_static.inputs['Z'])
         head_pos_fixed = add_node(tree, 'ShaderNodeVectorMath', -2600, 600,
                                   "Head Pos")
         head_pos_fixed.operation = 'ADD'
@@ -2006,29 +2027,55 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     x_bt = x_mv + 900
     bt_factor = group_in.outputs['Body Tracking']
 
+    # Per-limb effective factors: Body Tracking × limb visibility.
+    # When a limb drops off camera, vis → 0, factor → 0 → face heuristic.
+    arm_l_factor = add_node(tree, 'ShaderNodeMath', x_bt - 200, -150,
+                            "ArmL Vis")
+    arm_l_factor.operation = 'MULTIPLY'
+    tree.links.new(bt_factor, arm_l_factor.inputs[0])
+    tree.links.new(group_in.outputs['vis_arm_l'], arm_l_factor.inputs[1])
+
+    arm_r_factor = add_node(tree, 'ShaderNodeMath', x_bt - 200, -300,
+                            "ArmR Vis")
+    arm_r_factor.operation = 'MULTIPLY'
+    tree.links.new(bt_factor, arm_r_factor.inputs[0])
+    tree.links.new(group_in.outputs['vis_arm_r'], arm_r_factor.inputs[1])
+
+    leg_l_factor = add_node(tree, 'ShaderNodeMath', x_bt - 200, -450,
+                            "LegL Vis")
+    leg_l_factor.operation = 'MULTIPLY'
+    tree.links.new(bt_factor, leg_l_factor.inputs[0])
+    tree.links.new(group_in.outputs['vis_leg_l'], leg_l_factor.inputs[1])
+
+    leg_r_factor = add_node(tree, 'ShaderNodeMath', x_bt - 200, -600,
+                            "LegR Vis")
+    leg_r_factor.operation = 'MULTIPLY'
+    tree.links.new(bt_factor, leg_r_factor.inputs[0])
+    tree.links.new(group_in.outputs['vis_leg_r'], leg_r_factor.inputs[1])
+
     shl_delta_final = _vector_lerp(
         tree, x_bt, -250, "ShL",
         shl_delta.outputs['Vector'],
         group_in.outputs['bt_shl_delta'],
-        bt_factor).outputs['Vector']
+        arm_l_factor.outputs['Value']).outputs['Vector']
 
     shr_delta_final = _vector_lerp(
         tree, x_bt, -400, "ShR",
         shr_delta.outputs['Vector'],
         group_in.outputs['bt_shr_delta'],
-        bt_factor).outputs['Vector']
+        arm_r_factor.outputs['Value']).outputs['Vector']
 
     hipl_delta_final = _vector_lerp(
         tree, x_bt, -550, "HipL",
         hipl_delta.outputs['Vector'],
         group_in.outputs['bt_hipl_delta'],
-        bt_factor).outputs['Vector']
+        leg_l_factor.outputs['Value']).outputs['Vector']
 
     hipr_delta_final = _vector_lerp(
         tree, x_bt, -700, "HipR",
         hipr_delta.outputs['Vector'],
         group_in.outputs['bt_hipr_delta'],
-        bt_factor).outputs['Vector']
+        leg_r_factor.outputs['Value']).outputs['Vector']
 
     _frame_section(tree,
         "BODY TRACKING BLEND — Lerp between face heuristics and"
@@ -2417,11 +2464,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         "HipR", pelvis_pos, hipr_local, hipr_delta_final, -900)
 
     # Head position (includes body sway — moves with torso)
+    # Z from "Head Gap" slider (same as blob head section above)
     head_off = add_node(tree, 'ShaderNodeCombineXYZ', x_att, -250,
                         "Head Off")
     head_off.inputs['X'].default_value = HEAD_OFFSET.x
     head_off.inputs['Y'].default_value = HEAD_OFFSET.y
-    head_off.inputs['Z'].default_value = HEAD_OFFSET.z
+    tree.links.new(group_in.outputs['Head Gap'],
+                   head_off.inputs['Z'])
     head_base_pos = add_node(tree, 'ShaderNodeVectorMath', x_att + 200,
                              -250, "Head Base")
     head_base_pos.operation = 'ADD'
@@ -2997,13 +3046,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         tree, x_mid - 600, -200, "ELB",
         elbow_default.outputs['Vector'],
         group_in.outputs['bt_elbow_l_hint'],
-        bt_factor)
+        arm_l_factor.outputs['Value'])
 
     elbow_r_bend = _vector_lerp(
         tree, x_mid - 600, -550, "ERB",
         elbow_default.outputs['Vector'],
         group_in.outputs['bt_elbow_r_hint'],
-        bt_factor)
+        arm_r_factor.outputs['Value'])
 
     elbow_l = _compute_mid_joint(
         tree, x_mid, -200, "Elbow L",

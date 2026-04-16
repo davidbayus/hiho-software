@@ -80,7 +80,8 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         col3 = box3.column(align=True)
         _draw_slider_group(col3, mod, ["Arm Length", "Leg Length",
                                         "Upper Arm Ratio",
-                                        "Upper Leg Ratio"])
+                                        "Upper Leg Ratio",
+                                        "Head Gap"])
 
         # --- Make It Yours (customization) ---
         layout.separator()

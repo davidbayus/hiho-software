@@ -355,13 +355,19 @@ def run(args):
     fps_display = 0.0
 
     # One Euro Filters for smoothing (adaptive: smooth when still, fast when moving)
+    # alpha.5: defaults raised (1.0→1.5 cutoff, 0.007→0.02 beta) for less
+    # baseline smoothing and faster response to quick gestures.
     face_filters = make_face_filters(
         min_cutoff=args.smooth_min_cutoff,
         beta=args.smooth_beta,
     )
+    body_mc = (args.smooth_body_min_cutoff if args.smooth_body_min_cutoff
+               is not None else args.smooth_min_cutoff * 0.8)
+    body_beta = (args.smooth_body_beta if args.smooth_body_beta
+                 is not None else args.smooth_beta * 2.0)
     body_filters = make_body_filters(
-        min_cutoff=args.smooth_min_cutoff * 0.8,  # body slightly smoother
-        beta=args.smooth_beta * 1.5,               # but snappier on fast moves
+        min_cutoff=body_mc,
+        beta=body_beta,
     )
 
     with FaceLandmarker.create_from_options(face_options) as face_lm, \
@@ -610,12 +616,16 @@ def main():
                         help="Path to face_landmarker.task model file")
     parser.add_argument("--model-pose", type=str, default=None,
                         help="Path to pose_landmarker_lite.task model file")
-    parser.add_argument("--smooth-min-cutoff", type=float, default=1.0,
-                        help="One Euro Filter min cutoff Hz — lower = smoother "
-                             "when still (default: 1.0)")
-    parser.add_argument("--smooth-beta", type=float, default=0.007,
-                        help="One Euro Filter speed coefficient — higher = less "
-                             "lag when moving fast (default: 0.007)")
+    parser.add_argument("--smooth-min-cutoff", type=float, default=1.5,
+                        help="Face One Euro min cutoff Hz — lower = smoother "
+                             "when still (default: 1.5)")
+    parser.add_argument("--smooth-beta", type=float, default=0.02,
+                        help="Face One Euro speed coefficient — higher = less "
+                             "lag when moving fast (default: 0.02)")
+    parser.add_argument("--smooth-body-min-cutoff", type=float, default=None,
+                        help="Body-specific min cutoff Hz (default: face × 0.8)")
+    parser.add_argument("--smooth-body-beta", type=float, default=None,
+                        help="Body-specific speed coefficient (default: face × 2)")
     args = parser.parse_args()
     run(args)
 
