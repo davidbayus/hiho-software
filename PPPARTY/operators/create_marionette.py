@@ -1666,9 +1666,118 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         head_pos_fixed.inputs['Z'].default_value = (BODY_CENTER.z
                                                      + HEAD_OFFSET.z)
 
+        # ---- Cheek capsules (in head-local space, before blob_tf) ----
+        # Build cheeks relative to the blob head, then join them with the
+        # blob geometry BEFORE the head transform. This way the cheeks
+        # automatically move/rotate/scale with the head — no separate
+        # position tracking needed.
+        x_ck = -2800
+        y_ck = -200
+        # Positions and radius in head-local space (before 0.6× scaling)
+        ck_r = CHEEK_RADIUS / BLOB_HEAD_SCALE
+        ck_lx = CHEEK_LOCAL_X / BLOB_HEAD_SCALE
+        ck_ly = CHEEK_LOCAL_Y / BLOB_HEAD_SCALE
+        ck_lz = CHEEK_LOCAL_Z / BLOB_HEAD_SCALE
+
+        cheek_parts = []
+        for side_idx, (side, sign) in enumerate(
+                [("L", -1.0), ("R", 1.0)]):
+            y_row = y_ck - side_idx * 400
+
+            # Sphere geometry (head-local scale)
+            sphere = add_node(tree, 'GeometryNodeMeshUVSphere',
+                              x_ck, y_row, f"Cheek {side}")
+            sphere.inputs['Segments'].default_value = 12
+            sphere.inputs['Rings'].default_value = 8
+            sphere.inputs['Radius'].default_value = ck_r
+
+            # Reactive scale: cheek_size * (1 + smile*puff - funnel*hollow)
+            smile_name = ('mouthSmileLeft' if side == 'L'
+                          else 'mouthSmileRight')
+
+            puff = add_node(tree, 'ShaderNodeMath',
+                            x_ck + 200, y_row - 60, f"Ck {side} Puff")
+            puff.operation = 'MULTIPLY'
+            tree.links.new(group_in.outputs[smile_name], puff.inputs[0])
+            puff.inputs[1].default_value = CHEEK_PUFF_SCALE
+
+            hollow = add_node(tree, 'ShaderNodeMath',
+                              x_ck + 200, y_row - 120,
+                              f"Ck {side} Hollow")
+            hollow.operation = 'MULTIPLY'
+            tree.links.new(group_in.outputs['mouthFunnel'],
+                           hollow.inputs[0])
+            hollow.inputs[1].default_value = -CHEEK_PUFF_SCALE * 0.5
+
+            react = add_node(tree, 'ShaderNodeMath',
+                             x_ck + 400, y_row - 90,
+                             f"Ck {side} React")
+            react.operation = 'ADD'
+            tree.links.new(puff.outputs['Value'], react.inputs[0])
+            tree.links.new(hollow.outputs['Value'], react.inputs[1])
+
+            one_plus = add_node(tree, 'ShaderNodeMath',
+                                x_ck + 600, y_row - 90,
+                                f"Ck {side} 1+R")
+            one_plus.operation = 'ADD'
+            one_plus.inputs[0].default_value = 1.0
+            tree.links.new(react.outputs['Value'], one_plus.inputs[1])
+
+            scale_f = add_node(tree, 'ShaderNodeMath',
+                               x_ck + 800, y_row - 90,
+                               f"Ck {side} Scale")
+            scale_f.operation = 'MULTIPLY'
+            tree.links.new(group_in.outputs['Cheek Size'],
+                           scale_f.inputs[0])
+            tree.links.new(one_plus.outputs['Value'], scale_f.inputs[1])
+
+            scale_vec = add_node(tree, 'ShaderNodeCombineXYZ',
+                                 x_ck + 1000, y_row - 90,
+                                 f"Ck {side} ScaleVec")
+            tree.links.new(scale_f.outputs['Value'],
+                           scale_vec.inputs['X'])
+            tree.links.new(scale_f.outputs['Value'],
+                           scale_vec.inputs['Y'])
+            tree.links.new(scale_f.outputs['Value'],
+                           scale_vec.inputs['Z'])
+
+            # Transform: local position + reactive scale (NO rotation —
+            # blob_tf handles that for the whole head assembly)
+            ck_tf = add_node(tree, 'GeometryNodeTransform',
+                             x_ck + 1200, y_row, f"Ck {side} TF")
+            tree.links.new(sphere.outputs['Mesh'],
+                           ck_tf.inputs['Geometry'])
+            ck_tf.inputs['Translation'].default_value = (
+                sign * ck_lx, ck_ly, ck_lz)
+            tree.links.new(scale_vec.outputs['Vector'],
+                           ck_tf.inputs['Scale'])
+
+            # Shade smooth + material
+            ck_sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
+                             x_ck + 1400, y_row, f"Ck {side} Sm")
+            tree.links.new(ck_tf.outputs['Geometry'],
+                           ck_sm.inputs['Geometry'])
+
+            ck_mt = add_node(tree, 'GeometryNodeSetMaterial',
+                             x_ck + 1600, y_row, f"Ck {side} Mt")
+            tree.links.new(ck_sm.outputs['Geometry'],
+                           ck_mt.inputs['Geometry'])
+            tree.links.new(group_in.outputs['Cheek Material'],
+                           ck_mt.inputs['Material'])
+
+            cheek_parts.append(ck_mt.outputs['Geometry'])
+
+        # Join blob head + cheeks → single assembly for blob_tf
+        head_assembly = add_node(tree, 'GeometryNodeJoinGeometry',
+                                 -2500, 400, "Head + Cheeks")
+        tree.links.new(blob_group.outputs['Geometry'],
+                       head_assembly.inputs['Geometry'])
+        for cp in cheek_parts:
+            tree.links.new(cp, head_assembly.inputs['Geometry'])
+
         blob_tf = add_node(tree, 'GeometryNodeTransform', -2400, 600,
                            "Head TF")
-        tree.links.new(blob_group.outputs['Geometry'],
+        tree.links.new(head_assembly.outputs['Geometry'],
                        blob_tf.inputs['Geometry'])
         tree.links.new(head_pos_fixed.outputs['Vector'],
                        blob_tf.inputs['Translation'])
@@ -1678,139 +1787,6 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
             BLOB_HEAD_SCALE, BLOB_HEAD_SCALE, BLOB_HEAD_SCALE)
 
         blob_geo_out = blob_tf.outputs['Geometry']
-
-    # ------------------------------------------------------------------
-    # CHEEK CAPSULES — reactive puffs on the sides of the face
-    # Driven by mouthSmileLeft/Right (puff) and mouthFunnel (hollow).
-    # Follow head transform so they rotate/translate with the blob head.
-    # ------------------------------------------------------------------
-    cheek_geo_outs = []
-    if blob_tree and head_pos_fixed and head_rot_vec:
-        x_ck = -2800
-        y_ck = -200
-
-        for side_idx, (side, sign) in enumerate(
-                [("L", -1.0), ("R", 1.0)]):
-            y_row = y_ck - side_idx * 600
-
-            # --- Sphere geometry ---
-            sphere = add_node(tree, 'GeometryNodeMeshUVSphere',
-                              x_ck, y_row, f"Cheek {side}")
-            sphere.inputs['Segments'].default_value = 12
-            sphere.inputs['Rings'].default_value = 8
-            sphere.inputs['Radius'].default_value = CHEEK_RADIUS
-
-            # --- Reactive scale: base * cheek_size * (1 + smile * puff) ---
-            # smile_val: L cheek uses mouthSmileLeft, R uses mouthSmileRight
-            smile_name = ('mouthSmileLeft' if side == 'L'
-                          else 'mouthSmileRight')
-
-            # puff = smile * CHEEK_PUFF_SCALE
-            puff = add_node(tree, 'ShaderNodeMath',
-                            x_ck + 200, y_row - 80, f"Ck {side} Puff")
-            puff.operation = 'MULTIPLY'
-            tree.links.new(group_in.outputs[smile_name], puff.inputs[0])
-            puff.inputs[1].default_value = CHEEK_PUFF_SCALE
-
-            # hollow = -funnel * CHEEK_PUFF_SCALE * 0.5 (funnel shrinks)
-            hollow = add_node(tree, 'ShaderNodeMath',
-                              x_ck + 200, y_row - 160,
-                              f"Ck {side} Hollow")
-            hollow.operation = 'MULTIPLY'
-            tree.links.new(group_in.outputs['mouthFunnel'],
-                           hollow.inputs[0])
-            hollow.inputs[1].default_value = -CHEEK_PUFF_SCALE * 0.5
-
-            # react = puff + hollow
-            react = add_node(tree, 'ShaderNodeMath',
-                             x_ck + 400, y_row - 120,
-                             f"Ck {side} React")
-            react.operation = 'ADD'
-            tree.links.new(puff.outputs['Value'], react.inputs[0])
-            tree.links.new(hollow.outputs['Value'], react.inputs[1])
-
-            # scale_factor = cheek_size * (1 + react)
-            one_plus = add_node(tree, 'ShaderNodeMath',
-                                x_ck + 600, y_row - 120,
-                                f"Ck {side} 1+R")
-            one_plus.operation = 'ADD'
-            one_plus.inputs[0].default_value = 1.0
-            tree.links.new(react.outputs['Value'], one_plus.inputs[1])
-
-            scale_f = add_node(tree, 'ShaderNodeMath',
-                               x_ck + 800, y_row - 120,
-                               f"Ck {side} Scale")
-            scale_f.operation = 'MULTIPLY'
-            tree.links.new(group_in.outputs['Cheek Size'],
-                           scale_f.inputs[0])
-            tree.links.new(one_plus.outputs['Value'], scale_f.inputs[1])
-
-            # Scale vector (uniform)
-            scale_vec = add_node(tree, 'ShaderNodeCombineXYZ',
-                                 x_ck + 1000, y_row - 120,
-                                 f"Ck {side} ScaleVec")
-            tree.links.new(scale_f.outputs['Value'],
-                           scale_vec.inputs['X'])
-            tree.links.new(scale_f.outputs['Value'],
-                           scale_vec.inputs['Y'])
-            tree.links.new(scale_f.outputs['Value'],
-                           scale_vec.inputs['Z'])
-
-            # --- Local offset (in head space, before rotation) ---
-            local_pos = add_node(tree, 'ShaderNodeCombineXYZ',
-                                 x_ck + 200, y_row,
-                                 f"Ck {side} Local")
-            local_pos.inputs['X'].default_value = sign * CHEEK_LOCAL_X
-            local_pos.inputs['Y'].default_value = CHEEK_LOCAL_Y
-            local_pos.inputs['Z'].default_value = CHEEK_LOCAL_Z
-
-            # Rotate local offset by head rotation
-            rot_offset = add_node(tree, 'ShaderNodeVectorRotate',
-                                  x_ck + 400, y_row,
-                                  f"Ck {side} RotOff")
-            rot_offset.rotation_type = 'EULER_XYZ'
-            tree.links.new(local_pos.outputs['Vector'],
-                           rot_offset.inputs['Vector'])
-            tree.links.new(head_rot_vec.outputs['Vector'],
-                           rot_offset.inputs['Rotation'])
-
-            # World position = head_pos + rotated local offset
-            world_pos = add_node(tree, 'ShaderNodeVectorMath',
-                                 x_ck + 600, y_row,
-                                 f"Ck {side} WorldPos")
-            world_pos.operation = 'ADD'
-            tree.links.new(head_pos_fixed.outputs['Vector'],
-                           world_pos.inputs[0])
-            tree.links.new(rot_offset.outputs['Vector'],
-                           world_pos.inputs[1])
-
-            # --- Transform: position + rotation + reactive scale ---
-            ck_tf = add_node(tree, 'GeometryNodeTransform',
-                             x_ck + 1200, y_row, f"Ck {side} TF")
-            tree.links.new(sphere.outputs['Mesh'],
-                           ck_tf.inputs['Geometry'])
-            tree.links.new(world_pos.outputs['Vector'],
-                           ck_tf.inputs['Translation'])
-            tree.links.new(head_rot_vec.outputs['Vector'],
-                           ck_tf.inputs['Rotation'])
-            tree.links.new(scale_vec.outputs['Vector'],
-                           ck_tf.inputs['Scale'])
-
-            # Shade smooth
-            ck_sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
-                             x_ck + 1400, y_row, f"Ck {side} Sm")
-            tree.links.new(ck_tf.outputs['Geometry'],
-                           ck_sm.inputs['Geometry'])
-
-            # Material
-            ck_mt = add_node(tree, 'GeometryNodeSetMaterial',
-                             x_ck + 1600, y_row, f"Ck {side} Mt")
-            tree.links.new(ck_sm.outputs['Geometry'],
-                           ck_mt.inputs['Geometry'])
-            tree.links.new(group_in.outputs['Cheek Material'],
-                           ck_mt.inputs['Material'])
-
-            cheek_geo_outs.append(ck_mt.outputs['Geometry'])
 
     _frame_section(tree,
         "THE FACE — Blob head + ARKit face tracking"
@@ -3214,9 +3190,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     if blob_geo_out:
         tree.links.new(blob_geo_out, join.inputs['Geometry'])
 
-    # Add cheek capsules (follow head)
-    for cheek_out in cheek_geo_outs:
-        tree.links.new(cheek_out, join.inputs['Geometry'])
+    # (Cheek capsules are joined with blob head before blob_tf —
+    #  they're already inside blob_geo_out)
 
     # Add body parts
     for geo_socket in parts_geo:
