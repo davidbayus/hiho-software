@@ -2960,14 +2960,16 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tracked_hand_l = add_node(tree, 'ShaderNodeVectorMath', x_dh, -620,
                               "Tracked HL")
     tracked_hand_l.operation = 'ADD'
-    tree.links.new(shl_visual, tracked_hand_l.inputs[0])
+    tree.links.new(shl_visual.outputs['Vector'],
+                   tracked_hand_l.inputs[0])
     tree.links.new(group_in.outputs['bt_shl_delta'],
                    tracked_hand_l.inputs[1])
 
     tracked_hand_r = add_node(tree, 'ShaderNodeVectorMath', x_dh, -780,
                               "Tracked HR")
     tracked_hand_r.operation = 'ADD'
-    tree.links.new(shr_visual, tracked_hand_r.inputs[0])
+    tree.links.new(shr_visual.outputs['Vector'],
+                   tracked_hand_r.inputs[0])
     tree.links.new(group_in.outputs['bt_shr_delta'],
                    tracked_hand_r.inputs[1])
 
