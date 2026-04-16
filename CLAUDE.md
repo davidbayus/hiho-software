@@ -521,7 +521,7 @@ v0.7.0-greenroom-final    — Green Room retired, absorbed into PPParty
 **Commit history:**
 ```
 --- V1.0.0 MediaPipe Pivot (April 12, 2026) ---
-??????? PPParty V1.0.0-alpha.3 — Cheek capsules, One Euro smoothing, Object Info, preview
+7f0287d PPParty V1.0.0-alpha.3 — Cheek capsules, One Euro smoothing, Object Info, preview
 ee8deba PPParty V1.0.0-alpha.2 — Body landmark wiring to Verlet endpoints
 bd4864a PPParty V1.0.0-alpha.1 — MediaPipe webcam tracking pipeline
 
