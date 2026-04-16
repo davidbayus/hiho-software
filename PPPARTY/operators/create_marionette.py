@@ -1840,6 +1840,23 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tree.links.new(body_ctr_static.outputs['Vector'], body_ctr.inputs[0])
     tree.links.new(perf_bt.outputs['Vector'], body_ctr.inputs[1])
 
+    # Rewire blob head to move with body center (head_pos_fixed was static)
+    if blob_tf:
+        head_pos_dyn = add_node(tree, 'ShaderNodeVectorMath',
+                                x_body + 800, 600, "Head Pos Dyn")
+        head_pos_dyn.operation = 'ADD'
+        tree.links.new(body_ctr.outputs['Vector'], head_pos_dyn.inputs[0])
+        head_off_dyn = add_node(tree, 'ShaderNodeCombineXYZ',
+                                x_body + 600, 600, "Head Off Dyn")
+        head_off_dyn.inputs['X'].default_value = HEAD_OFFSET.x
+        head_off_dyn.inputs['Y'].default_value = HEAD_OFFSET.y
+        head_off_dyn.inputs['Z'].default_value = HEAD_OFFSET.z
+        tree.links.new(head_off_dyn.outputs['Vector'],
+                       head_pos_dyn.inputs[1])
+        # This replaces the old head_pos_fixed link on blob_tf
+        tree.links.new(head_pos_dyn.outputs['Vector'],
+                       blob_tf.inputs['Translation'])
+
     # Head rotation → movement: lean (Y) for walking, extend (X) for arms
     x_mv = -1800
 
