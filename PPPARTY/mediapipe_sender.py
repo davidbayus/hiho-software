@@ -195,8 +195,8 @@ def make_face_filters(min_cutoff=1.0, beta=0.007):
 
 
 def make_body_filters(min_cutoff=0.8, beta=0.01):
-    """Create filters for 33 body landmarks × 3 axes (skip visibility)."""
-    return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(99)]
+    """Create filters for 33 body landmarks × 3 axes + 3 body center axes."""
+    return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(102)]
 
 
 # ---------------------------------------------------------------------------
@@ -204,17 +204,16 @@ def make_body_filters(min_cutoff=0.8, beta=0.01):
 # ---------------------------------------------------------------------------
 
 def matrix_to_euler(mat):
-    """Extract pitch, yaw, roll from a 4x4 transformation matrix.
+    """Extract head rotation from a 4x4 transformation matrix.
 
-    Returns (pitch, yaw, roll) in radians matching the axis convention
-    used by PPParty's OSC receiver (FOSCAP style):
-      pitch = rotation around X (nod)
-      yaw   = rotation around Y (shake head)
-      roll  = rotation around Z (tilt head)
+    Returns (headRotX, headRotY, headRotZ) mapped to Blender's
+    coordinate system (Z-up):
+      headRotX = pitch (nod up/down)     — rotation around X
+      headRotY = roll  (tilt side)       — rotation around Y
+      headRotZ = yaw   (turn left/right) — rotation around Z
 
-    MediaPipe's face transformation matrix is row-major.
-    We negate axes to match FOSCAP's convention where the phone
-    sent inverted values.
+    MediaPipe uses Y-up, so its Y-rotation (yaw) maps to Blender's
+    Z-rotation, and its Z-rotation (roll) maps to Blender's Y-rotation.
     """
     # Extract rotation from 4x4 matrix (top-left 3x3)
     r00, r01, r02 = mat[0][0], mat[0][1], mat[0][2]
@@ -226,29 +225,33 @@ def matrix_to_euler(mat):
     singular = sy < 1e-6
 
     if not singular:
-        pitch = math.atan2(r21, r22)   # X
-        yaw = math.atan2(-r20, sy)     # Y
-        roll = math.atan2(r10, r00)    # Z
+        pitch = math.atan2(r21, r22)   # X — nod
+        yaw = math.atan2(-r20, sy)     # Y — turn (MediaPipe Y-up)
+        roll = math.atan2(r10, r00)    # Z — tilt (MediaPipe Z-forward)
     else:
         pitch = math.atan2(-r12, r11)
         yaw = math.atan2(-r20, sy)
         roll = 0.0
 
-    # Negate to match FOSCAP/Live Link Face convention
-    return -yaw, -pitch, -roll
+    # Map MediaPipe (Y-up) → Blender (Z-up):
+    #   pitch → headRotX (nod),  roll → headRotY (tilt),  yaw → headRotZ (turn)
+    return -pitch, -roll, -yaw
 
 
 # ---------------------------------------------------------------------------
 # UDP packet packing
 # ---------------------------------------------------------------------------
 
-def pack_frame(blend_shapes, head_rotation, body_landmarks):
+def pack_frame(blend_shapes, head_rotation, body_landmarks,
+               body_center=None):
     """Pack a single frame into the MPPT binary UDP packet.
 
     Args:
         blend_shapes: list of 52 floats (ARKit blend shape weights)
         head_rotation: tuple of 3 floats (pitch, yaw, roll) or None
         body_landmarks: list of 33 (x, y, z, visibility) tuples, or None
+        body_center: tuple of 3 floats (x, y, z) — image-space hip
+            midpoint centered at (0,0), or None
 
     Returns:
         bytes ready to send via UDP
@@ -267,7 +270,10 @@ def pack_frame(blend_shapes, head_rotation, body_landmarks):
         flat = []
         for lm in body_landmarks:
             flat.extend([lm[0], lm[1], lm[2], lm[3]])
-        body += struct.pack('<132f', *flat)
+        # Append body center (3 floats) after the 132 landmark floats
+        bc = body_center if body_center else (0.0, 0.0, 0.0)
+        flat.extend(bc)
+        body += struct.pack('<135f', *flat)
 
     header = MAGIC + struct.pack('BB', VERSION, flags)
     return header + body
@@ -410,11 +416,25 @@ def run(args):
 
             # Body landmarks (use world landmarks for 3D positions in meters)
             pose_res = pose_result_container[0]
+            body_center = None
             if pose_res and pose_res.pose_world_landmarks:
                 wl = pose_res.pose_world_landmarks[0]  # first person
                 body_landmarks = []
                 for lm in wl:
                     body_landmarks.append((lm.x, lm.y, lm.z, lm.visibility))
+
+                # Body center from image-space landmarks (where body is
+                # in the camera frame). Hip midpoint, centered so (0,0)
+                # = middle of frame.
+                if pose_res.pose_landmarks:
+                    il = pose_res.pose_landmarks[0]  # image-space
+                    lh = il[23]  # left hip
+                    rh = il[24]  # right hip
+                    body_center = (
+                        (lh.x + rh.x) / 2.0 - 0.5,   # x: centered
+                        -((lh.y + rh.y) / 2.0 - 0.5), # y: flip (image down → up)
+                        0.0,                            # z: depth (future)
+                    )
 
             # --- One Euro Filter pass (smooth before sending) ---
             t_now = time.monotonic()
@@ -439,9 +459,18 @@ def run(args):
                     filtered_body.append((fx, fy, fz, lm[3]))  # keep raw visibility
                 body_landmarks = filtered_body
 
+                # Filter body center (indices 99-101 in body_filters)
+                if body_center is not None:
+                    body_center = (
+                        body_filters[99](body_center[0], t_now),
+                        body_filters[100](body_center[1], t_now),
+                        body_filters[101](body_center[2], t_now),
+                    )
+
             # Send UDP packet if we have any data
             if blend_shapes is not None or body_landmarks is not None:
-                packet = pack_frame(blend_shapes, head_rotation, body_landmarks)
+                packet = pack_frame(blend_shapes, head_rotation,
+                                    body_landmarks, body_center)
                 sock.sendto(packet, target)
 
             # FPS counter

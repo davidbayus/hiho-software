@@ -1177,11 +1177,12 @@ def _apply_shoulder_float(tree, x, y, label,
 def _compute_mid_joint(tree, x, y, label,
                        start_socket, end_socket,
                        upper_ratio_out, total_length_out,
-                       bend_axis):
+                       bend_axis, bend_axis_socket=None):
     """Compute elbow/knee position via the PP_TwoBoneIK node group.
 
     Law of cosines + double cross product finds the joint position.
-    bend_axis: (0,-1,0) for elbows (backward), (0,1,0) for knees (forward).
+    bend_axis: default direction tuple (fallback when no socket wired).
+    bend_axis_socket: optional dynamic socket overriding the static default.
     Returns the group node (.outputs['Vector'] = mid-joint position).
     """
     ik_tree = _ensure_ik_group()
@@ -1191,8 +1192,11 @@ def _compute_mid_joint(tree, x, y, label,
     tree.links.new(end_socket, grp.inputs['End'])
     tree.links.new(upper_ratio_out, grp.inputs['Upper Ratio'])
     tree.links.new(total_length_out, grp.inputs['Total Length'])
-    grp.inputs['Bend Axis'].default_value = (
-        bend_axis[0] + 0.001, bend_axis[1], bend_axis[2])
+    if bend_axis_socket is not None:
+        tree.links.new(bend_axis_socket, grp.inputs['Bend Axis'])
+    else:
+        grp.inputs['Bend Axis'].default_value = (
+            bend_axis[0] + 0.001, bend_axis[1], bend_axis[2])
     return grp
 
 
@@ -1381,10 +1385,19 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.subtype = 'FACTOR'
 
     for bt_name in ('bt_shl_delta', 'bt_shr_delta',
-                     'bt_hipl_delta', 'bt_hipr_delta'):
+                     'bt_hipl_delta', 'bt_hipr_delta',
+                     'bt_elbow_l_hint', 'bt_elbow_r_hint',
+                     'bt_body_center'):
         tree.interface.new_socket(
             bt_name, in_out='INPUT', socket_type='NodeSocketVector',
             parent=bt_panel)
+
+    s = tree.interface.new_socket(
+        "Performance Space", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=bt_panel)
+    s.default_value = 1.5
+    s.min_value = 0.0
+    s.max_value = 5.0
 
     # Physics (same as V0.1.1)
     ph_panel = tree.interface.new_panel("Physics")
@@ -1799,10 +1812,33 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # ------------------------------------------------------------------
     x_body = -2000
 
-    body_ctr = add_node(tree, 'ShaderNodeCombineXYZ', x_body, 0, "Body Ctr")
-    body_ctr.inputs['X'].default_value = BODY_CENTER.x
-    body_ctr.inputs['Y'].default_value = BODY_CENTER.y
-    body_ctr.inputs['Z'].default_value = BODY_CENTER.z
+    body_ctr_static = add_node(tree, 'ShaderNodeCombineXYZ', x_body, 0,
+                               "Body Ctr Static")
+    body_ctr_static.inputs['X'].default_value = BODY_CENTER.x
+    body_ctr_static.inputs['Y'].default_value = BODY_CENTER.y
+    body_ctr_static.inputs['Z'].default_value = BODY_CENTER.z
+
+    # Performance space: scale tracked body center by slider, then blend
+    # with Body Tracking factor so it only applies when tracking is active
+    perf_space = add_node(tree, 'ShaderNodeVectorMath', x_body + 200, -100,
+                          "Perf Scale")
+    perf_space.operation = 'SCALE'
+    tree.links.new(group_in.outputs['bt_body_center'], perf_space.inputs[0])
+    tree.links.new(group_in.outputs['Performance Space'],
+                   perf_space.inputs['Scale'])
+
+    perf_bt = add_node(tree, 'ShaderNodeVectorMath', x_body + 400, -100,
+                       "Perf *BT")
+    perf_bt.operation = 'SCALE'
+    tree.links.new(perf_space.outputs['Vector'], perf_bt.inputs[0])
+    tree.links.new(group_in.outputs['Body Tracking'],
+                   perf_bt.inputs['Scale'])
+
+    body_ctr = add_node(tree, 'ShaderNodeVectorMath', x_body + 600, 0,
+                        "Body Ctr")
+    body_ctr.operation = 'ADD'
+    tree.links.new(body_ctr_static.outputs['Vector'], body_ctr.inputs[0])
+    tree.links.new(perf_bt.outputs['Vector'], body_ctr.inputs[1])
 
     # Head rotation → movement: lean (Y) for walking, extend (X) for arms
     x_mv = -1800
@@ -2940,13 +2976,34 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # --- Analytical mid-joints (two-bone IK for elbows/knees) ---
     x_mid = x_limb - 2400  # mid-joint computation nodes to the left
 
+    # Elbow bend hints: blend between default backward bend and
+    # tracked elbow direction from body landmarks
+    elbow_default = add_node(tree, 'ShaderNodeCombineXYZ',
+                             x_mid - 800, -200, "Elbow Default")
+    elbow_default.inputs['X'].default_value = 0.001
+    elbow_default.inputs['Y'].default_value = -1.0
+    elbow_default.inputs['Z'].default_value = 0.0
+
+    elbow_l_bend = _vector_lerp(
+        tree, x_mid - 600, -200, "ELB",
+        elbow_default.outputs['Vector'],
+        group_in.outputs['bt_elbow_l_hint'],
+        bt_factor)
+
+    elbow_r_bend = _vector_lerp(
+        tree, x_mid - 600, -550, "ERB",
+        elbow_default.outputs['Vector'],
+        group_in.outputs['bt_elbow_r_hint'],
+        bt_factor)
+
     elbow_l = _compute_mid_joint(
         tree, x_mid, -200, "Elbow L",
         start_socket=sim_out.outputs['floated_shl'],
         end_socket=sim_out.outputs['pos_hand_l'],
         upper_ratio_out=group_in.outputs['Upper Arm Ratio'],
         total_length_out=group_in.outputs['Arm Length'],
-        bend_axis=(0, -1, 0))  # elbows bend backward
+        bend_axis=(0, -1, 0),
+        bend_axis_socket=elbow_l_bend.outputs['Vector'])
 
     elbow_r = _compute_mid_joint(
         tree, x_mid, -550, "Elbow R",
@@ -2954,7 +3011,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         end_socket=sim_out.outputs['pos_hand_r'],
         upper_ratio_out=group_in.outputs['Upper Arm Ratio'],
         total_length_out=group_in.outputs['Arm Length'],
-        bend_axis=(0, -1, 0))
+        bend_axis=(0, -1, 0),
+        bend_axis_socket=elbow_r_bend.outputs['Vector'])
 
     knee_l = _compute_mid_joint(
         tree, x_mid, -900, "Knee L",

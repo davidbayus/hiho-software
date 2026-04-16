@@ -176,12 +176,12 @@ def decode_mediapipe(raw_bytes):
         # Head rotation (floats 52-54: pitch, yaw, roll)
         result.append(('head_rotation', [data[52], data[53], data[54]]))
 
-    # Body data: 33 landmarks × 4 floats each = 132 floats
+    # Body data: 33 landmarks × 4 floats + 3 body center floats = 135
     if flags & MPPT_FLAG_BODY:
-        body_size = 132 * 4
+        body_size = 135 * 4
         if len(raw_bytes) < offset + body_size:
             return None
-        data = struct.unpack('<132f', raw_bytes[offset:offset + body_size])
+        data = struct.unpack('<135f', raw_bytes[offset:offset + body_size])
         offset += body_size
 
         landmarks = {}
@@ -195,6 +195,9 @@ def decode_mediapipe(raw_bytes):
                 'visibility': data[base + 3],
             }
         result.append(('body_landmarks', landmarks))
+
+        # Body center: image-space hip midpoint (centered at 0,0)
+        result.append(('body_center', (data[132], data[133], data[134])))
 
     return result if result else None
 
@@ -453,6 +456,8 @@ class TrackingReceiver:
                                     self._pending['_head_rotation'] = entry[1]
                                 elif entry[0] == 'body_landmarks':
                                     self._pending['_body_landmarks'] = entry[1]
+                                elif entry[0] == 'body_center':
+                                    self._pending['_body_center'] = entry[1]
             except OSError:
                 break
 
@@ -703,12 +708,36 @@ class TrackingReceiver:
             bt_wrote = self._push_body_tracking(body_lm, mod)
             wrote_any = wrote_any or bt_wrote
 
+        # Push body center position (image-space hip midpoint)
+        body_ctr = updates.get('_body_center')
+        if body_ctr and self._bt_socket_ids:
+            sid = self._bt_socket_ids.get('bt_body_center')
+            if sid:
+                # Map image-space to puppet: x→x, y(up)→z, z(depth)→y
+                puppet_center = [body_ctr[0], body_ctr[2], body_ctr[1]]
+                try:
+                    if self._write_method == 'idprop':
+                        mod[sid] = puppet_center
+                    elif self._write_method == 'rna':
+                        rna = self._rna_map.get('bt_body_center')
+                        if rna:
+                            setattr(mod, rna, puppet_center)
+                    else:
+                        iface = self._iface_map.get('bt_body_center')
+                        if iface:
+                            iface.default_value = puppet_center
+                    wrote_any = True
+                except Exception:
+                    pass
+
         if wrote_any and self._cached_puppet_obj:
             self._cached_puppet_obj.update_tag()
 
     # MediaPipe landmark indices
     _LM_L_SHOULDER = 11
     _LM_R_SHOULDER = 12
+    _LM_L_ELBOW = 13
+    _LM_R_ELBOW = 14
     _LM_L_WRIST = 15
     _LM_R_WRIST = 16
     _LM_L_HIP = 23
@@ -765,6 +794,9 @@ class TrackingReceiver:
             'bt_shl_delta': _delta(self._LM_R_SHOULDER, self._LM_R_WRIST),
             'bt_hipr_delta': _delta(self._LM_L_HIP, self._LM_L_ANKLE),
             'bt_hipl_delta': _delta(self._LM_R_HIP, self._LM_R_ANKLE),
+            # Elbow bend hints: shoulder→elbow direction for IK
+            'bt_elbow_r_hint': _delta(self._LM_L_SHOULDER, self._LM_L_ELBOW),
+            'bt_elbow_l_hint': _delta(self._LM_R_SHOULDER, self._LM_R_ELBOW),
         }
 
         wrote = False
