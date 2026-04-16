@@ -2544,6 +2544,71 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         "ShL", chest_pos, shl_local, shl_delta_final, -450)
     shr_visual, shr_attach = _joint_from_torso(
         "ShR", chest_pos, shr_local, shr_delta_final, -600)
+
+    # --- Shoulder tilt from head rotation ---
+    # When you tilt your head, shoulders naturally follow. headRotY
+    # (roll/tilt) offsets shoulder Z positions in opposite directions.
+    # Future: replace with actual tracked shoulder positions from MP.
+    sh_tilt = add_node(tree, 'ShaderNodeMath', x_att + 600, -450,
+                        "Sh Tilt")
+    sh_tilt.operation = 'MULTIPLY'
+    tree.links.new(group_in.outputs['headRotY'], sh_tilt.inputs[0])
+    sh_tilt.inputs[1].default_value = -0.15
+
+    # Left shoulder: Z += tilt
+    shl_tilt_vec = add_node(tree, 'ShaderNodeCombineXYZ',
+                             x_att + 600, -500, "ShL TiltV")
+    tree.links.new(sh_tilt.outputs['Value'], shl_tilt_vec.inputs['Z'])
+
+    shl_vis_tilted = add_node(tree, 'ShaderNodeVectorMath',
+                               x_att + 800, -450, "ShL VTilt")
+    shl_vis_tilted.operation = 'ADD'
+    tree.links.new(shl_visual.outputs['Vector'],
+                   shl_vis_tilted.inputs[0])
+    tree.links.new(shl_tilt_vec.outputs['Vector'],
+                   shl_vis_tilted.inputs[1])
+
+    shl_att_tilted = add_node(tree, 'ShaderNodeVectorMath',
+                               x_att + 800, -500, "ShL ATilt")
+    shl_att_tilted.operation = 'ADD'
+    tree.links.new(shl_attach.outputs['Vector'],
+                   shl_att_tilted.inputs[0])
+    tree.links.new(shl_tilt_vec.outputs['Vector'],
+                   shl_att_tilted.inputs[1])
+
+    # Right shoulder: Z -= tilt (opposite direction)
+    neg_tilt = add_node(tree, 'ShaderNodeMath', x_att + 600, -650,
+                         "Neg Tilt")
+    neg_tilt.operation = 'MULTIPLY'
+    neg_tilt.inputs[1].default_value = -1.0
+    tree.links.new(sh_tilt.outputs['Value'], neg_tilt.inputs[0])
+
+    shr_tilt_vec = add_node(tree, 'ShaderNodeCombineXYZ',
+                             x_att + 600, -700, "ShR TiltV")
+    tree.links.new(neg_tilt.outputs['Value'], shr_tilt_vec.inputs['Z'])
+
+    shr_vis_tilted = add_node(tree, 'ShaderNodeVectorMath',
+                               x_att + 800, -600, "ShR VTilt")
+    shr_vis_tilted.operation = 'ADD'
+    tree.links.new(shr_visual.outputs['Vector'],
+                   shr_vis_tilted.inputs[0])
+    tree.links.new(shr_tilt_vec.outputs['Vector'],
+                   shr_vis_tilted.inputs[1])
+
+    shr_att_tilted = add_node(tree, 'ShaderNodeVectorMath',
+                               x_att + 800, -700, "ShR ATilt")
+    shr_att_tilted.operation = 'ADD'
+    tree.links.new(shr_attach.outputs['Vector'],
+                   shr_att_tilted.inputs[0])
+    tree.links.new(shr_tilt_vec.outputs['Vector'],
+                   shr_att_tilted.inputs[1])
+
+    # Reassign — all downstream code uses tilted versions
+    shl_visual = shl_vis_tilted
+    shl_attach = shl_att_tilted
+    shr_visual = shr_vis_tilted
+    shr_attach = shr_att_tilted
+
     hipl_visual, hipl_attach = _joint_from_torso(
         "HipL", pelvis_pos, hipl_local, hipl_delta_final, -750)
     hipr_visual, hipr_attach = _joint_from_torso(
