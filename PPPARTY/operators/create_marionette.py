@@ -1623,6 +1623,39 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _s = _snap_nodes(tree)  # snapshot before Section 1
 
     # ------------------------------------------------------------------
+    # Body center: computed early so head + body share the same root
+    # ------------------------------------------------------------------
+    x_body = -2000
+
+    body_ctr_static = add_node(tree, 'ShaderNodeCombineXYZ', x_body, 0,
+                               "Body Ctr Static")
+    body_ctr_static.inputs['X'].default_value = BODY_CENTER.x
+    body_ctr_static.inputs['Y'].default_value = BODY_CENTER.y
+    body_ctr_static.inputs['Z'].default_value = BODY_CENTER.z
+
+    # Performance space: scale tracked body center by slider, then blend
+    # with Body Tracking factor so it only applies when tracking is active
+    perf_space = add_node(tree, 'ShaderNodeVectorMath', x_body + 200, -100,
+                          "Perf Scale")
+    perf_space.operation = 'SCALE'
+    tree.links.new(group_in.outputs['bt_body_center'], perf_space.inputs[0])
+    tree.links.new(group_in.outputs['Performance Space'],
+                   perf_space.inputs['Scale'])
+
+    perf_bt = add_node(tree, 'ShaderNodeVectorMath', x_body + 400, -100,
+                       "Perf *BT")
+    perf_bt.operation = 'SCALE'
+    tree.links.new(perf_space.outputs['Vector'], perf_bt.inputs[0])
+    tree.links.new(group_in.outputs['Body Tracking'],
+                   perf_bt.inputs['Scale'])
+
+    body_ctr = add_node(tree, 'ShaderNodeVectorMath', x_body + 600, 0,
+                        "Body Ctr")
+    body_ctr.operation = 'ADD'
+    tree.links.new(body_ctr_static.outputs['Vector'], body_ctr.inputs[0])
+    tree.links.new(perf_bt.outputs['Vector'], body_ctr.inputs[1])
+
+    # ------------------------------------------------------------------
     # SECTION 1 — Blob Head Group node + face tracking + customization
     # ------------------------------------------------------------------
     # blob_tree was loaded earlier (before interface) to read its sockets.
@@ -1670,14 +1703,19 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         tree.links.new(group_in.outputs['headRotZ'],
                        head_rot_vec.inputs['Z'])
 
-        head_pos_fixed = add_node(tree, 'ShaderNodeCombineXYZ', -2600, 600,
+        # Head position: body_ctr + HEAD_OFFSET (moves with body tracking)
+        head_off_static = add_node(tree, 'ShaderNodeCombineXYZ', -2800, 600,
+                                   "Head Off")
+        head_off_static.inputs['X'].default_value = HEAD_OFFSET.x
+        head_off_static.inputs['Y'].default_value = HEAD_OFFSET.y
+        head_off_static.inputs['Z'].default_value = HEAD_OFFSET.z
+        head_pos_fixed = add_node(tree, 'ShaderNodeVectorMath', -2600, 600,
                                   "Head Pos")
-        head_pos_fixed.inputs['X'].default_value = (BODY_CENTER.x
-                                                     + HEAD_OFFSET.x)
-        head_pos_fixed.inputs['Y'].default_value = (BODY_CENTER.y
-                                                     + HEAD_OFFSET.y)
-        head_pos_fixed.inputs['Z'].default_value = (BODY_CENTER.z
-                                                     + HEAD_OFFSET.z)
+        head_pos_fixed.operation = 'ADD'
+        tree.links.new(body_ctr.outputs['Vector'],
+                       head_pos_fixed.inputs[0])
+        tree.links.new(head_off_static.outputs['Vector'],
+                       head_pos_fixed.inputs[1])
 
         # ---- Cheek capsules (in head-local space, before blob_tf) ----
         # Build cheeks relative to the blob head, then join them with the
@@ -1808,54 +1846,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
-    # SECTION 2 — Body center (fixed) + head rotation → movement
+    # SECTION 2 — Head rotation → movement
     # ------------------------------------------------------------------
-    x_body = -2000
-
-    body_ctr_static = add_node(tree, 'ShaderNodeCombineXYZ', x_body, 0,
-                               "Body Ctr Static")
-    body_ctr_static.inputs['X'].default_value = BODY_CENTER.x
-    body_ctr_static.inputs['Y'].default_value = BODY_CENTER.y
-    body_ctr_static.inputs['Z'].default_value = BODY_CENTER.z
-
-    # Performance space: scale tracked body center by slider, then blend
-    # with Body Tracking factor so it only applies when tracking is active
-    perf_space = add_node(tree, 'ShaderNodeVectorMath', x_body + 200, -100,
-                          "Perf Scale")
-    perf_space.operation = 'SCALE'
-    tree.links.new(group_in.outputs['bt_body_center'], perf_space.inputs[0])
-    tree.links.new(group_in.outputs['Performance Space'],
-                   perf_space.inputs['Scale'])
-
-    perf_bt = add_node(tree, 'ShaderNodeVectorMath', x_body + 400, -100,
-                       "Perf *BT")
-    perf_bt.operation = 'SCALE'
-    tree.links.new(perf_space.outputs['Vector'], perf_bt.inputs[0])
-    tree.links.new(group_in.outputs['Body Tracking'],
-                   perf_bt.inputs['Scale'])
-
-    body_ctr = add_node(tree, 'ShaderNodeVectorMath', x_body + 600, 0,
-                        "Body Ctr")
-    body_ctr.operation = 'ADD'
-    tree.links.new(body_ctr_static.outputs['Vector'], body_ctr.inputs[0])
-    tree.links.new(perf_bt.outputs['Vector'], body_ctr.inputs[1])
-
-    # Rewire blob head to move with body center (head_pos_fixed was static)
-    if blob_tf:
-        head_pos_dyn = add_node(tree, 'ShaderNodeVectorMath',
-                                x_body + 800, 600, "Head Pos Dyn")
-        head_pos_dyn.operation = 'ADD'
-        tree.links.new(body_ctr.outputs['Vector'], head_pos_dyn.inputs[0])
-        head_off_dyn = add_node(tree, 'ShaderNodeCombineXYZ',
-                                x_body + 600, 600, "Head Off Dyn")
-        head_off_dyn.inputs['X'].default_value = HEAD_OFFSET.x
-        head_off_dyn.inputs['Y'].default_value = HEAD_OFFSET.y
-        head_off_dyn.inputs['Z'].default_value = HEAD_OFFSET.z
-        tree.links.new(head_off_dyn.outputs['Vector'],
-                       head_pos_dyn.inputs[1])
-        # This replaces the old head_pos_fixed link on blob_tf
-        tree.links.new(head_pos_dyn.outputs['Vector'],
-                       blob_tf.inputs['Translation'])
 
     # Head rotation → movement: lean (Y) for walking, extend (X) for arms
     x_mv = -1800

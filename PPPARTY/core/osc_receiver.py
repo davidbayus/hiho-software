@@ -787,6 +787,33 @@ class TrackingReceiver:
                 return None
             return _mp_to_puppet(b[0] - a[0], b[1] - a[1], b[2] - a[2])
 
+        def _bend_hint(sh_idx, el_idx, wr_idx):
+            """Perpendicular offset of elbow from shoulder-hand line.
+
+            Returns a direction vector in puppet space pointing from the
+            shoulder-hand line toward the elbow — the true bend direction.
+            Falls back to (0, -1, 0) puppet space when degenerate.
+            """
+            s = _lm_vec(sh_idx)
+            e = _lm_vec(el_idx)
+            h = _lm_vec(wr_idx)
+            if not s or not e or not h:
+                return None
+            # Direction shoulder→hand in MP space
+            dx, dy, dz = h[0]-s[0], h[1]-s[1], h[2]-s[2]
+            dd = dx*dx + dy*dy + dz*dz
+            if dd < 1e-8:
+                return _mp_to_puppet(0.0, 0.0, -1.0)
+            # Project elbow onto shoulder-hand line
+            t = ((e[0]-s[0])*dx + (e[1]-s[1])*dy + (e[2]-s[2])*dz) / dd
+            px, py, pz = s[0]+t*dx, s[1]+t*dy, s[2]+t*dz
+            # Perpendicular offset: elbow - projection
+            bx, by, bz = e[0]-px, e[1]-py, e[2]-pz
+            bl = (bx*bx + by*by + bz*bz) ** 0.5
+            if bl < 1e-6:
+                return _mp_to_puppet(0.0, 0.0, -1.0)
+            return _mp_to_puppet(bx/bl, by/bl, bz/bl)
+
         # Puppet right = MP left (because of selfie flip)
         # Puppet left = MP right
         deltas = {
@@ -794,9 +821,13 @@ class TrackingReceiver:
             'bt_shl_delta': _delta(self._LM_R_SHOULDER, self._LM_R_WRIST),
             'bt_hipr_delta': _delta(self._LM_L_HIP, self._LM_L_ANKLE),
             'bt_hipl_delta': _delta(self._LM_R_HIP, self._LM_R_ANKLE),
-            # Elbow bend hints: shoulder→elbow direction for IK
-            'bt_elbow_r_hint': _delta(self._LM_L_SHOULDER, self._LM_L_ELBOW),
-            'bt_elbow_l_hint': _delta(self._LM_R_SHOULDER, self._LM_R_ELBOW),
+            # Elbow bend hints: perpendicular offset from shoulder-hand line
+            'bt_elbow_r_hint': _bend_hint(self._LM_L_SHOULDER,
+                                          self._LM_L_ELBOW,
+                                          self._LM_L_WRIST),
+            'bt_elbow_l_hint': _bend_hint(self._LM_R_SHOULDER,
+                                          self._LM_R_ELBOW,
+                                          self._LM_R_WRIST),
         }
 
         wrote = False
