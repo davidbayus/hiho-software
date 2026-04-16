@@ -153,6 +153,30 @@ def add_node(tree, node_type, x, y, label=None):
     return node
 
 
+def _vector_lerp(tree, x, y, label, a_out, b_out, factor_out):
+    """Build a Vector lerp: result = a + (b - a) * factor.
+
+    Returns the output socket of the final ADD node.
+    """
+    diff = add_node(tree, 'ShaderNodeVectorMath', x, y, f"{label} B-A")
+    diff.operation = 'SUBTRACT'
+    tree.links.new(b_out, diff.inputs[0])
+    tree.links.new(a_out, diff.inputs[1])
+
+    scaled = add_node(tree, 'ShaderNodeVectorMath', x + 200, y,
+                      f"{label} *BT")
+    scaled.operation = 'SCALE'
+    tree.links.new(diff.outputs['Vector'], scaled.inputs[0])
+    tree.links.new(factor_out, scaled.inputs['Scale'])
+
+    result = add_node(tree, 'ShaderNodeVectorMath', x + 400, y,
+                      f"{label} Lerp")
+    result.operation = 'ADD'
+    tree.links.new(a_out, result.inputs[0])
+    tree.links.new(scaled.outputs['Vector'], result.inputs[1])
+    return result
+
+
 def make_material(name, color):
     """Create a simple solid-color Principled BSDF material."""
     mat = bpy.data.materials.new(name)
@@ -1336,6 +1360,22 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.max_value = 0.95
     s.subtype = 'FACTOR'
 
+    # Body Tracking — blend between face heuristics and real body landmarks
+    bt_panel = tree.interface.new_panel("Body Tracking")
+    s = tree.interface.new_socket(
+        "Body Tracking", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=bt_panel)
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 1.0
+    s.subtype = 'FACTOR'
+
+    for bt_name in ('bt_shl_delta', 'bt_shr_delta',
+                     'bt_hipl_delta', 'bt_hipr_delta'):
+        tree.interface.new_socket(
+            bt_name, in_out='INPUT', socket_type='NodeSocketVector',
+            parent=bt_panel)
+
     # Physics (same as V0.1.1)
     ph_panel = tree.interface.new_panel("Physics")
     s = tree.interface.new_socket(
@@ -1767,6 +1807,46 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
+    # SECTION 2.5 — Body Tracking blend (lerp heuristic ↔ body landmarks)
+    # ------------------------------------------------------------------
+    # When Body Tracking > 0, real body landmark deltas (from MediaPipe
+    # receiver) blend with the face-heuristic deltas computed above.
+    # At 0.0 = pure face heuristics (phone or face-only webcam).
+    # At 1.0 = pure body tracking (webcam with body landmarks).
+    x_bt = x_mv + 900
+    bt_factor = group_in.outputs['Body Tracking']
+
+    shl_delta_final = _vector_lerp(
+        tree, x_bt, -250, "ShL",
+        shl_delta.outputs['Vector'],
+        group_in.outputs['bt_shl_delta'],
+        bt_factor).outputs['Vector']
+
+    shr_delta_final = _vector_lerp(
+        tree, x_bt, -400, "ShR",
+        shr_delta.outputs['Vector'],
+        group_in.outputs['bt_shr_delta'],
+        bt_factor).outputs['Vector']
+
+    hipl_delta_final = _vector_lerp(
+        tree, x_bt, -550, "HipL",
+        hipl_delta.outputs['Vector'],
+        group_in.outputs['bt_hipl_delta'],
+        bt_factor).outputs['Vector']
+
+    hipr_delta_final = _vector_lerp(
+        tree, x_bt, -700, "HipR",
+        hipr_delta.outputs['Vector'],
+        group_in.outputs['bt_hipr_delta'],
+        bt_factor).outputs['Vector']
+
+    _frame_section(tree,
+        "BODY TRACKING BLEND — Lerp between face heuristics and"
+        " real body landmarks from MediaPipe webcam tracking",
+        'control', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
+    # ------------------------------------------------------------------
     # SECTION 3 — Torso positions + sway + walking bob + eyebrow lift
     # ------------------------------------------------------------------
     # Torso shifts with head rotation (sway), rises during stride (bob),
@@ -2095,12 +2175,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # This separation means head tilt moves the HANDS, not the shoulders.
     x_att = -1300
 
-    def _joint_from_torso(name, torso_node, local_offset, delta_node,
+    def _joint_from_torso(name, torso_node, local_offset, delta_out,
                           y_pos):
         """Create visual base + physics attachment from torso position.
 
         Visual = torso + local offset (stays on the body).
-        Attach = visual + contralateral delta (drives physics).
+        Attach = visual + delta (drives physics).
+        delta_out: an output socket (Vector) — can be from a node or lerp.
         """
         loc = add_node(tree, 'ShaderNodeCombineXYZ', x_att, y_pos,
                        f"{name} Loc")
@@ -2118,7 +2199,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                           y_pos, f"{name} Att")
         attach.operation = 'ADD'
         tree.links.new(visual.outputs['Vector'], attach.inputs[0])
-        tree.links.new(delta_node.outputs['Vector'], attach.inputs[1])
+        tree.links.new(delta_out, attach.inputs[1])
 
         return visual, attach
 
@@ -2137,13 +2218,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                   HIP_R_OFFSET.z - PELVIS_OFFSET.z)
 
     shl_visual, shl_attach = _joint_from_torso(
-        "ShL", chest_pos, shl_local, shl_delta, -450)
+        "ShL", chest_pos, shl_local, shl_delta_final, -450)
     shr_visual, shr_attach = _joint_from_torso(
-        "ShR", chest_pos, shr_local, shr_delta, -600)
+        "ShR", chest_pos, shr_local, shr_delta_final, -600)
     hipl_visual, hipl_attach = _joint_from_torso(
-        "HipL", pelvis_pos, hipl_local, hipl_delta, -750)
+        "HipL", pelvis_pos, hipl_local, hipl_delta_final, -750)
     hipr_visual, hipr_attach = _joint_from_torso(
-        "HipR", pelvis_pos, hipr_local, hipr_delta, -900)
+        "HipR", pelvis_pos, hipr_local, hipr_delta_final, -900)
 
     # Head position (includes body sway — moves with torso)
     head_off = add_node(tree, 'ShaderNodeCombineXYZ', x_att, -250,

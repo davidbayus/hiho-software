@@ -50,6 +50,21 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
                                         "Lift Strength", "Step Strength",
                                         "Gesture Strength", "Momentum"])
 
+        # --- Body Tracking blend ---
+        layout.separator()
+        box_bt = layout.box()
+        box_bt.label(text="Body Tracking", icon='OUTLINER_OB_ARMATURE')
+        col_bt = box_bt.column(align=True)
+        _draw_slider_group(col_bt, mod, ["Body Tracking"])
+        col_bt.scale_y = 0.8
+        from .. import receiver
+        if receiver.is_receiving and receiver.body_landmarks:
+            col_bt.label(text="Body landmarks active",
+                         icon='CHECKMARK')
+        else:
+            col_bt.label(text="0 = face heuristics, 1 = body tracking")
+            col_bt.label(text="Auto-set to 1 when body detected")
+
         # --- Physics sliders ---
         layout.separator()
         box2 = layout.box()

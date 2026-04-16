@@ -329,8 +329,10 @@ class TrackingReceiver:
         self._write_method = None      # 'rna', 'idprop', or 'default'
         self._rna_map = {}             # face/rot name → RNA property name
         self._iface_map = {}           # face/rot name → interface item (fallback)
-        # Body landmarks (stored for alpha.2 — Verlet endpoint wiring)
+        # Body tracking — deltas pushed to GN Vector sockets
         self._body_landmarks = None
+        self._bt_socket_ids = None   # bt_*_delta → socket identifier
+        self._bt_factor_id = None    # Body Tracking float → socket identifier
 
     @property
     def is_running(self):
@@ -417,6 +419,8 @@ class TrackingReceiver:
         self._iface_map = {}
         self._source = None
         self._body_landmarks = None
+        self._bt_socket_ids = None
+        self._bt_factor_id = None
 
         if bpy.app.timers.is_registered(self._apply_updates):
             bpy.app.timers.unregister(self._apply_updates)
@@ -531,6 +535,8 @@ class TrackingReceiver:
             self._cached_puppet_obj = puppet
             self._face_socket_ids = {}
             self._rot_socket_ids = {}
+            self._bt_socket_ids = {}
+            self._bt_factor_id = None
             self._iface_map = {}
 
             # Gather ALL known face tracking shape names (union of both pipelines)
@@ -540,15 +546,23 @@ class TrackingReceiver:
                     shape_names.add(name)
 
             for item in mod.node_group.interface.items_tree:
-                if (hasattr(item, 'item_type')
+                if not (hasattr(item, 'item_type')
                         and item.item_type == 'SOCKET'
-                        and item.in_out == 'INPUT'
-                        and item.socket_type == 'NodeSocketFloat'):
+                        and item.in_out == 'INPUT'):
+                    continue
+                if item.socket_type == 'NodeSocketFloat':
                     if item.name in shape_names:
                         self._face_socket_ids[item.name] = item.identifier
                         self._iface_map[item.name] = item
                     elif item.name.startswith('headRot'):
                         self._rot_socket_ids[item.name] = item.identifier
+                        self._iface_map[item.name] = item
+                    elif item.name == 'Body Tracking':
+                        self._bt_factor_id = item.identifier
+                        self._iface_map['Body Tracking'] = item
+                elif item.socket_type == 'NodeSocketVector':
+                    if item.name.startswith('bt_'):
+                        self._bt_socket_ids[item.name] = item.identifier
                         self._iface_map[item.name] = item
 
             # --- Probe: discover correct access method ---
@@ -567,6 +581,8 @@ class TrackingReceiver:
                 all_ids = {}
                 all_ids.update(self._face_socket_ids)
                 all_ids.update(self._rot_socket_ids)
+                if self._bt_factor_id:
+                    all_ids['Body Tracking'] = self._bt_factor_id
 
                 for iface_name, iface_id in all_ids.items():
                     candidates = [
@@ -681,8 +697,116 @@ class TrackingReceiver:
                         except Exception:
                             pass
 
+        # Push body tracking deltas (when landmarks available)
+        body_lm = updates.get('_body_landmarks')
+        if body_lm and self._bt_socket_ids:
+            bt_wrote = self._push_body_tracking(body_lm, mod)
+            wrote_any = wrote_any or bt_wrote
+
         if wrote_any and self._cached_puppet_obj:
             self._cached_puppet_obj.update_tag()
+
+    # MediaPipe landmark indices
+    _LM_L_SHOULDER = 11
+    _LM_R_SHOULDER = 12
+    _LM_L_WRIST = 15
+    _LM_R_WRIST = 16
+    _LM_L_HIP = 23
+    _LM_R_HIP = 24
+    _LM_L_ANKLE = 27
+    _LM_R_ANKLE = 28
+
+    # Scale MediaPipe meters → puppet units (tunable)
+    _BT_SCALE = 1.5
+
+    def _push_body_tracking(self, landmarks, mod):
+        """Compute body-tracking deltas from MediaPipe pose landmarks.
+
+        MediaPipe coordinate system (after horizontal flip in sender):
+          x: subject's left → positive (mirrored: puppet's right)
+          y: down → positive
+          z: toward camera → positive
+
+        Puppet coordinate system:
+          x: right → positive
+          z: up → positive
+          y: forward → positive
+
+        After flip, MediaPipe's left_* = puppet's right side.
+
+        Deltas: wrist - shoulder (arms), ankle - hip (legs).
+        These replace the face-heuristic deltas on attachment points.
+        """
+        def _lm_vec(idx):
+            lm = landmarks.get(idx)
+            if not lm:
+                return None
+            return (lm['x'], lm['y'], lm['z'])
+
+        def _mp_to_puppet(dx, dy, dz):
+            """Transform a MediaPipe delta to puppet space."""
+            return (
+                dx * self._BT_SCALE,       # x stays (flip handled)
+                -dz * self._BT_SCALE,       # depth → puppet forward
+                -dy * self._BT_SCALE,       # up (negate MP down)
+            )
+
+        def _delta(a_idx, b_idx):
+            a = _lm_vec(a_idx)
+            b = _lm_vec(b_idx)
+            if not a or not b:
+                return None
+            return _mp_to_puppet(b[0] - a[0], b[1] - a[1], b[2] - a[2])
+
+        # Puppet right = MP left (because of selfie flip)
+        # Puppet left = MP right
+        deltas = {
+            'bt_shr_delta': _delta(self._LM_L_SHOULDER, self._LM_L_WRIST),
+            'bt_shl_delta': _delta(self._LM_R_SHOULDER, self._LM_R_WRIST),
+            'bt_hipr_delta': _delta(self._LM_L_HIP, self._LM_L_ANKLE),
+            'bt_hipl_delta': _delta(self._LM_R_HIP, self._LM_R_ANKLE),
+        }
+
+        wrote = False
+        for name, vec in deltas.items():
+            if vec is None:
+                continue
+            sid = self._bt_socket_ids.get(name)
+            if not sid:
+                continue
+            try:
+                if self._write_method == 'idprop':
+                    mod[sid] = list(vec)
+                    wrote = True
+                elif self._write_method == 'default':
+                    iface = self._iface_map.get(name)
+                    if iface:
+                        iface.default_value = vec
+                        wrote = True
+                else:
+                    # RNA: try direct IDProperty as fallback for vectors
+                    mod[sid] = list(vec)
+                    wrote = True
+            except Exception:
+                pass
+
+        # Enable body tracking blend (set factor to 1.0)
+        if wrote:
+            try:
+                if self._write_method == 'rna':
+                    rna_name = self._rna_map.get('Body Tracking')
+                    if rna_name:
+                        setattr(mod, rna_name, 1.0)
+                elif self._write_method == 'idprop' and self._bt_factor_id:
+                    mod[self._bt_factor_id] = 1.0
+                elif self._write_method == 'default':
+                    iface = self._iface_map.get('Body Tracking')
+                    if iface:
+                        iface.default_value = 1.0
+            except Exception:
+                pass
+
+        return wrote
 
     @staticmethod
     def _write_probe_log(lines):
