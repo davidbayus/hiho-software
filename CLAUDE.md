@@ -331,7 +331,7 @@ Phone → Live Link Face app → UDP → OSC receiver → dummy mesh shape keys 
 ### PPPARTY — The People's Puppet Party (V1.0.0-alpha.2 — MediaPipe Body Tracking)
 Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY". Class prefix: `PPPARTY`. Operator prefix: `ppparty.*`. Property prefix: `pp_`.
 
-**Current state (April 16, 2026): MediaPipe webcam tracking replaces phone pipeline. Sender script captures face (52 blend shapes) + body (33 landmarks) via webcam, sends binary UDP. Receiver auto-detects MediaPipe vs Live Link Face. Body landmarks drive puppet via blended attachment deltas — Body Tracking slider lerps between face-heuristic and real body control. Verlet physics preserved. All existing customization (37 head sliders, 14 materials, capsule body parts) unchanged. Blender 5.2 Alpha.**
+**Current state (April 16, 2026): V1.0.0-alpha.3. MediaPipe webcam tracking with One Euro adaptive smoothing. Cheek capsules react to smiling. Studio Track Object Info inputs let students plug custom meshes into the rig. Preview window shows skeleton overlay + blend shape bars. 18 face tracking inputs, 15 materials (+ Cheek Material), 3 Object sockets. Body landmarks drive puppet via blended attachment deltas. Verlet physics preserved. Blender 5.2 Alpha.**
 
 **Core concept:** A digital marionette where face tracking provides the control input (like a marionette control bar), and Verlet physics makes the puppet body dangle and react. Face tracking drives facial expressions AND body movement. Inspired by traditional puppet rigging — Bunraku threshold toggles, marionette under-actuation, Henson's "maximum expression from minimum controls."
 
@@ -419,9 +419,10 @@ Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY
 *--- V1.0.0 FORK POINT (April 12, 2026) --- MediaPipe pivot, Green Room retired ---*
 *Safe harbor: `git checkout v0.9.6-phone-era-final` to return to phone-based version*
 
+- V1.0.0-alpha.3 — Cheek capsules, One Euro smoothing, Object Info inputs, preview overlay ✅
 - V1.0.0-alpha.2 — Body landmarks → Verlet endpoints via blended deltas ✅
-- V1.0.0-alpha.1 ��� MediaPipe sender script + unified receiver (auto-detect MPPT/LLF) ✅
-- V1.0.0-alpha.3 — (NEXT) Cheek capsules + character refinements, Object Info node inputs
+- V1.0.0-alpha.1 — MediaPipe sender script + unified receiver (auto-detect MPPT/LLF) ✅
+- V1.0.0-alpha.4 — (NEXT) Template system, recording pipeline, Face It integration
 
 *--- Phone Era (V0.1.0–V0.9.6) --- Live Link Face + ARKit ---*
 
@@ -438,19 +439,24 @@ Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY
 - V0.2.0 — Face-tracked marionette (blob head + body movement from phone)
 - V0.1.0 — Dangling puppet (Verlet physics, GN visual tree, N-panel)
 
-**What's done (alpha.1–alpha.2):**
-- **MediaPipe sender** (`mediapipe_sender.py`) — standalone script: webcam → 52 blend shapes + 33 body landmarks → binary UDP (MPPT format). Auto-downloads models. Preview window optional.
+**What's done (alpha.1–alpha.3):**
+- **MediaPipe sender** (`mediapipe_sender.py`) — standalone script: webcam → 52 blend shapes + 33 body landmarks → binary UDP (MPPT format). Auto-downloads models. Preview window with skeleton overlay and blend shape bars.
+- **One Euro Filter** — adaptive low-pass smoothing on all 52 face blend shapes, 3 head rotation axes, and 33×3 body landmark coordinates. Smooths jitter when still, stays responsive on fast movement. Tunable via `--smooth-min-cutoff` and `--smooth-beta` CLI args.
 - **Unified receiver** (`core/osc_receiver.py`) — `TrackingReceiver` auto-detects MPPT (webcam) vs Live Link Face (phone). Three-tier probe (RNA → IDProperty → interface default). Backward-compatible.
-- **Start/Stop Webcam** (`operators/start_webcam.py`) — launches sender as subprocess, finds system Python, manages lifecycle. Phone connect still works as fallback.
-- **Body tracking blend** — 4 new Vector sockets (`bt_shl_delta`, `bt_shr_delta`, `bt_hipl_delta`, `bt_hipr_delta`) + `Body Tracking` float (0–1). `_vector_lerp` blends face-heuristic deltas with real body-tracking deltas on attachment points. Verlet physics untouched ��� puppet still dangles, just driven by real body data. Receiver computes wrist-shoulder and ankle-hip deltas, transforms MediaPipe coords to puppet space (x→x, y→-z, z���-y, scaled 1.5×), auto-sets blend to 1.0 when body detected.
-- **Updated UI** — Connect panel: webcam primary, phone fallback. Body Tracking section in main panel with blend slider and status.
+- **Start/Stop Webcam** (`operators/start_webcam.py`) — launches sender as subprocess, finds system Python, manages lifecycle. "Show Tracker Window" checkbox toggles preview. Phone connect still works as fallback.
+- **Body tracking blend** — 4 new Vector sockets (`bt_shl_delta`, `bt_shr_delta`, `bt_hipl_delta`, `bt_hipr_delta`) + `Body Tracking` float (0–1). `_vector_lerp` blends face-heuristic deltas with real body-tracking deltas on attachment points. Verlet physics untouched — puppet still dangles, just driven by real body data.
+- **Cheek capsules** — two reactive UV spheres on the sides of the blob head. Driven by `mouthSmileLeft`/`mouthSmileRight` (puff up) and `mouthFunnel` (hollow). Follow head rotation. Cheek Size slider + Cheek Material in N-panel.
+- **Object Info node inputs (Studio Track)** — 3 Object sockets: Custom Torso, Custom Hand, Custom Foot. When a student assigns a custom mesh, a Switch node replaces the default capsule with the student's geometry. Hands and feet auto-mirror for R side. Face count check auto-detects whether a custom object is assigned.
+- **New face inputs** — `mouthSmileLeft`, `cheekSquintLeft`, `cheekSquintRight` added to FACE_INPUTS (18 total, up from 15).
+- **Updated UI** — Connect panel: webcam primary with preview toggle, phone fallback. Body Tracking section, Cheek Size in Make It Yours, Cheek Material in Materials, Studio Track section with Object pickers.
 
 **Next steps (V1.0.0):**
-- **Cheek capsules** — reactive Minkowski capsules driven by mouthSmile/mouthFunnel (design replacement for dead cheekPuff blend shape)
-- **Object Info inputs** — Studio Track students plug custom meshes into body part slots
+- **Template system** (from Green Room) — load/swap puppet templates within PPParty
+- **Recording + bake pipeline** — record MediaPipe data as numpy arrays, replay as Blender keyframes (FreeMoCap pattern)
 - **Face It integration** — Studio Track students bind shape keys to sculpted heads
-- **Performance** — instance L/R capsule pairs, move constant nodes outside sim zone
-- **Recording** — numpy array capture of MediaPipe stream, replay as Blender keyframes (FreeMoCap pattern)
+- **Performance mode** — one-button "Start the Show" (webcam on, EEVEE viewport, tracking active)
+- **Performance optimization** — instance L/R capsule pairs, move constant nodes outside sim zone
+- **Polish** — startup scene, tool reduction, workspace setup
 
 ## Dependencies Policy
 - **ZERO paid dependencies.** Non-negotiable.
@@ -515,6 +521,7 @@ v0.7.0-greenroom-final    — Green Room retired, absorbed into PPParty
 **Commit history:**
 ```
 --- V1.0.0 MediaPipe Pivot (April 12, 2026) ---
+??????? PPParty V1.0.0-alpha.3 — Cheek capsules, One Euro smoothing, Object Info, preview
 ee8deba PPParty V1.0.0-alpha.2 — Body landmark wiring to Verlet endpoints
 bd4864a PPParty V1.0.0-alpha.1 — MediaPipe webcam tracking pipeline
 

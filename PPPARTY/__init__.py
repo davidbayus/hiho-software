@@ -58,6 +58,12 @@ class PPPartySettings(bpy.types.PropertyGroup):
         description="UDP port for tracking data (webcam or phone)",
     )
 
+    pp_show_preview: bpy.props.BoolProperty(
+        name="Show Tracker Window",
+        default=True,
+        description="Show webcam preview with face/body tracking overlay",
+    )
+
 
 classes = (
     PPPartySettings,

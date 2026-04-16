@@ -131,6 +131,75 @@ def ensure_model(filename, url):
 
 
 # ---------------------------------------------------------------------------
+# One Euro Filter — adaptive low-pass for jitter reduction
+# BSD/MIT-compatible algorithm (Casiez et al., 2012)
+# Smooths when still, stays responsive when moving fast.
+# ---------------------------------------------------------------------------
+
+class OneEuroFilter:
+    """One Euro Filter for a single scalar value.
+
+    Parameters:
+        min_cutoff: minimum cutoff frequency (Hz). Lower = more smoothing
+                    when still. Default 1.0 is good for face blend shapes.
+        beta:       speed coefficient. Higher = less lag when moving fast.
+                    Default 0.007 is conservative; 0.01-0.05 for snappier.
+        d_cutoff:   cutoff for derivative filter. Usually leave at 1.0.
+    """
+
+    def __init__(self, min_cutoff=1.0, beta=0.007, d_cutoff=1.0):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self._x_prev = None
+        self._dx_prev = 0.0
+        self._t_prev = None
+
+    @staticmethod
+    def _smoothing_factor(te, cutoff):
+        r = 2.0 * math.pi * cutoff * te
+        return r / (r + 1.0)
+
+    def __call__(self, x, t=None):
+        if t is None:
+            t = time.monotonic()
+
+        if self._t_prev is None:
+            self._x_prev = x
+            self._t_prev = t
+            return x
+
+        te = t - self._t_prev
+        if te <= 0:
+            return self._x_prev
+
+        # Filtered derivative
+        a_d = self._smoothing_factor(te, self.d_cutoff)
+        dx = (x - self._x_prev) / te
+        dx_hat = a_d * dx + (1.0 - a_d) * self._dx_prev
+
+        # Adaptive cutoff
+        cutoff = self.min_cutoff + self.beta * abs(dx_hat)
+        a = self._smoothing_factor(te, cutoff)
+        x_hat = a * x + (1.0 - a) * self._x_prev
+
+        self._x_prev = x_hat
+        self._dx_prev = dx_hat
+        self._t_prev = t
+        return x_hat
+
+
+def make_face_filters(min_cutoff=1.0, beta=0.007):
+    """Create 52 One Euro Filters for face blend shapes + 3 for head rotation."""
+    return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(55)]
+
+
+def make_body_filters(min_cutoff=0.8, beta=0.01):
+    """Create filters for 33 body landmarks × 3 axes (skip visibility)."""
+    return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(99)]
+
+
+# ---------------------------------------------------------------------------
 # Head rotation from face transformation matrix
 # ---------------------------------------------------------------------------
 
@@ -279,6 +348,16 @@ def run(args):
     fps_time = time.time()
     fps_display = 0.0
 
+    # One Euro Filters for smoothing (adaptive: smooth when still, fast when moving)
+    face_filters = make_face_filters(
+        min_cutoff=args.smooth_min_cutoff,
+        beta=args.smooth_beta,
+    )
+    body_filters = make_body_filters(
+        min_cutoff=args.smooth_min_cutoff * 0.8,  # body slightly smoother
+        beta=args.smooth_beta * 1.5,               # but snappier on fast moves
+    )
+
     with FaceLandmarker.create_from_options(face_options) as face_lm, \
          PoseLandmarker.create_from_options(pose_options) as pose_lm:
 
@@ -337,6 +416,29 @@ def run(args):
                 for lm in wl:
                     body_landmarks.append((lm.x, lm.y, lm.z, lm.visibility))
 
+            # --- One Euro Filter pass (smooth before sending) ---
+            t_now = time.monotonic()
+
+            if blend_shapes is not None:
+                # Filter 52 blend shapes + 3 head rotation values
+                for i in range(52):
+                    blend_shapes[i] = face_filters[i](blend_shapes[i], t_now)
+                if head_rotation is not None:
+                    head_rotation = tuple(
+                        face_filters[52 + i](head_rotation[i], t_now)
+                        for i in range(3)
+                    )
+
+            if body_landmarks is not None:
+                filtered_body = []
+                for j, lm in enumerate(body_landmarks):
+                    fi = j * 3  # 3 filters per landmark (x, y, z)
+                    fx = body_filters[fi](lm[0], t_now)
+                    fy = body_filters[fi + 1](lm[1], t_now)
+                    fz = body_filters[fi + 2](lm[2], t_now)
+                    filtered_body.append((fx, fy, fz, lm[3]))  # keep raw visibility
+                body_landmarks = filtered_body
+
             # Send UDP packet if we have any data
             if blend_shapes is not None or body_landmarks is not None:
                 packet = pack_frame(blend_shapes, head_rotation, body_landmarks)
@@ -352,29 +454,89 @@ def run(args):
 
             # Preview window (optional)
             if not args.no_preview:
-                # Draw face landmarks
+                # Draw face mesh (green dots)
                 if face_res and face_res.face_landmarks:
                     for lm in face_res.face_landmarks[0]:
                         x = int(lm.x * frame.shape[1])
                         y = int(lm.y * frame.shape[0])
                         cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
 
-                # Draw pose landmarks
+                # Draw body skeleton (orange dots + cyan lines)
                 if pose_res and pose_res.pose_landmarks:
-                    for lm in pose_res.pose_landmarks[0]:
-                        x = int(lm.x * frame.shape[1])
-                        y = int(lm.y * frame.shape[0])
+                    plm = pose_res.pose_landmarks[0]
+                    h, w = frame.shape[:2]
+
+                    def _px(idx):
+                        return (int(plm[idx].x * w), int(plm[idx].y * h))
+
+                    # Skeleton connections (MediaPipe Pose indices)
+                    _SKELETON = [
+                        # Torso
+                        (11, 12), (11, 23), (12, 24), (23, 24),
+                        # Left arm
+                        (11, 13), (13, 15),
+                        # Right arm
+                        (12, 14), (14, 16),
+                        # Left leg
+                        (23, 25), (25, 27),
+                        # Right leg
+                        (24, 26), (26, 28),
+                        # Shoulders to ears (neck proxy)
+                        (11, 0), (12, 0),
+                    ]
+                    for a, b in _SKELETON:
+                        if a < len(plm) and b < len(plm):
+                            cv2.line(frame, _px(a), _px(b),
+                                     (255, 200, 0), 2)
+
+                    # Draw joint dots on top
+                    for i, lm in enumerate(plm):
+                        x = int(lm.x * w)
+                        y = int(lm.y * h)
                         cv2.circle(frame, (x, y), 4, (0, 128, 255), -1)
 
-                # FPS text
-                cv2.putText(frame, f"FPS: {fps_display:.1f}", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                # Blend shape bars (right side of frame)
+                if blend_shapes is not None:
+                    h, w = frame.shape[:2]
+                    bar_x = w - 160
+                    bar_w = 120
+                    bar_h = 12
+                    _SHOW_SHAPES = [
+                        (25, "jawOpen"),
+                        (45, "smileR"),
+                        (30, "frownL"),
+                        (9, "blinkL"),
+                        (10, "blinkR"),
+                        (21, "wideL"),
+                        (32, "funnel"),
+                        (33, "mouthL"),
+                        (39, "mouthR"),
+                    ]
+                    for row, (idx, label) in enumerate(_SHOW_SHAPES):
+                        val = blend_shapes[idx] if idx < len(blend_shapes) else 0
+                        by = 20 + row * (bar_h + 6)
+                        # Background bar
+                        cv2.rectangle(frame, (bar_x, by),
+                                      (bar_x + bar_w, by + bar_h),
+                                      (40, 40, 40), -1)
+                        # Fill bar
+                        fill = int(val * bar_w)
+                        cv2.rectangle(frame, (bar_x, by),
+                                      (bar_x + fill, by + bar_h),
+                                      (0, 220, 120), -1)
+                        # Label
+                        cv2.putText(frame, f"{label} {val:.2f}",
+                                    (bar_x - 2, by + bar_h - 2),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                                    (200, 200, 200), 1)
 
-                # Status text
+                # FPS + status (bottom left)
+                h = frame.shape[0]
                 face_ok = "FACE" if blend_shapes is not None else "---"
                 body_ok = "BODY" if body_landmarks is not None else "---"
-                cv2.putText(frame, f"{face_ok} | {body_ok}", (10, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                cv2.putText(frame, f"FPS: {fps_display:.1f}  {face_ok} | {body_ok}",
+                            (10, h - 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
                 cv2.imshow("PPParty Tracker", frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -419,6 +581,12 @@ def main():
                         help="Path to face_landmarker.task model file")
     parser.add_argument("--model-pose", type=str, default=None,
                         help="Path to pose_landmarker_lite.task model file")
+    parser.add_argument("--smooth-min-cutoff", type=float, default=1.0,
+                        help="One Euro Filter min cutoff Hz — lower = smoother "
+                             "when still (default: 1.0)")
+    parser.add_argument("--smooth-beta", type=float, default=0.007,
+                        help="One Euro Filter speed coefficient — higher = less "
+                             "lag when moving fast (default: 0.007)")
     args = parser.parse_args()
     run(args)
 

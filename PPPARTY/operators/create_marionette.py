@@ -92,6 +92,13 @@ JOINT_RADIUS = 0.06
 LIMB_TUBE_RADIUS = 0.03
 BLOB_HEAD_SCALE = 0.6  # Blob head scaled to sit on marionette body
 
+# Cheek capsules — reactive puffs that respond to smiling
+CHEEK_RADIUS = 0.06
+CHEEK_LOCAL_X = 0.17     # left/right offset from head center (in world units)
+CHEEK_LOCAL_Y = -0.06    # slightly forward (toward camera/face)
+CHEEK_LOCAL_Z = -0.04    # slightly below head center (cheek level)
+CHEEK_PUFF_SCALE = 0.6   # max additional scale from smile (60% bigger at full smile)
+
 # Joint constraints (Jim Rose marionette research)
 SHOULDER_FLOAT_SLACK = 0.08    # max drift distance (digital 5/8" slack)
 SHOULDER_FLOAT_ENGAGE = 0.5    # fraction of arm length before float engages
@@ -115,10 +122,12 @@ PREV_NAMES = ['prev_hand_l', 'prev_hand_r', 'prev_foot_l', 'prev_foot_r']
 # and the dummy mesh shape keys. If a name isn't on the blob head,
 # the socket still exists (driver writes to it) but nothing reads it.
 FACE_INPUTS = [
-    'jawOpen', 'mouthSmileRight', 'mouthFunnel', 'mouthPucker',
+    'jawOpen', 'mouthSmileLeft', 'mouthSmileRight',
+    'mouthFunnel', 'mouthPucker',
     'mouthFrownLeft', 'mouthFrownRight', 'mouthLeft', 'mouthRight',
     'mouthClose', 'eyeBlinkLeft', 'eyeBlinkRight',
     'eyeWideLeft', 'eyeWideRight', 'eyeLookInLeft', 'eyeLookInRight',
+    'cheekSquintLeft', 'cheekSquintRight',
 ]
 
 # Path to blob head asset
@@ -215,6 +224,7 @@ def create_body_materials():
         'foot': make_material("PP_Foot", (0.6, 0.4, 0.25, 1.0)),
         'joint': make_material("PP_Joint", (0.5, 0.5, 0.5, 1.0)),
         'limb': make_material("PP_Limb", (0.25, 0.25, 0.25, 1.0)),
+        'cheek': make_material("PP_Cheek", (1.0, 0.6, 0.55, 1.0)),
     }
 
 
@@ -1543,6 +1553,32 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         "Limb Material", in_out='INPUT',
         socket_type='NodeSocketMaterial', parent=cust_panel)
 
+    # Cheek capsules — reactive puffs that respond to smiling
+    s = tree.interface.new_socket(
+        "Cheek Size", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 1.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+    s.subtype = 'FACTOR'
+
+    tree.interface.new_socket(
+        "Cheek Material", in_out='INPUT',
+        socket_type='NodeSocketMaterial', parent=cust_panel)
+
+    # Studio Track: Object sockets for custom body parts
+    # When a student assigns their modeled mesh, it replaces the capsule.
+    studio_panel = tree.interface.new_panel("Studio Track")
+    tree.interface.new_socket(
+        "Custom Torso", in_out='INPUT',
+        socket_type='NodeSocketObject', parent=studio_panel)
+    tree.interface.new_socket(
+        "Custom Hand", in_out='INPUT',
+        socket_type='NodeSocketObject', parent=studio_panel)
+    tree.interface.new_socket(
+        "Custom Foot", in_out='INPUT',
+        socket_type='NodeSocketObject', parent=studio_panel)
+
     # ------------------------------------------------------------------
     # HEAD CUSTOMIZATION — passthrough from blob head template
     # Auto-creates sockets matching the blob's customization interface.
@@ -1643,9 +1679,142 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
         blob_geo_out = blob_tf.outputs['Geometry']
 
+    # ------------------------------------------------------------------
+    # CHEEK CAPSULES — reactive puffs on the sides of the face
+    # Driven by mouthSmileLeft/Right (puff) and mouthFunnel (hollow).
+    # Follow head transform so they rotate/translate with the blob head.
+    # ------------------------------------------------------------------
+    cheek_geo_outs = []
+    if blob_tree and head_pos_fixed and head_rot_vec:
+        x_ck = -2800
+        y_ck = -200
+
+        for side_idx, (side, sign) in enumerate(
+                [("L", -1.0), ("R", 1.0)]):
+            y_row = y_ck - side_idx * 600
+
+            # --- Sphere geometry ---
+            sphere = add_node(tree, 'GeometryNodeMeshUVSphere',
+                              x_ck, y_row, f"Cheek {side}")
+            sphere.inputs['Segments'].default_value = 12
+            sphere.inputs['Rings'].default_value = 8
+            sphere.inputs['Radius'].default_value = CHEEK_RADIUS
+
+            # --- Reactive scale: base * cheek_size * (1 + smile * puff) ---
+            # smile_val: L cheek uses mouthSmileLeft, R uses mouthSmileRight
+            smile_name = ('mouthSmileLeft' if side == 'L'
+                          else 'mouthSmileRight')
+
+            # puff = smile * CHEEK_PUFF_SCALE
+            puff = add_node(tree, 'ShaderNodeMath',
+                            x_ck + 200, y_row - 80, f"Ck {side} Puff")
+            puff.operation = 'MULTIPLY'
+            tree.links.new(group_in.outputs[smile_name], puff.inputs[0])
+            puff.inputs[1].default_value = CHEEK_PUFF_SCALE
+
+            # hollow = -funnel * CHEEK_PUFF_SCALE * 0.5 (funnel shrinks)
+            hollow = add_node(tree, 'ShaderNodeMath',
+                              x_ck + 200, y_row - 160,
+                              f"Ck {side} Hollow")
+            hollow.operation = 'MULTIPLY'
+            tree.links.new(group_in.outputs['mouthFunnel'],
+                           hollow.inputs[0])
+            hollow.inputs[1].default_value = -CHEEK_PUFF_SCALE * 0.5
+
+            # react = puff + hollow
+            react = add_node(tree, 'ShaderNodeMath',
+                             x_ck + 400, y_row - 120,
+                             f"Ck {side} React")
+            react.operation = 'ADD'
+            tree.links.new(puff.outputs['Value'], react.inputs[0])
+            tree.links.new(hollow.outputs['Value'], react.inputs[1])
+
+            # scale_factor = cheek_size * (1 + react)
+            one_plus = add_node(tree, 'ShaderNodeMath',
+                                x_ck + 600, y_row - 120,
+                                f"Ck {side} 1+R")
+            one_plus.operation = 'ADD'
+            one_plus.inputs[0].default_value = 1.0
+            tree.links.new(react.outputs['Value'], one_plus.inputs[1])
+
+            scale_f = add_node(tree, 'ShaderNodeMath',
+                               x_ck + 800, y_row - 120,
+                               f"Ck {side} Scale")
+            scale_f.operation = 'MULTIPLY'
+            tree.links.new(group_in.outputs['Cheek Size'],
+                           scale_f.inputs[0])
+            tree.links.new(one_plus.outputs['Value'], scale_f.inputs[1])
+
+            # Scale vector (uniform)
+            scale_vec = add_node(tree, 'ShaderNodeCombineXYZ',
+                                 x_ck + 1000, y_row - 120,
+                                 f"Ck {side} ScaleVec")
+            tree.links.new(scale_f.outputs['Value'],
+                           scale_vec.inputs['X'])
+            tree.links.new(scale_f.outputs['Value'],
+                           scale_vec.inputs['Y'])
+            tree.links.new(scale_f.outputs['Value'],
+                           scale_vec.inputs['Z'])
+
+            # --- Local offset (in head space, before rotation) ---
+            local_pos = add_node(tree, 'ShaderNodeCombineXYZ',
+                                 x_ck + 200, y_row,
+                                 f"Ck {side} Local")
+            local_pos.inputs['X'].default_value = sign * CHEEK_LOCAL_X
+            local_pos.inputs['Y'].default_value = CHEEK_LOCAL_Y
+            local_pos.inputs['Z'].default_value = CHEEK_LOCAL_Z
+
+            # Rotate local offset by head rotation
+            rot_offset = add_node(tree, 'ShaderNodeVectorRotate',
+                                  x_ck + 400, y_row,
+                                  f"Ck {side} RotOff")
+            rot_offset.rotation_type = 'EULER_XYZ'
+            tree.links.new(local_pos.outputs['Vector'],
+                           rot_offset.inputs['Vector'])
+            tree.links.new(head_rot_vec.outputs['Vector'],
+                           rot_offset.inputs['Rotation'])
+
+            # World position = head_pos + rotated local offset
+            world_pos = add_node(tree, 'ShaderNodeVectorMath',
+                                 x_ck + 600, y_row,
+                                 f"Ck {side} WorldPos")
+            world_pos.operation = 'ADD'
+            tree.links.new(head_pos_fixed.outputs['Vector'],
+                           world_pos.inputs[0])
+            tree.links.new(rot_offset.outputs['Vector'],
+                           world_pos.inputs[1])
+
+            # --- Transform: position + rotation + reactive scale ---
+            ck_tf = add_node(tree, 'GeometryNodeTransform',
+                             x_ck + 1200, y_row, f"Ck {side} TF")
+            tree.links.new(sphere.outputs['Mesh'],
+                           ck_tf.inputs['Geometry'])
+            tree.links.new(world_pos.outputs['Vector'],
+                           ck_tf.inputs['Translation'])
+            tree.links.new(head_rot_vec.outputs['Vector'],
+                           ck_tf.inputs['Rotation'])
+            tree.links.new(scale_vec.outputs['Vector'],
+                           ck_tf.inputs['Scale'])
+
+            # Shade smooth
+            ck_sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
+                             x_ck + 1400, y_row, f"Ck {side} Sm")
+            tree.links.new(ck_tf.outputs['Geometry'],
+                           ck_sm.inputs['Geometry'])
+
+            # Material
+            ck_mt = add_node(tree, 'GeometryNodeSetMaterial',
+                             x_ck + 1600, y_row, f"Ck {side} Mt")
+            tree.links.new(ck_sm.outputs['Geometry'],
+                           ck_mt.inputs['Geometry'])
+            tree.links.new(group_in.outputs['Cheek Material'],
+                           ck_mt.inputs['Material'])
+
+            cheek_geo_outs.append(ck_mt.outputs['Geometry'])
+
     _frame_section(tree,
-        "THE FACE — Blob head + ARKit face tracking (15 channels)"
-        " + 37 customization sliders",
+        "THE FACE — Blob head + ARKit face tracking"
+        " + cheek capsules + customization sliders",
         'face', _new_nodes(tree, _s))
     _s = _snap_nodes(tree)
 
@@ -2654,6 +2823,8 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         parts_geo.append(mt.outputs['Geometry'])
 
     # --- Capsule body parts ---
+    # Track indices for Studio Track custom object replacement
+    _idx_chest = len(parts_geo)
     # Chest: dynamic capsule, extends along X (wider torso)
     _add_capsule_part(0, "Chest", CHEST_RADIUS,
                       chest_pos.outputs['Vector'], body_mats['body'],
@@ -2676,6 +2847,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                      mat_socket=group_in.outputs['Joint Material'])
 
     # Hands: capsules with Width + Rotation + Tilt (mirrored L/R)
+    _idx_hand_l = len(parts_geo)
     _add_capsule_part(-620, "Hand L", HAND_RADIUS,
                       sim_out.outputs['pos_hand_l'], body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
@@ -2685,6 +2857,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       tilt_output=group_in.outputs['Hand Tilt'],
                       tilt_axis='X',
                       mat_socket=group_in.outputs['Hand Material'])
+    _idx_hand_r = len(parts_geo)
     _add_capsule_part(-780, "Hand R", HAND_RADIUS,
                       sim_out.outputs['pos_hand_r'], body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
@@ -2696,6 +2869,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       mat_socket=group_in.outputs['Hand Material'])
 
     # Feet: capsules with Width + Rotation on Z (mirrored) + Depth
+    _idx_foot_l = len(parts_geo)
     _add_capsule_part(-940, "Foot L", FOOT_RADIUS,
                       sim_out.outputs['pos_foot_l'], body_mats['foot'],
                       rotation=(0, 0, FOOT_SPLAY_ANGLE),
@@ -2707,6 +2881,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       depth_output=group_in.outputs['Foot Depth'],
                       depth_axis='Y',
                       mat_socket=group_in.outputs['Foot Material'])
+    _idx_foot_r = len(parts_geo)
     _add_capsule_part(-1100, "Foot R", FOOT_RADIUS,
                       sim_out.outputs['pos_foot_r'], body_mats['foot'],
                       rotation=(0, 0, -FOOT_SPLAY_ANGLE),
@@ -2933,7 +3108,104 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
-    # SECTION 10 — Join blob head + body → output
+    # SECTION 10 — Studio Track: Custom body part overrides
+    # When a student assigns a custom object, it replaces the capsule.
+    # Uses Object Info to read geometry, Switch to select default/custom.
+    # ------------------------------------------------------------------
+    x_cust = 3000
+
+    def _custom_object_switch(label, obj_socket_name, pos_socket,
+                              capsule_idx, y_row, mirror_x=False):
+        """Replace a capsule with custom object geometry if assigned.
+
+        Creates Object Info → face count check → Switch → Transform.
+        If the object has faces (student assigned something), use it.
+        Otherwise keep the default capsule.
+        """
+        obj_info = add_node(tree, 'GeometryNodeObjectInfo',
+                            x_cust, y_row, f"Custom {label}")
+        obj_info.transform_space = 'RELATIVE'
+        tree.links.new(group_in.outputs[obj_socket_name],
+                       obj_info.inputs['Object'])
+
+        # Check face count — if > 0, student assigned a mesh
+        domain_sz = add_node(tree, 'GeometryNodeAttributeDomainSize',
+                             x_cust + 200, y_row,
+                             f"Custom {label} Size")
+        tree.links.new(obj_info.outputs['Geometry'],
+                       domain_sz.inputs['Geometry'])
+
+        has_custom = add_node(tree, 'FunctionNodeCompare',
+                              x_cust + 400, y_row,
+                              f"Custom {label} ?")
+        has_custom.data_type = 'INT'
+        has_custom.operation = 'GREATER_THAN'
+        tree.links.new(domain_sz.outputs['Face Count'],
+                       has_custom.inputs[2])
+        has_custom.inputs[3].default_value = 0
+
+        # Transform custom geo to body part position
+        cust_tf = add_node(tree, 'GeometryNodeTransform',
+                           x_cust + 400, y_row - 100,
+                           f"Custom {label} TF")
+        tree.links.new(obj_info.outputs['Geometry'],
+                       cust_tf.inputs['Geometry'])
+        tree.links.new(pos_socket, cust_tf.inputs['Translation'])
+        if mirror_x:
+            cust_tf.inputs['Scale'].default_value = (-1.0, 1.0, 1.0)
+
+        # Shade smooth
+        cust_sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
+                           x_cust + 600, y_row - 100,
+                           f"Custom {label} Sm")
+        tree.links.new(cust_tf.outputs['Geometry'],
+                       cust_sm.inputs['Geometry'])
+
+        # Switch: custom or default capsule
+        switch = add_node(tree, 'GeometryNodeSwitch',
+                          x_cust + 800, y_row,
+                          f"Custom {label} Switch")
+        switch.input_type = 'GEOMETRY'
+        tree.links.new(has_custom.outputs['Result'],
+                       switch.inputs['Switch'])
+        # False = default capsule (index 0), True = custom (index 1)
+        tree.links.new(parts_geo[capsule_idx],
+                       switch.inputs[False])
+        tree.links.new(cust_sm.outputs['Geometry'],
+                       switch.inputs[True])
+
+        # Replace the capsule entry with the switch output
+        parts_geo[capsule_idx] = switch.outputs['Output']
+
+    # Custom Torso → replaces chest capsule
+    _custom_object_switch("Torso", "Custom Torso",
+                          chest_pos.outputs['Vector'],
+                          _idx_chest, 0)
+
+    # Custom Hand → replaces both hand capsules (R is mirrored)
+    _custom_object_switch("Hand L", "Custom Hand",
+                          sim_out.outputs['pos_hand_l'],
+                          _idx_hand_l, -300)
+    _custom_object_switch("Hand R", "Custom Hand",
+                          sim_out.outputs['pos_hand_r'],
+                          _idx_hand_r, -600, mirror_x=True)
+
+    # Custom Foot → replaces both foot capsules (R is mirrored)
+    _custom_object_switch("Foot L", "Custom Foot",
+                          sim_out.outputs['pos_foot_l'],
+                          _idx_foot_l, -900)
+    _custom_object_switch("Foot R", "Custom Foot",
+                          sim_out.outputs['pos_foot_r'],
+                          _idx_foot_r, -1200, mirror_x=True)
+
+    _frame_section(tree,
+        "STUDIO TRACK — Custom body part overrides (Object Info"
+        " nodes). Assign student meshes to replace default capsules.",
+        'output', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
+
+    # ------------------------------------------------------------------
+    # SECTION 11 — Join blob head + body → output
     # ------------------------------------------------------------------
     join = add_node(tree, 'GeometryNodeJoinGeometry', 3400, -1000,
                     "Join All")
@@ -2941,6 +3213,10 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # Add blob head first (drawn on top)
     if blob_geo_out:
         tree.links.new(blob_geo_out, join.inputs['Geometry'])
+
+    # Add cheek capsules (follow head)
+    for cheek_out in cheek_geo_outs:
+        tree.links.new(cheek_out, join.inputs['Geometry'])
 
     # Add body parts
     for geo_socket in parts_geo:
@@ -2979,7 +3255,7 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
 
         # Clean old materials
         for mat_name in ("PP_Body", "PP_Head", "PP_Hand", "PP_Foot",
-                         "PP_Joint", "PP_Limb",
+                         "PP_Joint", "PP_Limb", "PP_Cheek",
                          "PP_HeadSkin", "PP_Mouth", "PP_EyeWhite",
                          "PP_Iris", "PP_Pupil", "PP_Ear", "PP_Brow",
                          "PP_Lip", "PP_Nose"):
@@ -3034,6 +3310,7 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
             'Foot Material': body_mats.get('foot'),
             'Joint Material': body_mats.get('joint'),
             'Limb Material': body_mats.get('limb'),
+            'Cheek Material': body_mats.get('cheek'),
         }
         for item in tree.interface.items_tree:
             if (hasattr(item, 'item_type') and item.item_type == 'SOCKET'

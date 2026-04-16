@@ -127,11 +127,13 @@ class PPPARTY_OT_start_webcam(bpy.types.Operator):
 
         # Launch the MediaPipe sender as a separate process
         python_path = _find_system_python()
+        show_preview = settings.pp_show_preview
         cmd = [
             python_path, sender_script,
             "--port", str(port),
-            "--no-preview",
         ]
+        if not show_preview:
+            cmd.append("--no-preview")
 
         try:
             _sender_process = subprocess.Popen(

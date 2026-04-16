@@ -100,6 +100,9 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         col4.label(text="Shoulders:")
         _draw_slider_group(col4, mod, ["Shoulder Width",
                                         "Shoulder Rotation"])
+        col4.separator()
+        col4.label(text="Cheeks:")
+        _draw_slider_group(col4, mod, ["Cheek Size"])
 
         # --- Materials (body part material slots) ---
         layout.separator()
@@ -109,7 +112,7 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         col_c.label(text="Body:")
         _draw_material_slots(col_c, mod, [
             "Body Part Material", "Hand Material", "Foot Material",
-            "Joint Material", "Limb Material",
+            "Joint Material", "Limb Material", "Cheek Material",
         ])
         col_c.separator()
         col_c.label(text="Head:")
@@ -157,6 +160,17 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         col5.label(text="Lips:")
         _draw_slider_group(col5, mod, ["Lip Thickness"])
 
+        # --- Studio Track (custom body parts) ---
+        layout.separator()
+        box6 = layout.box()
+        box6.label(text="Studio Track", icon='SCULPTMODE_HLT')
+        col6 = box6.column(align=True)
+        col6.scale_y = 0.8
+        col6.label(text="Drag custom meshes here:")
+        _draw_object_slots(col6, mod, [
+            "Custom Torso", "Custom Hand", "Custom Foot",
+        ])
+
         # --- Reset ---
         layout.separator()
         layout.operator("ppparty.reset_physics", icon='FILE_REFRESH')
@@ -184,6 +198,7 @@ class PPPARTY_PT_connect_panel(bpy.types.Panel):
             layout.prop(settings, "pp_port")
 
             # Webcam (primary)
+            layout.prop(settings, "pp_show_preview")
             layout.operator("ppparty.start_webcam", icon='CAMERA_DATA')
 
             # Phone (secondary / fallback)
@@ -325,6 +340,18 @@ def _draw_material_slots(col, mod, names):
                 and item.item_type == 'SOCKET'
                 and item.in_out == 'INPUT'
                 and item.socket_type == 'NodeSocketMaterial'
+                and item.name in names):
+            prop_path = f'["{item.identifier}"]'
+            col.prop(mod, prop_path, text=item.name)
+
+
+def _draw_object_slots(col, mod, names):
+    """Draw Object picker dropdowns for GN modifier Object sockets."""
+    for item in mod.node_group.interface.items_tree:
+        if (hasattr(item, 'item_type')
+                and item.item_type == 'SOCKET'
+                and item.in_out == 'INPUT'
+                and item.socket_type == 'NodeSocketObject'
                 and item.name in names):
             prop_path = f'["{item.identifier}"]'
             col.prop(mod, prop_path, text=item.name)
