@@ -2333,8 +2333,42 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tree.links.new(chest_z_total.outputs['Value'],
                    head_lift.inputs['Z'])
 
+    # --- Mute face-heuristic sway when body tracking is active ---
+    # Face heuristic sway (head lean → torso shift, mouth → lateral, etc.)
+    # conflicts with real body tracking data. Scale sway by (1 - BT factor)
+    # so it fades to zero when body landmarks are driving the puppet.
+    face_factor = add_node(tree, 'ShaderNodeMath', x_sw + 700, 550,
+                           "Face Factor")
+    face_factor.operation = 'SUBTRACT'
+    face_factor.inputs[0].default_value = 1.0
+    tree.links.new(bt_factor, face_factor.inputs[1])
+
+    chest_sway_muted = add_node(tree, 'ShaderNodeVectorMath', x_sw + 700,
+                                400, "Chest Sway×Face")
+    chest_sway_muted.operation = 'SCALE'
+    tree.links.new(chest_sway_vec.outputs['Vector'],
+                   chest_sway_muted.inputs[0])
+    tree.links.new(face_factor.outputs['Value'],
+                   chest_sway_muted.inputs['Scale'])
+
+    pelvis_sway_muted = add_node(tree, 'ShaderNodeVectorMath', x_sw + 700,
+                                 200, "Pelvis Sway×Face")
+    pelvis_sway_muted.operation = 'SCALE'
+    tree.links.new(pelvis_sway_vec.outputs['Vector'],
+                   pelvis_sway_muted.inputs[0])
+    tree.links.new(face_factor.outputs['Value'],
+                   pelvis_sway_muted.inputs['Scale'])
+
+    head_lift_muted = add_node(tree, 'ShaderNodeVectorMath', x_sw + 700,
+                               700, "Head Lift×Face")
+    head_lift_muted.operation = 'SCALE'
+    tree.links.new(head_lift.outputs['Vector'],
+                   head_lift_muted.inputs[0])
+    tree.links.new(face_factor.outputs['Value'],
+                   head_lift_muted.inputs['Scale'])
+
     # --- Torso positions (chest, pelvis, waist) ---
-    # Chest position = body_center + CHEST_OFFSET + sway
+    # Chest position = body_center + CHEST_OFFSET + sway (muted by BT)
     chest_off = add_node(tree, 'ShaderNodeCombineXYZ', x_sw + 800, 400,
                          "Chest Off")
     chest_off.inputs['X'].default_value = CHEST_OFFSET.x
@@ -2350,9 +2384,10 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                          "Chest Pos")
     chest_pos.operation = 'ADD'
     tree.links.new(chest_base.outputs['Vector'], chest_pos.inputs[0])
-    tree.links.new(chest_sway_vec.outputs['Vector'], chest_pos.inputs[1])
+    tree.links.new(chest_sway_muted.outputs['Vector'],
+                   chest_pos.inputs[1])
 
-    # Pelvis position = body_center + PELVIS_OFFSET + sway
+    # Pelvis position = body_center + PELVIS_OFFSET + sway (muted by BT)
     pelvis_off = add_node(tree, 'ShaderNodeCombineXYZ', x_sw + 800, 200,
                           "Pelvis Off")
     pelvis_off.inputs['X'].default_value = PELVIS_OFFSET.x
@@ -2368,7 +2403,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                           "Pelvis Pos")
     pelvis_pos.operation = 'ADD'
     tree.links.new(pelvis_base.outputs['Vector'], pelvis_pos.inputs[0])
-    tree.links.new(pelvis_sway_vec.outputs['Vector'],
+    tree.links.new(pelvis_sway_muted.outputs['Vector'],
                    pelvis_pos.inputs[1])
 
     # Waist joint (dynamic midpoint)
@@ -2384,14 +2419,14 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tree.links.new(waist_pos.outputs['Vector'], waist_mid.inputs[0])
     waist_mid.inputs['Scale'].default_value = 0.5
 
-    # --- Update blob head to follow body sway ---
+    # --- Update blob head to follow body sway (muted by BT) ---
     if blob_tf is not None:
         dynamic_head = add_node(tree, 'ShaderNodeVectorMath', -2300, 600,
                                 "Head Dyn")
         dynamic_head.operation = 'ADD'
         tree.links.new(head_pos_fixed.outputs['Vector'],
                        dynamic_head.inputs[0])
-        tree.links.new(head_lift.outputs['Vector'],
+        tree.links.new(head_lift_muted.outputs['Vector'],
                        dynamic_head.inputs[1])
         # Overwrites static link (Blender replaces old link on same input)
         tree.links.new(dynamic_head.outputs['Vector'],
@@ -2480,7 +2515,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                         "Head Pos")
     head_pos.operation = 'ADD'
     tree.links.new(head_base_pos.outputs['Vector'], head_pos.inputs[0])
-    tree.links.new(head_lift.outputs['Vector'], head_pos.inputs[1])
+    tree.links.new(head_lift_muted.outputs['Vector'], head_pos.inputs[1])
 
     _frame_section(tree,
         "ATTACHMENT POINTS — Where strings meet the body:"
@@ -2916,10 +2951,42 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                      waist_mid.outputs['Vector'], body_mats['joint'],
                      mat_socket=group_in.outputs['Joint Material'])
 
+    # --- Direct hand placement: bypass Verlet when body tracking active ---
+    # When arms are tracked by the webcam, place hands directly at the
+    # tracked position (shoulder + wrist-shoulder delta from MediaPipe).
+    # When not tracked, fall back to Verlet physics output (marionette feel).
+    # Lerp factor = arm visibility × Body Tracking.
+    x_dh = x_part - 400
+    tracked_hand_l = add_node(tree, 'ShaderNodeVectorMath', x_dh, -620,
+                              "Tracked HL")
+    tracked_hand_l.operation = 'ADD'
+    tree.links.new(shl_visual, tracked_hand_l.inputs[0])
+    tree.links.new(group_in.outputs['bt_shl_delta'],
+                   tracked_hand_l.inputs[1])
+
+    tracked_hand_r = add_node(tree, 'ShaderNodeVectorMath', x_dh, -780,
+                              "Tracked HR")
+    tracked_hand_r.operation = 'ADD'
+    tree.links.new(shr_visual, tracked_hand_r.inputs[0])
+    tree.links.new(group_in.outputs['bt_shr_delta'],
+                   tracked_hand_r.inputs[1])
+
+    hand_l_lerp = _vector_lerp(tree, x_dh + 200, -620, "HandL",
+                               sim_out.outputs['pos_hand_l'],
+                               tracked_hand_l.outputs['Vector'],
+                               arm_l_factor.outputs['Value'])
+    hand_l_pos = hand_l_lerp.outputs['Vector']
+
+    hand_r_lerp = _vector_lerp(tree, x_dh + 200, -780, "HandR",
+                               sim_out.outputs['pos_hand_r'],
+                               tracked_hand_r.outputs['Vector'],
+                               arm_r_factor.outputs['Value'])
+    hand_r_pos = hand_r_lerp.outputs['Vector']
+
     # Hands: capsules with Width + Rotation + Tilt (mirrored L/R)
     _idx_hand_l = len(parts_geo)
     _add_capsule_part(-620, "Hand L", HAND_RADIUS,
-                      sim_out.outputs['pos_hand_l'], body_mats['hand'],
+                      hand_l_pos, body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
                       ext_factor=0.3, axis='Z', subdivs=4,
                       uniform_scale_out=group_in.outputs['Hand Size'],
@@ -2929,7 +2996,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       mat_socket=group_in.outputs['Hand Material'])
     _idx_hand_r = len(parts_geo)
     _add_capsule_part(-780, "Hand R", HAND_RADIUS,
-                      sim_out.outputs['pos_hand_r'], body_mats['hand'],
+                      hand_r_pos, body_mats['hand'],
                       width_output=group_in.outputs['Hand Width'],
                       ext_factor=0.3, axis='Z', subdivs=4,
                       uniform_scale_out=group_in.outputs['Hand Size'],
@@ -3057,7 +3124,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     elbow_l = _compute_mid_joint(
         tree, x_mid, -200, "Elbow L",
         start_socket=sim_out.outputs['floated_shl'],
-        end_socket=sim_out.outputs['pos_hand_l'],
+        end_socket=hand_l_pos,
         upper_ratio_out=group_in.outputs['Upper Arm Ratio'],
         total_length_out=group_in.outputs['Arm Length'],
         bend_axis=(0, -1, 0),
@@ -3066,7 +3133,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     elbow_r = _compute_mid_joint(
         tree, x_mid, -550, "Elbow R",
         start_socket=sim_out.outputs['floated_shr'],
-        end_socket=sim_out.outputs['pos_hand_r'],
+        end_socket=hand_r_pos,
         upper_ratio_out=group_in.outputs['Upper Arm Ratio'],
         total_length_out=group_in.outputs['Arm Length'],
         bend_axis=(0, -1, 0),
@@ -3096,7 +3163,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
               mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-170, "FArm L",
               elbow_l.outputs['Vector'],
-              sim_out.outputs['pos_hand_l'], body_mats['limb'],
+              hand_l_pos, body_mats['limb'],
               mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-240, "UArm R",
               sim_out.outputs['floated_shr'],
@@ -3104,7 +3171,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
               mat_socket=group_in.outputs['Limb Material'])
     _add_limb(-310, "FArm R",
               elbow_r.outputs['Vector'],
-              sim_out.outputs['pos_hand_r'], body_mats['limb'],
+              hand_r_pos, body_mats['limb'],
               mat_socket=group_in.outputs['Limb Material'])
 
     # Legs (hips → knee → foot)
@@ -3276,10 +3343,10 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     # Custom Hand → replaces both hand capsules (R is mirrored)
     _custom_object_switch("Hand L", "Custom Hand",
-                          sim_out.outputs['pos_hand_l'],
+                          hand_l_pos,
                           _idx_hand_l, -300)
     _custom_object_switch("Hand R", "Custom Hand",
-                          sim_out.outputs['pos_hand_r'],
+                          hand_r_pos,
                           _idx_hand_r, -600, mirror_x=True)
 
     # Custom Foot → replaces both foot capsules (R is mirrored)
