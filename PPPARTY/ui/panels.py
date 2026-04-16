@@ -148,9 +148,9 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
 
 
 class PPPARTY_PT_connect_panel(bpy.types.Panel):
-    """Phone connection panel — connect your phone for face tracking."""
+    """Tracking connection panel — webcam or phone."""
 
-    bl_label = "Connect Phone"
+    bl_label = "Connect"
     bl_idname = "PPPARTY_PT_connect_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -167,42 +167,60 @@ class PPPARTY_PT_connect_panel(bpy.types.Panel):
         if not receiver.is_running:
             # --- Disconnected ---
             layout.prop(settings, "pp_port")
-            layout.operator("ppparty.connect_phone", icon='PLAY')
 
-            box = layout.box()
-            box.label(text="Setup:", icon='QUESTION')
-            col = box.column(align=True)
+            # Webcam (primary)
+            layout.operator("ppparty.start_webcam", icon='CAMERA_DATA')
+
+            # Phone (secondary / fallback)
+            box_phone = layout.box()
+            box_phone.label(text="Or use your phone:", icon='PHONE')
+            box_phone.operator("ppparty.connect_phone", icon='PLAY')
+            col = box_phone.column(align=True)
             col.scale_y = 0.8
-            col.label(text="1. Create a marionette first")
-            col.label(text="2. Connect phone + computer")
-            col.label(text="   to the same WiFi")
-            col.label(text="3. Open Live Link Face app")
-            col.label(text="4. Enter the IP shown here")
-            col.label(text="5. Hit Connect above")
+            col.label(text="1. Same WiFi as computer")
+            col.label(text="2. Open Live Link Face app")
+            col.label(text="3. Enter IP shown after connect")
 
         elif not receiver.is_receiving:
             # --- Waiting for data ---
-            ip = get_local_ip() or "unknown"
-            layout.label(text=f"Listening on {ip}:{receiver.port}",
-                         icon='SORTTIME')
-            layout.label(text="Waiting for phone...")
-            layout.separator()
+            source = receiver.source
+            if source == 'mediapipe':
+                layout.label(text="Starting webcam...", icon='SORTTIME')
+            else:
+                ip = get_local_ip() or "unknown"
+                layout.label(text=f"Listening on {ip}:{receiver.port}",
+                             icon='SORTTIME')
+                layout.label(text="Waiting for phone...")
 
-            box = layout.box()
-            box.label(text="On your phone:", icon='PHONE')
-            col = box.column(align=True)
-            col.scale_y = 0.8
-            col.label(text=f"1. Open Live Link Face")
-            col.label(text=f"2. Set target IP to: {ip}")
-            col.label(text=f"3. Set port to: {receiver.port}")
-            col.label(text=f"4. Hit Stream")
+                box = layout.box()
+                box.label(text="On your phone:", icon='PHONE')
+                col = box.column(align=True)
+                col.scale_y = 0.8
+                col.label(text=f"1. Open Live Link Face")
+                col.label(text=f"2. Set target IP to: {ip}")
+                col.label(text=f"3. Set port to: {receiver.port}")
+                col.label(text=f"4. Hit Stream")
 
             layout.separator()
-            layout.operator("ppparty.disconnect_phone", icon='PAUSE')
+            if source == 'mediapipe':
+                layout.operator("ppparty.stop_webcam", icon='PAUSE')
+            else:
+                layout.operator("ppparty.disconnect_phone", icon='PAUSE')
 
         else:
-            # --- Receiving face data ---
-            layout.label(text="Face tracking active!", icon='CHECKMARK')
+            # --- Receiving tracking data ---
+            source = receiver.source or 'unknown'
+            if source == 'mediapipe':
+                layout.label(text="Webcam tracking active!", icon='CHECKMARK')
+                # Show body landmark status
+                if receiver.body_landmarks:
+                    layout.label(text="Face + Body detected",
+                                 icon='OUTLINER_OB_ARMATURE')
+                else:
+                    layout.label(text="Face detected",
+                                 icon='FACE_MAPS')
+            else:
+                layout.label(text="Phone tracking active!", icon='CHECKMARK')
 
             # Show live values
             values = receiver.get_latest_values()
@@ -217,7 +235,10 @@ class PPPARTY_PT_connect_panel(bpy.types.Panel):
                     col.label(text=f"  {key}: {v:.2f}")
 
             layout.separator()
-            layout.operator("ppparty.disconnect_phone", icon='PAUSE')
+            if source == 'mediapipe':
+                layout.operator("ppparty.stop_webcam", icon='PAUSE')
+            else:
+                layout.operator("ppparty.disconnect_phone", icon='PAUSE')
 
 
 class PPPARTY_PT_debug_panel(bpy.types.Panel):
@@ -256,7 +277,7 @@ class PPPARTY_PT_instructions_panel(bpy.types.Panel):
         col.scale_y = 0.8
         col.label(text="1. Click 'Create Marionette'")
         col.label(text="2. Press Play on the timeline")
-        col.label(text="3. Connect your phone")
+        col.label(text="3. Click 'Start Webcam'")
         col.label(text="4. Tilt head left/right = walk")
         col.label(text="5. Lean back = arms extend")
         col.label(text="6. Push mouth left/right = step")

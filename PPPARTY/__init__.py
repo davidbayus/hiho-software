@@ -6,17 +6,17 @@
 bl_info = {
     "name": "The People's Puppet Party",
     "author": "David Bayus — CADRE Lab, SJSU",
-    "version": (0, 9, 6),
+    "version": (1, 0, 0),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > PPPARTY",
-    "description": "Face-tracked marionette — node groups (capsule, IK, float)"
-                   " with labeled frames, material slots, head design",
+    "description": "Face + body tracked marionette — webcam via MediaPipe,"
+                   " node groups, material slots, head design",
     "category": "Animation",
 }
 
 import bpy
 
-from .core.osc_receiver import OSCReceiver
+from .core.osc_receiver import TrackingReceiver
 from .operators.create_marionette import (
     PPPARTY_OT_create_marionette,
     PPPARTY_OT_reset_physics,
@@ -24,6 +24,10 @@ from .operators.create_marionette import (
 from .operators.connect_phone import (
     PPPARTY_OT_connect_phone,
     PPPARTY_OT_disconnect_phone,
+)
+from .operators.start_webcam import (
+    PPPARTY_OT_start_webcam,
+    PPPARTY_OT_stop_webcam,
 )
 from .operators.debug_modifier import PPPARTY_OT_debug_modifier
 from .ui.panels import (
@@ -33,8 +37,8 @@ from .ui.panels import (
     PPPARTY_PT_instructions_panel,
 )
 
-# Shared OSC receiver instance — one receiver for the whole addon
-receiver = OSCReceiver()
+# Shared tracking receiver — handles both MediaPipe and Live Link Face
+receiver = TrackingReceiver()
 
 
 class PPPartySettings(bpy.types.PropertyGroup):
@@ -51,7 +55,7 @@ class PPPartySettings(bpy.types.PropertyGroup):
         default=11111,
         min=1024,
         max=65535,
-        description="UDP port for receiving Live Link Face data",
+        description="UDP port for tracking data (webcam or phone)",
     )
 
 
@@ -59,6 +63,8 @@ classes = (
     PPPartySettings,
     PPPARTY_OT_create_marionette,
     PPPARTY_OT_reset_physics,
+    PPPARTY_OT_start_webcam,
+    PPPARTY_OT_stop_webcam,
     PPPARTY_OT_connect_phone,
     PPPARTY_OT_disconnect_phone,
     PPPARTY_OT_debug_modifier,
