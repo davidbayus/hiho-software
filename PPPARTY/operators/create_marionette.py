@@ -1432,7 +1432,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s = tree.interface.new_socket(
         "Ground Height", in_out='INPUT', socket_type='NodeSocketFloat',
         parent=ph_panel)
-    s.default_value = -1.0
+    s.default_value = -3.0
     s.min_value = -10.0
     s.max_value = 0.5
 

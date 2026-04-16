@@ -773,11 +773,15 @@ class TrackingReceiver:
             return (lm['x'], lm['y'], lm['z'])
 
         def _mp_to_puppet(dx, dy, dz):
-            """Transform a MediaPipe delta to puppet space."""
+            """Transform a MediaPipe delta to puppet space.
+
+            MediaPipe world landmarks: X right, Y down, Z toward camera (negative = closer).
+            Blender puppet space: X right, Y forward (negative = toward camera), Z up.
+            """
             return (
-                dx * self._BT_SCALE,       # x stays (flip handled)
-                -dz * self._BT_SCALE,       # depth → puppet forward
-                -dy * self._BT_SCALE,       # up (negate MP down)
+                dx * self._BT_SCALE,       # lateral: same direction
+                dz * self._BT_SCALE,       # depth: MP -Z (closer) → puppet -Y (toward cam)
+                -dy * self._BT_SCALE,      # vertical: negate (MP Y down → puppet Z up)
             )
 
         def _delta(a_idx, b_idx):
@@ -812,7 +816,9 @@ class TrackingReceiver:
             bl = (bx*bx + by*by + bz*bz) ** 0.5
             if bl < 1e-6:
                 return _mp_to_puppet(0.0, 0.0, -1.0)
-            return _mp_to_puppet(bx/bl, by/bl, bz/bl)
+            # Negate: bend hint points TOWARD elbow, but PP_TwoBoneIK's
+            # double cross product convention expects the OPPOSITE direction
+            return _mp_to_puppet(-bx/bl, -by/bl, -bz/bl)
 
         # Puppet right = MP left (because of selfie flip)
         # Puppet left = MP right
