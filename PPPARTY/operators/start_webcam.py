@@ -22,19 +22,29 @@ def _find_system_python():
 
     Blender's bundled Python doesn't have mediapipe/opencv installed,
     so we need the system Python. Checks common locations.
+
+    Search order:
+      1. venv next to addon (development installs)
+      2. ~/.ppparty/venv (user-level, works with zip-installed addon)
+      3. System Python (python.org, Homebrew, macOS system)
     """
     candidates = []
 
-    # Check if there's a Python in a venv next to the sender script
+    # venv next to addon (development install — addon run from source)
     addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     venv_python = os.path.join(addon_dir, "venv", "bin", "python3")
     if os.path.exists(venv_python):
         candidates.append(venv_python)
 
+    # User-level venv (works when addon is zip-installed into Blender)
+    home_venv = os.path.join(os.path.expanduser("~"), ".ppparty",
+                             "venv", "bin", "python3")
+    if os.path.exists(home_venv):
+        candidates.append(home_venv)
+
     # Common system Python locations
     if sys.platform == "darwin":
         candidates += [
-            # python.org installer puts versioned binaries here
             "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
             "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
             "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3.10",
@@ -110,6 +120,10 @@ class PPPARTY_OT_start_webcam(bpy.types.Operator):
                               target_bone=target_bone):
             self.report({'ERROR'}, f"Could not start -- port {port} in use")
             return {'CANCELLED'}
+
+        # Mark source immediately so the panel shows webcam UI
+        # (otherwise it shows "Waiting for phone" until first packet)
+        receiver._source = 'mediapipe'
 
         # Launch the MediaPipe sender as a separate process
         python_path = _find_system_python()
