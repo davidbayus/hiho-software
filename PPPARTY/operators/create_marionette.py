@@ -1408,6 +1408,16 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
             parent=bt_panel)
         s.default_value = 1.0
         s.min_value = 0.0
+
+    # Arm extension ratios — how bent the real arm is (0 = folded, 1 = straight).
+    # Used to scale the tracked hand position to the puppet's arm length,
+    # so the IK solver can compute proper elbow bend angles.
+    for ext_name in ('bt_arm_l_ext', 'bt_arm_r_ext'):
+        s = tree.interface.new_socket(
+            ext_name, in_out='INPUT', socket_type='NodeSocketFloat',
+            parent=bt_panel)
+        s.default_value = 0.85
+        s.min_value = 0.0
         s.max_value = 1.0
         s.subtype = 'FACTOR'
 
@@ -2997,21 +3007,61 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # tracked position (shoulder + wrist-shoulder delta from MediaPipe).
     # When not tracked, fall back to Verlet physics output (marionette feel).
     # Lerp factor = arm visibility × Body Tracking.
-    x_dh = x_part - 400
-    tracked_hand_l = add_node(tree, 'ShaderNodeVectorMath', x_dh, -620,
-                              "Tracked HL")
+    # Proportional hand placement — match the performer's arm extension
+    # ratio rather than raw tracking distance. This ensures the IK solver
+    # has room to compute proper elbow bend angles, regardless of the
+    # puppet's arm length vs the performer's arm length.
+    # Hand = shoulder + normalize(delta) × extension_ratio × ArmLength
+    x_dh = x_part - 600
+
+    # Left hand: direction + scaled reach
+    dir_l = add_node(tree, 'ShaderNodeVectorMath', x_dh, -620, "Dir HL")
+    dir_l.operation = 'NORMALIZE'
+    tree.links.new(group_in.outputs['bt_shl_delta'], dir_l.inputs[0])
+
+    reach_l = add_node(tree, 'ShaderNodeMath', x_dh + 200, -560,
+                        "Reach L")
+    reach_l.operation = 'MULTIPLY'
+    tree.links.new(group_in.outputs['bt_arm_l_ext'], reach_l.inputs[0])
+    tree.links.new(group_in.outputs['Arm Length'], reach_l.inputs[1])
+
+    hand_off_l = add_node(tree, 'ShaderNodeVectorMath', x_dh + 200, -620,
+                           "Hand Off L")
+    hand_off_l.operation = 'SCALE'
+    tree.links.new(dir_l.outputs['Vector'], hand_off_l.inputs[0])
+    tree.links.new(reach_l.outputs['Value'], hand_off_l.inputs['Scale'])
+
+    tracked_hand_l = add_node(tree, 'ShaderNodeVectorMath', x_dh + 400,
+                              -620, "Tracked HL")
     tracked_hand_l.operation = 'ADD'
     tree.links.new(shl_visual.outputs['Vector'],
                    tracked_hand_l.inputs[0])
-    tree.links.new(group_in.outputs['bt_shl_delta'],
+    tree.links.new(hand_off_l.outputs['Vector'],
                    tracked_hand_l.inputs[1])
 
-    tracked_hand_r = add_node(tree, 'ShaderNodeVectorMath', x_dh, -780,
-                              "Tracked HR")
+    # Right hand: direction + scaled reach
+    dir_r = add_node(tree, 'ShaderNodeVectorMath', x_dh, -780, "Dir HR")
+    dir_r.operation = 'NORMALIZE'
+    tree.links.new(group_in.outputs['bt_shr_delta'], dir_r.inputs[0])
+
+    reach_r = add_node(tree, 'ShaderNodeMath', x_dh + 200, -720,
+                        "Reach R")
+    reach_r.operation = 'MULTIPLY'
+    tree.links.new(group_in.outputs['bt_arm_r_ext'], reach_r.inputs[0])
+    tree.links.new(group_in.outputs['Arm Length'], reach_r.inputs[1])
+
+    hand_off_r = add_node(tree, 'ShaderNodeVectorMath', x_dh + 200, -780,
+                           "Hand Off R")
+    hand_off_r.operation = 'SCALE'
+    tree.links.new(dir_r.outputs['Vector'], hand_off_r.inputs[0])
+    tree.links.new(reach_r.outputs['Value'], hand_off_r.inputs['Scale'])
+
+    tracked_hand_r = add_node(tree, 'ShaderNodeVectorMath', x_dh + 400,
+                              -780, "Tracked HR")
     tracked_hand_r.operation = 'ADD'
     tree.links.new(shr_visual.outputs['Vector'],
                    tracked_hand_r.inputs[0])
-    tree.links.new(group_in.outputs['bt_shr_delta'],
+    tree.links.new(hand_off_r.outputs['Vector'],
                    tracked_hand_r.inputs[1])
 
     hand_l_lerp = _vector_lerp(tree, x_dh + 200, -620, "HandL",

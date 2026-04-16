@@ -337,6 +337,7 @@ class TrackingReceiver:
         self._bt_socket_ids = None   # bt_*_delta → socket identifier
         self._bt_factor_id = None    # Body Tracking float → socket identifier
         self._vis_socket_ids = None  # vis_arm_l etc → socket identifier
+        self._ext_socket_ids = None  # bt_arm_*_ext → socket identifier
 
     @property
     def is_running(self):
@@ -426,6 +427,7 @@ class TrackingReceiver:
         self._bt_socket_ids = None
         self._bt_factor_id = None
         self._vis_socket_ids = None
+        self._ext_socket_ids = None
 
         if bpy.app.timers.is_registered(self._apply_updates):
             bpy.app.timers.unregister(self._apply_updates)
@@ -545,6 +547,7 @@ class TrackingReceiver:
             self._bt_socket_ids = {}
             self._bt_factor_id = None
             self._vis_socket_ids = {}
+            self._ext_socket_ids = {}
             self._iface_map = {}
 
             # Gather ALL known face tracking shape names (union of both pipelines)
@@ -570,6 +573,10 @@ class TrackingReceiver:
                         self._iface_map['Body Tracking'] = item
                     elif item.name.startswith('vis_'):
                         self._vis_socket_ids[item.name] = item.identifier
+                        self._iface_map[item.name] = item
+                    elif (item.name.startswith('bt_')
+                          and item.name.endswith('_ext')):
+                        self._ext_socket_ids[item.name] = item.identifier
                         self._iface_map[item.name] = item
                 elif item.socket_type == 'NodeSocketVector':
                     if item.name.startswith('bt_'):
@@ -866,6 +873,55 @@ class TrackingReceiver:
                     wrote = True
             except Exception:
                 pass
+
+        # --- Arm extension ratios (how bent the arm is) ---
+        # Ratio of straight-line shoulder→wrist distance to total arm
+        # length (upper + lower segments). 0 = fully folded, 1 = straight.
+        # Used in GN to scale hand position to puppet's Arm Length,
+        # so IK can compute proper elbow bend regardless of proportions.
+        def _arm_extension(sh_idx, el_idx, wr_idx):
+            s = _lm_vec(sh_idx)
+            e = _lm_vec(el_idx)
+            w = _lm_vec(wr_idx)
+            if not s or not e or not w:
+                return None
+            upper = sum((a - b) ** 2 for a, b in zip(e, s)) ** 0.5
+            lower = sum((a - b) ** 2 for a, b in zip(w, e)) ** 0.5
+            total = upper + lower
+            if total < 1e-6:
+                return 1.0
+            reach = sum((a - b) ** 2 for a, b in zip(w, s)) ** 0.5
+            return min(1.0, reach / total)
+
+        # Puppet left = MP right (selfie flip)
+        ext_ratios = {
+            'bt_arm_l_ext': _arm_extension(self._LM_R_SHOULDER,
+                                           self._LM_R_ELBOW,
+                                           self._LM_R_WRIST),
+            'bt_arm_r_ext': _arm_extension(self._LM_L_SHOULDER,
+                                           self._LM_L_ELBOW,
+                                           self._LM_L_WRIST),
+        }
+
+        if self._ext_socket_ids:
+            for name, ratio in ext_ratios.items():
+                if ratio is None:
+                    continue
+                sid = self._ext_socket_ids.get(name)
+                if not sid:
+                    continue
+                try:
+                    if self._write_method == 'idprop':
+                        mod[sid] = ratio
+                    elif self._write_method == 'default':
+                        iface = self._iface_map.get(name)
+                        if iface:
+                            iface.default_value = ratio
+                    else:
+                        mod[sid] = ratio
+                    wrote = True
+                except Exception:
+                    pass
 
         # --- Per-limb visibility from landmark confidence scores ---
         # When a limb drops off camera, its visibility → 0, blending that
