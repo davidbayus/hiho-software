@@ -3303,15 +3303,16 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
                         pass
 
         # --- Studio Track: create placeholder objects for Object Info ---
-        # Simple capsule meshes so students see "something goes here."
-        # Hidden from viewport — only visible through the GN modifier.
+        # Simple capsule meshes available in the Object dropdown so students
+        # see "something goes here" when browsing.  NOT auto-assigned to the
+        # modifier — the default styled capsules stay visible until the
+        # student actively picks a mesh from the dropdown.
         _placeholders = {
-            'Custom Torso': ('PP_Placeholder_Torso', 12, 8, 0.2),
-            'Custom Hand': ('PP_Placeholder_Hand', 8, 6, 0.1),
-            'Custom Foot': ('PP_Placeholder_Foot', 8, 6, 0.12),
+            'PP_Placeholder_Torso': (12, 8, 0.2),
+            'PP_Placeholder_Hand':  (8, 6, 0.1),
+            'PP_Placeholder_Foot':  (8, 6, 0.12),
         }
-        for socket_name, (obj_name, segs, rings, radius) in \
-                _placeholders.items():
+        for obj_name, (segs, rings, radius) in _placeholders.items():
             ph_mesh = bpy.data.meshes.new(obj_name)
             ph_obj = bpy.data.objects.new(obj_name, ph_mesh)
             context.collection.objects.link(ph_obj)
@@ -3324,23 +3325,10 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
             bm.to_mesh(ph_mesh)
             bm.free()
 
-            # Hide from viewport (only the GN modifier reads it)
+            # Hide from viewport — students browse and assign via N-panel
             ph_obj.hide_viewport = True
             ph_obj.hide_render = True
             ph_obj.hide_select = True
-
-            # Assign to the Object socket on the modifier
-            for item in tree.interface.items_tree:
-                if (hasattr(item, 'item_type')
-                        and item.item_type == 'SOCKET'
-                        and item.in_out == 'INPUT'
-                        and item.socket_type == 'NodeSocketObject'
-                        and item.name == socket_name):
-                    try:
-                        mod[item.identifier] = ph_obj
-                    except Exception:
-                        pass
-                    break
 
         # Ensure dummy mesh exists (OSC receiver writes shape keys here,
         # then pushes values directly to modifier — no drivers needed)

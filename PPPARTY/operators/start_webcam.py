@@ -163,7 +163,7 @@ class PPPARTY_OT_start_webcam(bpy.types.Operator):
 
 
 class PPPARTY_OT_stop_webcam(bpy.types.Operator):
-    """Stop webcam tracking"""
+    """Stop webcam tracking and kill the sender process"""
 
     bl_idname = "ppparty.stop_webcam"
     bl_label = "Stop Webcam"
@@ -172,24 +172,60 @@ class PPPARTY_OT_stop_webcam(bpy.types.Operator):
         global _sender_process
         from .. import receiver
 
-        # Kill the sender subprocess
+        killed = 0
+
+        # Kill the sender subprocess we launched
         if _sender_process is not None:
             try:
                 _sender_process.terminate()
                 _sender_process.wait(timeout=3)
+                killed += 1
             except Exception:
                 try:
                     _sender_process.kill()
+                    killed += 1
                 except Exception:
                     pass
             _sender_process = None
 
+        # Also kill any orphaned mediapipe_sender processes (e.g. from
+        # a previous Blender session that didn't clean up).
+        killed += _kill_orphaned_senders()
+
         # Stop the receiver
         receiver.stop()
-        self.report({'INFO'}, "Webcam tracking stopped")
+
+        msg = "Webcam tracking stopped"
+        if killed:
+            msg += f" ({killed} process{'es' if killed > 1 else ''} killed)"
+        self.report({'INFO'}, msg)
 
         for area in context.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
 
         return {'FINISHED'}
+
+
+def _kill_orphaned_senders():
+    """Find and kill any mediapipe_sender.py processes left over from
+    a previous session.  Returns the number of processes killed."""
+    import signal
+    killed = 0
+    try:
+        # Get PIDs of any running mediapipe_sender.py
+        result = subprocess.run(
+            ["pgrep", "-f", "mediapipe_sender.py"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                pid = int(line.strip())
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    killed += 1
+                except (ProcessLookupError, PermissionError):
+                    pass
+    except Exception:
+        pass
+    return killed
