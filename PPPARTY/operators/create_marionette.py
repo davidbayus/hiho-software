@@ -64,6 +64,15 @@ import os
 import bpy
 from mathutils import Vector
 
+from .marionette._common import (
+    add_node,
+    FRAME_COLORS,
+    _snap_nodes,
+    _new_nodes,
+    _frame_section,
+)
+from .marionette.capsules import add_dynamic_capsule
+
 
 # ===================================================================
 # CONSTANTS
@@ -153,15 +162,6 @@ _BLOB_UNRENAME = {v: k for k, v in _BLOB_RENAME.items()}
 # HELPERS
 # ===================================================================
 
-def add_node(tree, node_type, x, y, label=None):
-    """Add a node to the tree at position (x, y) with optional label."""
-    node = tree.nodes.new(node_type)
-    node.location = (x, y)
-    if label:
-        node.label = label
-    return node
-
-
 def _vector_lerp(tree, x, y, label, a_out, b_out, factor_out):
     """Build a Vector lerp: result = a + (b - a) * factor.
 
@@ -196,26 +196,6 @@ def make_material(name, color):
     return mat
 
 
-def add_dynamic_capsule(tree, x, y, label, radius=0.5, subdivs=6,
-                        width_output=None, ext_factor=0.3, axis='Z'):
-    """Add a dynamic Minkowski capsule via the PP_DynCapsule node group.
-
-    Width=0 → sphere. Width>0 → pill shape along the specified axis.
-    Returns the group node (geometry output = capsule mesh).
-    """
-    _axis_map = {'X': (1, 0, 0), 'Y': (0, 1, 0), 'Z': (0, 0, 1)}
-    capsule_tree = _ensure_capsule_group()
-    grp = add_node(tree, 'GeometryNodeGroup', x, y, label)
-    grp.node_tree = capsule_tree
-    grp.inputs['Radius'].default_value = radius
-    grp.inputs['Ext Factor'].default_value = ext_factor
-    grp.inputs['Subdivisions'].default_value = subdivs
-    grp.inputs['Axis Mask'].default_value = _axis_map.get(axis, (0, 0, 1))
-    if width_output is not None:
-        tree.links.new(width_output, grp.inputs['Width'])
-    return grp
-
-
 def create_body_materials():
     """Create materials for the marionette body parts."""
     return {
@@ -229,202 +209,10 @@ def create_body_materials():
 
 
 # ===================================================================
-# NODE TREE ORGANIZATION — colored frames for readability
-# ===================================================================
-# Purely visual. No functional changes to the node tree.
-# Each section of the marionette gets a labeled, colored Frame node
-# so the GN editor reads like a blueprint of the puppet's design.
-
-FRAME_COLORS = {
-    'face':     (0.25, 0.55, 0.65),  # Teal — the puppet's head/expressions
-    'control':  (0.30, 0.40, 0.70),  # Blue — control bar (input mapping)
-    'strings':  (0.70, 0.50, 0.25),  # Orange — strings (torso dynamics)
-    'attach':   (0.65, 0.60, 0.30),  # Yellow — attachment points
-    'rest':     (0.55, 0.55, 0.40),  # Olive — rest positions
-    'simzone':  (0.50, 0.30, 0.50),  # Purple — simulation zone boundary
-    'physics':  (0.65, 0.30, 0.35),  # Red — physics core
-    'float':    (0.55, 0.35, 0.60),  # Violet — shoulder float
-    'verlet':   (0.70, 0.25, 0.30),  # Dark red — Verlet integration
-    'body':     (0.35, 0.60, 0.35),  # Green — visual body parts
-    'skeleton': (0.40, 0.55, 0.50),  # Teal-green — limb curves / IK
-    'output':   (0.50, 0.50, 0.50),  # Grey — final assembly
-}
-
-
-def _snap_nodes(tree):
-    """Snapshot current node names for section framing."""
-    return {n.name for n in tree.nodes}
-
-
-def _new_nodes(tree, snap):
-    """Get nodes added since snapshot (excluding Frame nodes)."""
-    return [n for n in tree.nodes
-            if n.name not in snap and n.type != 'FRAME']
-
-
-def _frame_section(tree, label, color_key, nodes):
-    """Wrap nodes in a labeled, colored Frame for GN editor readability.
-
-    Purely visual — does not change any node connections or behavior.
-    """
-    if not nodes:
-        return None
-    frame = tree.nodes.new('NodeFrame')
-    frame.label = label
-    frame.use_custom_color = True
-    frame.color = FRAME_COLORS[color_key]
-    frame.label_size = 20
-    frame.shrink = True
-    for n in nodes:
-        if n.parent is None:
-            n.parent = frame
-    return frame
-
-
-# ===================================================================
 # REUSABLE NODE GROUPS — collapse repeated math into single nodes
 # ===================================================================
-
-def _ensure_capsule_group():
-    """Create or retrieve the PP_DynCapsule node group.
-
-    Minkowski capsule: cube → clamp to inner box → offset → normalize
-    × radius → add back. Width=0 → sphere, Width>0 → pill shape.
-    Replaces ~15 inline nodes per body part.
-    """
-    existing = bpy.data.node_groups.get("PP_DynCapsule")
-    if existing:
-        return existing
-
-    g = bpy.data.node_groups.new("PP_DynCapsule", 'GeometryNodeTree')
-    g.interface.clear()
-
-    s = g.interface.new_socket(
-        "Width", in_out='INPUT', socket_type='NodeSocketFloat')
-    s.default_value = 0.0
-    s.min_value = 0.0
-    s.max_value = 5.0
-    s = g.interface.new_socket(
-        "Ext Factor", in_out='INPUT', socket_type='NodeSocketFloat')
-    s.default_value = 0.3
-    s = g.interface.new_socket(
-        "Radius", in_out='INPUT', socket_type='NodeSocketFloat')
-    s.default_value = 0.5
-    s = g.interface.new_socket(
-        "Subdivisions", in_out='INPUT', socket_type='NodeSocketInt')
-    s.default_value = 6
-    s.min_value = 2
-    s.max_value = 12
-    s = g.interface.new_socket(
-        "Axis Mask", in_out='INPUT', socket_type='NodeSocketVector')
-    s.default_value = (0.0, 0.0, 1.0)
-    g.interface.new_socket(
-        "Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
-
-    dx = 200
-    gin = add_node(g, 'NodeGroupInput', 0, 0, "In")
-
-    # --- Extension sizing ---
-    diam_n = add_node(g, 'ShaderNodeMath', dx, 0, "Diam")
-    diam_n.operation = 'MULTIPLY'
-    g.links.new(gin.outputs['Radius'], diam_n.inputs[0])
-    diam_n.inputs[1].default_value = 2.0
-
-    ext_n = add_node(g, 'ShaderNodeMath', dx, -120, "Ext")
-    ext_n.operation = 'MULTIPLY'
-    g.links.new(gin.outputs['Width'], ext_n.inputs[0])
-    g.links.new(gin.outputs['Ext Factor'], ext_n.inputs[1])
-
-    ext_x2 = add_node(g, 'ShaderNodeMath', dx * 2, -120, "Ext*2")
-    ext_x2.operation = 'MULTIPLY'
-    g.links.new(ext_n.outputs[0], ext_x2.inputs[0])
-    ext_x2.inputs[1].default_value = 2.0
-
-    ext_vec = add_node(g, 'ShaderNodeVectorMath', dx * 3, -120, "ExtVec")
-    ext_vec.operation = 'SCALE'
-    g.links.new(gin.outputs['Axis Mask'], ext_vec.inputs[0])
-    g.links.new(ext_x2.outputs[0], ext_vec.inputs['Scale'])
-
-    base_sz = add_node(g, 'ShaderNodeCombineXYZ', dx * 3, 0, "BaseSz")
-    g.links.new(diam_n.outputs[0], base_sz.inputs['X'])
-    g.links.new(diam_n.outputs[0], base_sz.inputs['Y'])
-    g.links.new(diam_n.outputs[0], base_sz.inputs['Z'])
-
-    cube_sz = add_node(g, 'ShaderNodeVectorMath', dx * 4, 0, "CubeSz")
-    cube_sz.operation = 'ADD'
-    g.links.new(base_sz.outputs['Vector'], cube_sz.inputs[0])
-    g.links.new(ext_vec.outputs['Vector'], cube_sz.inputs[1])
-
-    _frame_section(g,
-        "EXTENSION — Width slider stretches the cube along one axis"
-        " to create the pill midsection",
-        'strings', [diam_n, ext_n, ext_x2, ext_vec, base_sz, cube_sz])
-
-    # --- Subdivided cube mesh ---
-    cube = add_node(g, 'GeometryNodeMeshCube', dx * 5, 0, "Cube")
-    g.links.new(cube_sz.outputs['Vector'], cube.inputs['Size'])
-    g.links.new(gin.outputs['Subdivisions'], cube.inputs['Vertices X'])
-    g.links.new(gin.outputs['Subdivisions'], cube.inputs['Vertices Y'])
-    g.links.new(gin.outputs['Subdivisions'], cube.inputs['Vertices Z'])
-
-    # --- Minkowski clamp + sphere projection ---
-    pos_in = add_node(g, 'GeometryNodeInputPosition', dx * 5, -120, "Pos")
-
-    cl_hi_v = add_node(g, 'ShaderNodeVectorMath', dx * 4, -220, "+Ext")
-    cl_hi_v.operation = 'SCALE'
-    g.links.new(gin.outputs['Axis Mask'], cl_hi_v.inputs[0])
-    g.links.new(ext_n.outputs[0], cl_hi_v.inputs['Scale'])
-
-    cl_lo_v = add_node(g, 'ShaderNodeVectorMath', dx * 4, -320, "-Ext")
-    cl_lo_v.operation = 'SCALE'
-    g.links.new(cl_hi_v.outputs['Vector'], cl_lo_v.inputs[0])
-    cl_lo_v.inputs['Scale'].default_value = -1.0
-
-    cl_hi = add_node(g, 'ShaderNodeVectorMath', dx * 6, -120, "ClHi")
-    cl_hi.operation = 'MINIMUM'
-    g.links.new(pos_in.outputs['Position'], cl_hi.inputs[0])
-    g.links.new(cl_hi_v.outputs['Vector'], cl_hi.inputs[1])
-
-    cl_lo = add_node(g, 'ShaderNodeVectorMath', dx * 7, -120, "ClLo")
-    cl_lo.operation = 'MAXIMUM'
-    g.links.new(cl_hi.outputs['Vector'], cl_lo.inputs[0])
-    g.links.new(cl_lo_v.outputs['Vector'], cl_lo.inputs[1])
-
-    offs = add_node(g, 'ShaderNodeVectorMath', dx * 8, -120, "Offs")
-    offs.operation = 'SUBTRACT'
-    g.links.new(pos_in.outputs['Position'], offs.inputs[0])
-    g.links.new(cl_lo.outputs['Vector'], offs.inputs[1])
-
-    nrm = add_node(g, 'ShaderNodeVectorMath', dx * 9, -120, "Norm")
-    nrm.operation = 'NORMALIZE'
-    g.links.new(offs.outputs['Vector'], nrm.inputs[0])
-
-    cap = add_node(g, 'ShaderNodeVectorMath', dx * 10, -120, "xR")
-    cap.operation = 'SCALE'
-    g.links.new(nrm.outputs['Vector'], cap.inputs[0])
-    g.links.new(gin.outputs['Radius'], cap.inputs['Scale'])
-
-    final = add_node(g, 'ShaderNodeVectorMath', dx * 11, -120, "Final")
-    final.operation = 'ADD'
-    g.links.new(cl_lo.outputs['Vector'], final.inputs[0])
-    g.links.new(cap.outputs['Vector'], final.inputs[1])
-
-    _frame_section(g,
-        "MINKOWSKI SUM — Clamp each vertex to the inner box, then"
-        " project outward onto a sphere of the given radius",
-        'body', [pos_in, cl_hi_v, cl_lo_v, cl_hi, cl_lo,
-                 offs, nrm, cap, final])
-
-    # --- Output ---
-    set_pos = add_node(g, 'GeometryNodeSetPosition', dx * 12, 0, "SetPos")
-    g.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
-    g.links.new(final.outputs['Vector'], set_pos.inputs['Position'])
-
-    gout = add_node(g, 'NodeGroupOutput', dx * 13, 0, "Out")
-    g.links.new(set_pos.outputs['Geometry'], gout.inputs['Geometry'])
-
-    return g
-
+# Note: PP_DynCapsule (the Minkowski capsule group) has been moved to
+# marionette/capsules.py. See REFACTOR_PLAN.md for the curriculum order.
 
 def _ensure_ik_group():
     """Create or retrieve the PP_TwoBoneIK node group.
