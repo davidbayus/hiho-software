@@ -72,6 +72,11 @@ from .marionette._common import (
     _frame_section,
 )
 from .marionette.capsules import add_dynamic_capsule
+from .marionette.materials import (
+    make_material,
+    create_body_materials,
+    create_blob_head_materials,
+)
 
 
 # ===================================================================
@@ -184,28 +189,6 @@ def _vector_lerp(tree, x, y, label, a_out, b_out, factor_out):
     tree.links.new(a_out, result.inputs[0])
     tree.links.new(scaled.outputs['Vector'], result.inputs[1])
     return result
-
-
-def make_material(name, color):
-    """Create a simple solid-color Principled BSDF material."""
-    mat = bpy.data.materials.new(name)
-    mat.use_nodes = True
-    bsdf = mat.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = color
-    bsdf.inputs["Roughness"].default_value = 0.8
-    return mat
-
-
-def create_body_materials():
-    """Create materials for the marionette body parts."""
-    return {
-        'body': make_material("PP_Body", (0.85, 0.55, 0.35, 1.0)),
-        'hand': make_material("PP_Hand", (0.95, 0.75, 0.55, 1.0)),
-        'foot': make_material("PP_Foot", (0.6, 0.4, 0.25, 1.0)),
-        'joint': make_material("PP_Joint", (0.5, 0.5, 0.5, 1.0)),
-        'limb': make_material("PP_Limb", (0.25, 0.25, 0.25, 1.0)),
-        'cheek': make_material("PP_Cheek", (1.0, 0.6, 0.55, 1.0)),
-    }
 
 
 # ===================================================================
@@ -514,21 +497,6 @@ def _ensure_float_group():
     g.links.new(floated.outputs['Vector'], gout.inputs['Vector'])
 
     return g
-
-
-def create_blob_head_materials():
-    """Create materials for the blob head (matches Green Room defaults)."""
-    return {
-        'body': make_material("PP_HeadSkin", (1.0, 0.78, 0.65, 1.0)),
-        'mouth': make_material("PP_Mouth", (0.25, 0.12, 0.08, 1.0)),
-        'eye_white': make_material("PP_EyeWhite", (1.0, 1.0, 1.0, 1.0)),
-        'iris': make_material("PP_Iris", (0.2, 0.65, 0.7, 1.0)),
-        'pupil': make_material("PP_Pupil", (0.05, 0.05, 0.05, 1.0)),
-        'ear': make_material("PP_Ear", (1.0, 0.7, 0.55, 1.0)),
-        'brow': make_material("PP_Brow", (0.18, 0.09, 0.05, 1.0)),
-        'lip': make_material("PP_Lip", (0.85, 0.45, 0.45, 1.0)),
-        'nose': make_material("PP_Nose", (1.0, 0.72, 0.58, 1.0)),
-    }
 
 
 # ===================================================================
@@ -1396,11 +1364,58 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         "Cheek Material", in_out='INPUT',
         socket_type='NodeSocketMaterial', parent=cust_panel)
 
+    # Cheek transform — matches the Eye transform pattern
+    # (Spacing/Height/Depth/Width/Rotation). All defaults at 0 so the
+    # addon's out-of-the-box cheeks look identical to before; non-zero
+    # slider values shift/stretch/tilt around those baked-in defaults.
+    s = tree.interface.new_socket(
+        "Cheek Spacing", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = -0.15
+    s.max_value = 0.3
+
+    s = tree.interface.new_socket(
+        "Cheek Height", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = -0.2
+    s.max_value = 0.2
+
+    s = tree.interface.new_socket(
+        "Cheek Depth", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = -0.2
+    s.max_value = 0.2
+
+    s = tree.interface.new_socket(
+        "Cheek Width", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 2.0
+
+    s = tree.interface.new_socket(
+        "Cheek Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
+        parent=cust_panel)
+    s.default_value = 0.0
+    s.min_value = -180.0
+    s.max_value = 180.0
+
     # Studio Track: Object sockets for custom body parts
     # When a student assigns their modeled mesh, it replaces the capsule.
+    # Chest and hips are separate — Jim Rose waist-cord principle
+    # (see PUPPET_RIG_R&D/JIM_ROSE_MARIONETTE_RESEARCH.md). A real
+    # marionette links them with a twist-limited cord so they can
+    # move on independent timelines; PPParty keeps that separation
+    # so walking, leaning, and counter-sway stay authentic.
     studio_panel = tree.interface.new_panel("Studio Track")
     tree.interface.new_socket(
-        "Custom Torso", in_out='INPUT',
+        "Custom Chest", in_out='INPUT',
+        socket_type='NodeSocketObject', parent=studio_panel)
+    tree.interface.new_socket(
+        "Custom Hips", in_out='INPUT',
         socket_type='NodeSocketObject', parent=studio_panel)
     tree.interface.new_socket(
         "Custom Hand", in_out='INPUT',
@@ -1601,24 +1616,97 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                            scale_f.inputs[0])
             tree.links.new(one_plus.outputs['Value'], scale_f.inputs[1])
 
+            # --- Width: X stretch on top of the reactive scale ---
+            width_plus = add_node(tree, 'ShaderNodeMath',
+                                  x_ck + 800, y_row - 180,
+                                  f"Ck {side} W+")
+            width_plus.operation = 'ADD'
+            width_plus.inputs[0].default_value = 1.0
+            tree.links.new(group_in.outputs['Cheek Width'],
+                           width_plus.inputs[1])
+
+            scale_x = add_node(tree, 'ShaderNodeMath',
+                               x_ck + 1000, y_row - 180,
+                               f"Ck {side} SX")
+            scale_x.operation = 'MULTIPLY'
+            tree.links.new(scale_f.outputs['Value'], scale_x.inputs[0])
+            tree.links.new(width_plus.outputs['Value'],
+                           scale_x.inputs[1])
+
             scale_vec = add_node(tree, 'ShaderNodeCombineXYZ',
-                                 x_ck + 1000, y_row - 90,
+                                 x_ck + 1200, y_row - 90,
                                  f"Ck {side} ScaleVec")
-            tree.links.new(scale_f.outputs['Value'],
+            tree.links.new(scale_x.outputs['Value'],
                            scale_vec.inputs['X'])
             tree.links.new(scale_f.outputs['Value'],
                            scale_vec.inputs['Y'])
             tree.links.new(scale_f.outputs['Value'],
                            scale_vec.inputs['Z'])
 
-            # Transform: local position + reactive scale (NO rotation —
-            # blob_tf handles that for the whole head assembly)
+            # --- Position: base offsets + Spacing/Height/Depth deltas ---
+            sp_add = add_node(tree, 'ShaderNodeMath',
+                              x_ck + 200, y_row + 140,
+                              f"Ck {side} Sp+")
+            sp_add.operation = 'ADD'
+            sp_add.inputs[0].default_value = ck_lx
+            tree.links.new(group_in.outputs['Cheek Spacing'],
+                           sp_add.inputs[1])
+
+            sp_x = add_node(tree, 'ShaderNodeMath',
+                            x_ck + 400, y_row + 140,
+                            f"Ck {side} SpX")
+            sp_x.operation = 'MULTIPLY'
+            tree.links.new(sp_add.outputs['Value'], sp_x.inputs[0])
+            sp_x.inputs[1].default_value = sign
+
+            dp_add = add_node(tree, 'ShaderNodeMath',
+                              x_ck + 200, y_row + 80, f"Ck {side} Dp+")
+            dp_add.operation = 'ADD'
+            dp_add.inputs[0].default_value = ck_ly
+            tree.links.new(group_in.outputs['Cheek Depth'],
+                           dp_add.inputs[1])
+
+            hg_add = add_node(tree, 'ShaderNodeMath',
+                              x_ck + 200, y_row + 20, f"Ck {side} Hg+")
+            hg_add.operation = 'ADD'
+            hg_add.inputs[0].default_value = ck_lz
+            tree.links.new(group_in.outputs['Cheek Height'],
+                           hg_add.inputs[1])
+
+            pos_vec = add_node(tree, 'ShaderNodeCombineXYZ',
+                               x_ck + 600, y_row + 80,
+                               f"Ck {side} Pos")
+            tree.links.new(sp_x.outputs['Value'], pos_vec.inputs['X'])
+            tree.links.new(dp_add.outputs['Value'], pos_vec.inputs['Y'])
+            tree.links.new(hg_add.outputs['Value'], pos_vec.inputs['Z'])
+
+            # --- Rotation: Cheek Rotation degrees → Y-axis radians ---
+            # Y-axis tilts the cheek about the through-face line
+            # (same visual as the "tilted eye" effect).
+            rot_rad = add_node(tree, 'ShaderNodeMath',
+                               x_ck + 600, y_row - 240,
+                               f"Ck {side} Rot")
+            rot_rad.operation = 'MULTIPLY'
+            tree.links.new(group_in.outputs['Cheek Rotation'],
+                           rot_rad.inputs[0])
+            rot_rad.inputs[1].default_value = 0.017453292519943295
+
+            rot_vec = add_node(tree, 'ShaderNodeCombineXYZ',
+                               x_ck + 800, y_row - 240,
+                               f"Ck {side} RotV")
+            tree.links.new(rot_rad.outputs['Value'],
+                           rot_vec.inputs['Y'])
+
+            # Transform: wired position + scale + rotation. Head-level
+            # blob_tf still inherits onto the whole assembly afterward.
             ck_tf = add_node(tree, 'GeometryNodeTransform',
-                             x_ck + 1200, y_row, f"Ck {side} TF")
+                             x_ck + 1400, y_row, f"Ck {side} TF")
             tree.links.new(sphere.outputs['Mesh'],
                            ck_tf.inputs['Geometry'])
-            ck_tf.inputs['Translation'].default_value = (
-                sign * ck_lx, ck_ly, ck_lz)
+            tree.links.new(pos_vec.outputs['Vector'],
+                           ck_tf.inputs['Translation'])
+            tree.links.new(rot_vec.outputs['Vector'],
+                           ck_tf.inputs['Rotation'])
             tree.links.new(scale_vec.outputs['Vector'],
                            ck_tf.inputs['Scale'])
 
@@ -2343,10 +2431,29 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tree.links.new(group_in.outputs['headRotY'], sh_tilt.inputs[0])
     sh_tilt.inputs[1].default_value = -0.15
 
-    # Left shoulder: Z += tilt
+    # --- Shoulder yaw swing from head rotation (Y-axis depth) ---
+    # Marionette spreader-bar principle: when the head yaws, the bar
+    # rotates about its vertical axis — one string pulls forward while
+    # the other slackens back. headRotZ drives opposite Y offsets on
+    # L vs R shoulders. Lives at the attachment layer (same as sh_tilt)
+    # so it applies regardless of Body Tracking mute state.
+    yaw_swing = add_node(tree, 'ShaderNodeMath', x_att + 600, -380,
+                         "Sh Yaw")
+    yaw_swing.operation = 'MULTIPLY'
+    tree.links.new(group_in.outputs['headRotZ'], yaw_swing.inputs[0])
+    yaw_swing.inputs[1].default_value = 0.4
+
+    neg_yaw = add_node(tree, 'ShaderNodeMath', x_att + 600, -330,
+                       "Neg Yaw")
+    neg_yaw.operation = 'MULTIPLY'
+    neg_yaw.inputs[1].default_value = -1.0
+    tree.links.new(yaw_swing.outputs[0], neg_yaw.inputs[0])
+
+    # Left shoulder: Z += tilt, Y += yaw
     shl_tilt_vec = add_node(tree, 'ShaderNodeCombineXYZ',
                              x_att + 600, -500, "ShL TiltV")
     tree.links.new(sh_tilt.outputs['Value'], shl_tilt_vec.inputs['Z'])
+    tree.links.new(yaw_swing.outputs[0], shl_tilt_vec.inputs['Y'])
 
     shl_vis_tilted = add_node(tree, 'ShaderNodeVectorMath',
                                x_att + 800, -450, "ShL VTilt")
@@ -2374,6 +2481,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     shr_tilt_vec = add_node(tree, 'ShaderNodeCombineXYZ',
                              x_att + 600, -700, "ShR TiltV")
     tree.links.new(neg_tilt.outputs['Value'], shr_tilt_vec.inputs['Z'])
+    tree.links.new(neg_yaw.outputs[0], shr_tilt_vec.inputs['Y'])
 
     shr_vis_tilted = add_node(tree, 'ShaderNodeVectorMath',
                                x_att + 800, -600, "ShR VTilt")
@@ -2843,6 +2951,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
                       mat_socket=group_in.outputs['Body Part Material'])
 
     # Pelvis: dynamic capsule, same width driver (slightly less extension)
+    _idx_pelvis = len(parts_geo)
     _add_capsule_part(-280, "Pelvis", PELVIS_RADIUS,
                       pelvis_pos.outputs['Vector'], body_mats['body'],
                       scale=(1.0, 0.85, 0.9),
@@ -3220,12 +3329,19 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     x_cust = 3000
 
     def _custom_object_switch(label, obj_socket_name, pos_socket,
-                              capsule_idx, y_row, mirror_x=False):
+                              capsule_idx, y_row, mirror_x=False,
+                              rot_socket=None, scale_socket=None):
         """Replace a capsule with custom object geometry if assigned.
 
         Creates Object Info → face count check → Switch → Transform.
         If the object has faces (student assigned something), use it.
         Otherwise keep the default capsule.
+
+        `rot_socket` and `scale_socket` are optional Vector sockets.
+        When wired, the custom mesh picks up the same rotation/scale
+        the default capsule receives (e.g. chest lean, hips counter-
+        twist). Left unwired, the Transform stays at zero rotation +
+        unit scale so today's behavior is unchanged.
         """
         obj_info = add_node(tree, 'GeometryNodeObjectInfo',
                             x_cust, y_row, f"Custom {label}")
@@ -3256,8 +3372,12 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         tree.links.new(obj_info.outputs['Geometry'],
                        cust_tf.inputs['Geometry'])
         tree.links.new(pos_socket, cust_tf.inputs['Translation'])
+        if rot_socket is not None:
+            tree.links.new(rot_socket, cust_tf.inputs['Rotation'])
         if mirror_x:
             cust_tf.inputs['Scale'].default_value = (-1.0, 1.0, 1.0)
+        elif scale_socket is not None:
+            tree.links.new(scale_socket, cust_tf.inputs['Scale'])
 
         # Shade smooth
         cust_sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
@@ -3282,26 +3402,66 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         # Replace the capsule entry with the switch output
         parts_geo[capsule_idx] = switch.outputs['Output']
 
-    # Custom Torso → replaces chest capsule
-    _custom_object_switch("Torso", "Custom Torso",
+    # --- Dampened head rotation for chest + hips custom slots ---
+    # Jim Rose waist-cord in motion: head pulls chest, chest pulls
+    # hips, each with progressively less twist. A fresh CombineXYZ
+    # is built here (rather than reusing head_rot_vec from the blob
+    # section) so this block stays scope-safe even when no blob head
+    # is loaded. Bare Minkowski capsules are sphere-ish and rotation-
+    # invariant, so only the custom-object Transform consumes these.
+    head_rot_cust = add_node(tree, 'ShaderNodeCombineXYZ',
+                             x_cust - 400, 300, "Studio Head Rot")
+    tree.links.new(group_in.outputs['headRotX'],
+                   head_rot_cust.inputs['X'])
+    tree.links.new(group_in.outputs['headRotY'],
+                   head_rot_cust.inputs['Y'])
+    tree.links.new(group_in.outputs['headRotZ'],
+                   head_rot_cust.inputs['Z'])
+
+    chest_rot_damp = add_node(tree, 'ShaderNodeVectorMath',
+                              x_cust - 200, 200, "Chest Rot x0.5")
+    chest_rot_damp.operation = 'SCALE'
+    tree.links.new(head_rot_cust.outputs['Vector'],
+                   chest_rot_damp.inputs[0])
+    chest_rot_damp.inputs['Scale'].default_value = 0.5
+
+    pelvis_rot_damp = add_node(tree, 'ShaderNodeVectorMath',
+                               x_cust - 200, -100, "Hips Rot x0.3")
+    pelvis_rot_damp.operation = 'SCALE'
+    tree.links.new(head_rot_cust.outputs['Vector'],
+                   pelvis_rot_damp.inputs[0])
+    pelvis_rot_damp.inputs['Scale'].default_value = 0.3
+
+    # Custom Chest → replaces chest capsule (upper body above waist)
+    _custom_object_switch("Chest", "Custom Chest",
                           chest_pos.outputs['Vector'],
-                          _idx_chest, 0)
+                          _idx_chest, 0,
+                          rot_socket=chest_rot_damp.outputs['Vector'])
+
+    # Custom Hips → replaces pelvis capsule (lower body below waist).
+    # Chest and hips are split per the Jim Rose waist-cord principle:
+    # a real marionette treats upper and lower body as two masses
+    # linked by a twist-limited cord, moving on independent timelines.
+    _custom_object_switch("Hips", "Custom Hips",
+                          pelvis_pos.outputs['Vector'],
+                          _idx_pelvis, -300,
+                          rot_socket=pelvis_rot_damp.outputs['Vector'])
 
     # Custom Hand → replaces both hand capsules (R is mirrored)
     _custom_object_switch("Hand L", "Custom Hand",
                           hand_l_pos,
-                          _idx_hand_l, -300)
+                          _idx_hand_l, -600)
     _custom_object_switch("Hand R", "Custom Hand",
                           hand_r_pos,
-                          _idx_hand_r, -600, mirror_x=True)
+                          _idx_hand_r, -900, mirror_x=True)
 
     # Custom Foot → replaces both foot capsules (R is mirrored)
     _custom_object_switch("Foot L", "Custom Foot",
                           sim_out.outputs['pos_foot_l'],
-                          _idx_foot_l, -900)
+                          _idx_foot_l, -1200)
     _custom_object_switch("Foot R", "Custom Foot",
                           sim_out.outputs['pos_foot_r'],
-                          _idx_foot_r, -1200, mirror_x=True)
+                          _idx_foot_r, -1500, mirror_x=True)
 
     _frame_section(tree,
         "STUDIO TRACK — Custom body part overrides (Object Info"
@@ -3352,8 +3512,9 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
             "PP_Hand_L", "PP_Hand_R", "PP_Foot_L", "PP_Foot_R",
             "PP_Marionette", "PP_Armature",
             # Studio Track placeholder objects
-            "PP_Placeholder_Torso", "PP_Placeholder_Hand",
-            "PP_Placeholder_Foot",
+            "PP_Placeholder_Torso",  # legacy — swept up on rebuild
+            "PP_Placeholder_Chest", "PP_Placeholder_Hips",
+            "PP_Placeholder_Hand", "PP_Placeholder_Foot",
         ]
         for name in cleanup_names:
             obj = bpy.data.objects.get(name)
@@ -3437,7 +3598,8 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
         # modifier — the default styled capsules stay visible until the
         # student actively picks a mesh from the dropdown.
         _placeholders = {
-            'PP_Placeholder_Torso': (12, 8, 0.2),
+            'PP_Placeholder_Chest': (12, 8, 0.2),
+            'PP_Placeholder_Hips':  (12, 8, 0.17),
             'PP_Placeholder_Hand':  (8, 6, 0.1),
             'PP_Placeholder_Foot':  (8, 6, 0.12),
         }

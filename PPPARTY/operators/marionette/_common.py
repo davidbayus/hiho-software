@@ -1,23 +1,52 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Shared helpers used across marionette modules.
+"""Shared helpers used across the marionette modules.
 
-Anything imported in more than one marionette module lives here:
-    add_node         — create a GN node at a position with an optional label
-    FRAME_COLORS     — color palette for section Frame nodes
-    _snap_nodes      — snapshot node names before a section starts
-    _new_nodes       — list nodes added since a snapshot
-    _frame_section   — wrap a group of nodes in a labeled, colored Frame
+=============================================================================
+Why this file exists
+=============================================================================
+When you write code that lives in more than one file, Python needs a place
+for the "plumbing" the other files reach for — the small utilities that
+are NOT about puppets specifically, just about getting nodes onto the
+canvas and keeping the Geometry Nodes tree readable.
 
-These are pure utilities — no puppet-specific logic.
+Think of this file like the pegboard in a shop: it holds the five tools
+every workbench borrows. None of these helpers knows anything about arms,
+legs, or blob heads.
+
+Helpers in this file:
+    add_node        — place a new node on the canvas at a given position
+    FRAME_COLORS    — the palette used for the labeled Frames that
+                      organize sections of the marionette tree
+    _snap_nodes     — "remember which nodes exist in the tree right now"
+    _new_nodes      — "list the nodes that appeared since we remembered"
+    _frame_section  — wrap a set of nodes in a colored, labeled Frame so
+                      the GN editor reads like a blueprint
+
+About the leading underscore on some names: in Python, a leading
+underscore is a convention meaning "this is internal to the package —
+don't import it from outside." It doesn't change behavior; it's a hint
+to other readers (and to your future self) that these are implementation
+details, not public API.
 """
 
 
-# ===================================================================
+# ===========================================================================
 # NODE CREATION HELPER
-# ===================================================================
+# ===========================================================================
+# `add_node` is the most-called helper in the refactor. Every single
+# geometry node in the marionette tree — and there are ~217 of them —
+# comes through here. A tiny convenience that pays off hundreds of
+# times per build.
 
 def add_node(tree, node_type, x, y, label=None):
-    """Add a node to the tree at position (x, y) with optional label."""
+    """Add a node to a GN tree at position (x, y), optionally labeled.
+
+    Think of `tree` as the blank Geometry Nodes editor canvas. `node_type`
+    is the node you'd pick from the Add menu (e.g. 'ShaderNodeMath' for
+    a Math node, 'GeometryNodeMeshCube' for a Cube primitive). `(x, y)`
+    is where it lands. `label` is the little text in the node header —
+    super useful for reading the tree later.
+    """
     node = tree.nodes.new(node_type)
     node.location = (x, y)
     if label:
@@ -25,21 +54,27 @@ def add_node(tree, node_type, x, y, label=None):
     return node
 
 
-# ===================================================================
+# ===========================================================================
 # NODE TREE ORGANIZATION — colored frames for readability
-# ===================================================================
-# Purely visual. No functional changes to the node tree.
-# Each section of the marionette gets a labeled, colored Frame node
-# so the GN editor reads like a blueprint of the puppet's design.
+# ===========================================================================
+# These colors are purely cosmetic. A Frame in the GN editor is like a
+# colored background box you can drag around a group of nodes. We give
+# each "section" of the puppet its own color so the tree reads like a
+# labeled blueprint instead of a spaghetti graph.
+#
+# FRAME_COLORS is a Python `dict` — a lookup table from a short name
+# ('face', 'strings', …) to an RGB triplet. Using a dict here instead
+# of a long `if/elif` chain keeps the code short and makes it easy to
+# add a new section color later without touching any other code.
 
 FRAME_COLORS = {
-    'face':     (0.25, 0.55, 0.65),  # Teal — the puppet's head/expressions
+    'face':     (0.25, 0.55, 0.65),  # Teal — the puppet's head / expressions
     'control':  (0.30, 0.40, 0.70),  # Blue — control bar (input mapping)
-    'strings':  (0.70, 0.50, 0.25),  # Orange — strings (torso dynamics)
+    'strings':  (0.70, 0.50, 0.25),  # Orange — marionette strings (torso)
     'attach':   (0.65, 0.60, 0.30),  # Yellow — attachment points
     'rest':     (0.55, 0.55, 0.40),  # Olive — rest positions
     'simzone':  (0.50, 0.30, 0.50),  # Purple — simulation zone boundary
-    'physics':  (0.65, 0.30, 0.35),  # Red — physics core
+    'physics':  (0.65, 0.30, 0.35),  # Red — physics core (Verlet, IK)
     'float':    (0.55, 0.35, 0.60),  # Violet — shoulder float
     'verlet':   (0.70, 0.25, 0.30),  # Dark red — Verlet integration
     'body':     (0.35, 0.60, 0.35),  # Green — visual body parts
@@ -49,20 +84,44 @@ FRAME_COLORS = {
 
 
 def _snap_nodes(tree):
-    """Snapshot current node names for section framing."""
+    """Remember which nodes exist in the tree right now.
+
+    Returns a `set` of node names. A set is like a list, but optimized
+    for one specific question: "is this name in the collection?"
+    Looking an item up in a set is nearly instant, no matter how big
+    the set gets — so when we ask the same "did this node exist
+    before?" question across many nodes, a set is the right shape.
+    """
     return {n.name for n in tree.nodes}
 
 
 def _new_nodes(tree, snap):
-    """Get nodes added since snapshot (excluding Frame nodes)."""
+    """List the nodes that appeared in `tree` since `snap` was taken.
+
+    Compares the current tree against the snapshot and returns
+    everything that wasn't there before — minus Frame nodes, since
+    those ARE the decorative backgrounds we're about to wrap around
+    whatever was added.
+    """
     return [n for n in tree.nodes
             if n.name not in snap and n.type != 'FRAME']
 
 
 def _frame_section(tree, label, color_key, nodes):
-    """Wrap nodes in a labeled, colored Frame for GN editor readability.
+    """Wrap `nodes` in a labeled, colored Frame.
 
-    Purely visual — does not change any node connections or behavior.
+    The pattern across the marionette code is:
+
+        snap  = _snap_nodes(tree)          # remember current state
+        …build a chunk of the tree…
+        fresh = _new_nodes(tree, snap)     # what got added
+        _frame_section(tree, label, color_key, fresh)
+
+    That way every section of the puppet ends up visually grouped in
+    the GN editor, without having to track node references by hand.
+
+    Purely visual — parenting nodes to a Frame does not change any
+    node connections or evaluation behavior.
     """
     if not nodes:
         return None

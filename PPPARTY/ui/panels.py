@@ -103,7 +103,9 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
                                         "Shoulder Rotation"])
         col4.separator()
         col4.label(text="Cheeks:")
-        _draw_slider_group(col4, mod, ["Cheek Size"])
+        _draw_slider_group(col4, mod, ["Cheek Size", "Cheek Spacing",
+                                        "Cheek Height", "Cheek Depth",
+                                        "Cheek Width", "Cheek Rotation"])
 
         # --- Materials (body part material slots) ---
         layout.separator()
@@ -169,7 +171,7 @@ class PPPARTY_PT_main_panel(bpy.types.Panel):
         col6.scale_y = 0.8
         col6.label(text="Drag custom meshes here:")
         _draw_object_slots(col6, mod, [
-            "Custom Torso", "Custom Hand", "Custom Foot",
+            "Custom Chest", "Custom Hips", "Custom Hand", "Custom Foot",
         ])
 
         # --- Reset ---
