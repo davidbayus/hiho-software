@@ -1002,7 +1002,9 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # INTERFACE — all modifier-level inputs
     # ------------------------------------------------------------------
 
-    # Face tracking (driven by dummy mesh shape keys)
+    # Face tracking (driven by MediaPipe / Live Link Face receiver).
+    # These are plumbing: the receiver writes per-frame, no student ever
+    # touches them by hand, so they stay hidden from the modifier UI.
     ft_panel = tree.interface.new_panel("Face Tracking")
     for name in FACE_INPUTS:
         s = tree.interface.new_socket(
@@ -1012,8 +1014,9 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         s.min_value = 0.0
         s.max_value = 1.0
         s.subtype = 'FACTOR'
+        s.hide_in_modifier = True
 
-    # Head rotation (driven by armature head bone)
+    # Head rotation (driven by armature head bone) — also plumbing.
     rot_panel = tree.interface.new_panel("Head Rotation")
     for rname in ('headRotX', 'headRotY', 'headRotZ'):
         s = tree.interface.new_socket(
@@ -1022,6 +1025,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         s.default_value = 0.0
         s.min_value = -3.14159
         s.max_value = 3.14159
+        s.hide_in_modifier = True
 
     # Body movement sensitivity (tune these in the N-panel)
     mv_panel = tree.interface.new_panel("Body Movement")
@@ -1078,13 +1082,16 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.max_value = 1.0
     s.subtype = 'FACTOR'
 
+    # Shoulder/hip/elbow deltas + body center — plumbing pushed by the
+    # receiver from landmark data. Never adjusted by hand.
     for bt_name in ('bt_shl_delta', 'bt_shr_delta',
                      'bt_hipl_delta', 'bt_hipr_delta',
                      'bt_elbow_l_hint', 'bt_elbow_r_hint',
                      'bt_body_center'):
-        tree.interface.new_socket(
+        s = tree.interface.new_socket(
             bt_name, in_out='INPUT', socket_type='NodeSocketVector',
             parent=bt_panel)
+        s.hide_in_modifier = True
 
     s = tree.interface.new_socket(
         "Performance Space", in_out='INPUT', socket_type='NodeSocketFloat',
@@ -1095,17 +1102,18 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     # Per-limb visibility: receiver pushes 0-1 based on landmark confidence.
     # When a limb drops off camera, its factor → 0, falling back to face
-    # heuristics (idle pose). Default 1.0 = fully visible.
+    # heuristics (idle pose). Default 1.0 = fully visible. Plumbing.
     for vis_name in ('vis_arm_l', 'vis_arm_r', 'vis_leg_l', 'vis_leg_r'):
         s = tree.interface.new_socket(
             vis_name, in_out='INPUT', socket_type='NodeSocketFloat',
             parent=bt_panel)
         s.default_value = 1.0
         s.min_value = 0.0
+        s.hide_in_modifier = True
 
     # Arm extension ratios — how bent the real arm is (0 = folded, 1 = straight).
     # Used to scale the tracked hand position to the puppet's arm length,
-    # so the IK solver can compute proper elbow bend angles.
+    # so the IK solver can compute proper elbow bend angles. Plumbing.
     for ext_name in ('bt_arm_l_ext', 'bt_arm_r_ext'):
         s = tree.interface.new_socket(
             ext_name, in_out='INPUT', socket_type='NodeSocketFloat',
@@ -1114,6 +1122,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         s.min_value = 0.0
         s.max_value = 1.0
         s.subtype = 'FACTOR'
+        s.hide_in_modifier = True
 
     # Physics (same as V0.1.1)
     ph_panel = tree.interface.new_panel("Physics")
@@ -1355,9 +1364,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     tree.interface.new_socket(
         "Custom Hips", in_out='INPUT',
         socket_type='NodeSocketObject', parent=studio_panel)
-    tree.interface.new_socket(
+    # Custom Hand interface is kept so GN wiring doesn't break, but it's
+    # hidden until hand tracking lands in Phase 2 (V1.0.0 hands are
+    # procedural "Blob Hands"). Un-hide when hands.py is implemented.
+    s = tree.interface.new_socket(
         "Custom Hand", in_out='INPUT',
         socket_type='NodeSocketObject', parent=studio_panel)
+    s.hide_in_modifier = True
     tree.interface.new_socket(
         "Custom Foot", in_out='INPUT',
         socket_type='NodeSocketObject', parent=studio_panel)
