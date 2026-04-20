@@ -3640,6 +3640,13 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
         puppet.select_set(True)
         context.scene.render.engine = 'BLENDER_EEVEE'
 
+        # Match scene fps to the MediaPipe sender (30) — a 24 ↔ 30 mismatch
+        # shows up as sub-frame jitter. Push the timeline end far out so
+        # playback doesn't loop back to frame 1 and re-initialize the
+        # simulation zone mid-performance (sim reset reads as a noise spike).
+        context.scene.render.fps = 30
+        context.scene.frame_end = 24000
+
         self.report({'INFO'},
                     "Marionette created! Connect your phone to control it.")
         return {'FINISHED'}
