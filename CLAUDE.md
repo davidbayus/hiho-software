@@ -333,7 +333,7 @@ Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY
 
 **Current state (April 17, 2026): V1.0.0-alpha.6. Refactor of `create_marionette.py` (3708 → 8 curricular modules) is underway — Step 1 of 8 complete, capsules + shared helpers extracted to `operators/marionette/` subpackage. MediaPipe webcam tracking runs at 30 FPS with One Euro adaptive smoothing. Joint-for-joint body tracking with proportional arm extension (prevents roman-salute elbow lock), head-pitch sign fix, shoulder tilt from head rotation, face→body heuristics muted during BT. Cheek capsules react to smiling. Studio Track Object Info inputs let students plug custom meshes into the rig. 18 face tracking inputs, 15 materials (+ Cheek Material), 3 Object sockets. Verlet physics preserved. Blender 5.2 Alpha.**
 
-**See `PPPARTY/REFACTOR_PLAN.md`** for the 8-module split plan, execution rules, and follow-up performance wins. **See `SOFTWARE/SESSION_HANDOFF_2026-04-17.md`** for the most recent session summary and pickup point.
+**See `PPPARTY/REFACTOR_PLAN.md`** for the 8-module split plan, execution rules, and follow-up performance wins. **See `SOFTWARE/SESSION_HANDOFF_2026-04-20.md`** for the most recent session summary and pickup point (hand design locked, V1.0.0 re-phased).
 
 **Core concept:** A digital marionette where face tracking provides the control input (like a marionette control bar), and Verlet physics makes the puppet body dangle and react. Face tracking drives facial expressions AND body movement. Inspired by traditional puppet rigging — Bunraku threshold toggles, marionette under-actuation, Henson's "maximum expression from minimum controls."
 
@@ -458,17 +458,28 @@ Full-body digital marionette addon. Lives in `PPPARTY/`. N-panel tab is "PPPARTY
 - **New face inputs** — `mouthSmileLeft`, `cheekSquintLeft`, `cheekSquintRight` added to FACE_INPUTS (18 total, up from 15).
 - **Updated UI** — Connect panel: webcam primary with preview toggle, phone fallback. Body Tracking section, Cheek Size in Make It Yours, Cheek Material in Materials, Studio Track section with Object pickers.
 
-**Next steps (V1.0.0):**
-- **Finish the curriculum refactor** — Steps 2–8 of 8 per `REFACTOR_PLAN.md`: `materials.py` → `blob_head.py` → `body_parts.py` → `face_tracking.py` → `body_movement.py` → `physics.py` → `studio_track.py` → `assembly.py` orchestrator → pedagogical comment pass. One module per commit; test in Blender; revert if worse.
-- **Template system** (from Green Room) — load/swap puppet templates within PPParty
-- **Recording + bake pipeline** — record MediaPipe data as numpy arrays, replay as Blender keyframes (FreeMoCap pattern). Layer 2 first (data), then Layer 1 (video), then Layer 3 (keyframe bake for Studio Track).
-- **Cheek transform sliders** — Height, Depth, Spread, Width, Rotation. Pattern already established for eyes/ears/nose. Quick win per 2026-04-16 handoff.
-- **Hand tracking research** — MediaPipe already gives 21 landmarks/hand; unused. Research: minimum data for expressive puppetry (open/closed, point, spread, wrist rotation).
-- **Face It integration** — Studio Track students bind shape keys to sculpted heads
-- **Performance mode** — one-button "Start the Show" (webcam on, EEVEE viewport, tracking active)
+**Next steps (V1.0.0) — reordered 2026-04-20 under "one great puppet before templates":**
+
+**Phase 1 — Finish the in-flight refactor** (eat vegetables first)
+- **Finish the curriculum refactor** — Steps 2–8 of 8 per `REFACTOR_PLAN.md`: `materials.py` → `blob_head.py` → `body_parts.py` → `face_tracking.py` → `body_movement.py` → `physics.py` → `studio_track.py` → `assembly.py` orchestrator → pedagogical comment pass. One module per commit; test in Blender; revert if worse. Tag `v1.0.0-alpha.4-refactor-complete` on completion.
+
+**Phase 2 — Hands** (the big missing puppet limb)
+- **Hand tracking + rigging** — design locked 2026-04-20 as **Option C (3 tracked endpoints + Goo-Physics for the rest)**. See `PPPARTY/HAND_TRACKING_DESIGN.md`. Likely a new `hands.py` module sibling to `body_parts.py`. Requires Goo Physics addon install + Holistic Landmarker refactor of `mediapipe_sender.py`.
+
+**Phase 3 — Puppet feature polish** (iterate until the puppet feels complete)
+- **Cheek transform sliders** — Height, Depth, Spread, Width, Rotation. Pattern already established for eyes/ears/nose. Quick win.
+- **Face It integration** — Studio Track students bind shape keys to sculpted heads.
+- **Performance mode** — one-button "Start the Show" (webcam on, EEVEE viewport, tracking active).
 - **Performance optimization** — instance L/R capsule pairs (unlocked by capsules.py extraction), move constant nodes outside sim zone (unlocked by physics.py extraction), lazy material resolution.
 - **E-waste hardware testing** — test on crappiest available hardware; Chromebook with Linux (Crostini) is the aspirational target.
-- **Polish** — startup scene, tool reduction, workspace setup
+- **Polish** — startup scene, tool reduction, workspace setup.
+
+**Phase 4 — Bake, record, export** (creative-reuse pipeline so performances leave the addon)
+- **Recording + bake pipeline** — record MediaPipe data as numpy arrays, replay as Blender keyframes (FreeMoCap pattern). Layer 2 first (data), then Layer 1 (video), then Layer 3 (keyframe bake for Studio Track).
+- **FBX / standard export** — bake tracked performance onto armature keyframes, export for use in Unreal / Unity / other DCCs.
+
+**Phase 5 — Templates** (only after ONE puppet is classroom-validated)
+- **Template system** (from Green Room) — load/swap puppet templates within PPParty. **Deferred: no puppet is currently "template-ready." Templating is a multiplier on a good puppet + validated pedagogy; make the puppet first, validate the classroom experience, then template what's proven to work.**
 
 ## Dependencies Policy
 - **ZERO paid dependencies.** Non-negotiable.
