@@ -213,9 +213,21 @@ def enumerate_blob_custom_sockets(blob_tree, face_inputs):
 def add_head_customization_sockets(tree, blob_custom):
     """Create pass-through sockets on `tree` mirroring `blob_custom`.
 
-    Groups sockets under their declared panel name (e.g. "Eyes", "Mouth",
-    "Head Shape") so the N-panel renders clean collapsible sections.
+    All head sockets are grouped first under their declared sub-panel
+    (e.g. "Eyes", "Mouth", "Head Shape"), then all sub-panels are nested
+    under ONE parent panel called "Blob Head". The modifier view collapses
+    the entire face rig into a single expandable section so the puppet
+    panel doesn't scatter seven top-level blob sub-panels across the UI.
+
+    Blender 5.2's `new_panel` doesn't accept a `parent=` keyword, so we
+    create panels flat and then re-parent them with `move_to_parent` —
+    which DOES accept a parent in 5.2 (requires the `to_position` arg).
+
+    Returns the "Blob Head" parent panel so the caller can nest other
+    facial feature sub-panels (e.g. Cheeks) under it.
     """
+    head_parent = tree.interface.new_panel("Blob Head")
+
     head_panels = {}
     for pp_name, blob_name, sock_type, default, mn, mx, subtype, panel in blob_custom:
         if panel not in head_panels:
@@ -229,6 +241,15 @@ def add_head_customization_sockets(tree, blob_custom):
             s.max_value = mx
             if subtype and subtype != 'NONE':
                 s.subtype = subtype
+
+    # Re-parent every blob sub-panel under the Blob Head parent so the
+    # modifier renders one collapsible container instead of a stack of
+    # top-level panels. to_position=-1 appends to the end (keeps original
+    # ordering: Head Shape, Eyes, Mouth, Nose, Ears, Eyebrows, Lips).
+    for sub_panel in head_panels.values():
+        tree.interface.move_to_parent(sub_panel, head_parent, -1)
+
+    return head_parent
 
 
 # ===========================================================================

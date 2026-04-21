@@ -1298,10 +1298,17 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         "Limb Material", in_out='INPUT',
         socket_type='NodeSocketMaterial', parent=cust_panel)
 
-    # Cheek capsules — reactive puffs that respond to smiling
+    # Cheek capsules — reactive puffs that respond to smiling. Cheeks
+    # are facial features (they live on the head, react to mouth shape
+    # keys), so their sockets belong with the Blob Head group, not the
+    # body's Customize panel. We define them in a standalone "Cheeks"
+    # panel and re-parent it under "Blob Head" after add_head_customization_sockets
+    # runs (which is what actually creates the Blob Head parent panel).
+    cheek_panel = tree.interface.new_panel("Cheeks")
+
     s = tree.interface.new_socket(
         "Cheek Size", in_out='INPUT', socket_type='NodeSocketFloat',
-        parent=cust_panel)
+        parent=cheek_panel)
     s.default_value = 1.0
     s.min_value = 0.0
     s.max_value = 2.0
@@ -1309,7 +1316,7 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     tree.interface.new_socket(
         "Cheek Material", in_out='INPUT',
-        socket_type='NodeSocketMaterial', parent=cust_panel)
+        socket_type='NodeSocketMaterial', parent=cheek_panel)
 
     # Cheek transform — matches the Eye transform pattern
     # (Spacing/Height/Depth/Width/Rotation). All defaults at 0 so the
@@ -1317,35 +1324,35 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # slider values shift/stretch/tilt around those baked-in defaults.
     s = tree.interface.new_socket(
         "Cheek Spacing", in_out='INPUT', socket_type='NodeSocketFloat',
-        parent=cust_panel)
+        parent=cheek_panel)
     s.default_value = 0.0
     s.min_value = -0.15
     s.max_value = 0.3
 
     s = tree.interface.new_socket(
         "Cheek Height", in_out='INPUT', socket_type='NodeSocketFloat',
-        parent=cust_panel)
+        parent=cheek_panel)
     s.default_value = 0.0
     s.min_value = -0.2
     s.max_value = 0.2
 
     s = tree.interface.new_socket(
         "Cheek Depth", in_out='INPUT', socket_type='NodeSocketFloat',
-        parent=cust_panel)
+        parent=cheek_panel)
     s.default_value = 0.0
     s.min_value = -0.2
     s.max_value = 0.2
 
     s = tree.interface.new_socket(
         "Cheek Width", in_out='INPUT', socket_type='NodeSocketFloat',
-        parent=cust_panel)
+        parent=cheek_panel)
     s.default_value = 0.0
     s.min_value = 0.0
     s.max_value = 2.0
 
     s = tree.interface.new_socket(
         "Cheek Rotation", in_out='INPUT', socket_type='NodeSocketFloat',
-        parent=cust_panel)
+        parent=cheek_panel)
     s.default_value = 0.0
     s.min_value = -180.0
     s.max_value = 180.0
@@ -1378,8 +1385,15 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # ------------------------------------------------------------------
     # HEAD CUSTOMIZATION — passthrough from blob head template
     # Auto-creates sockets matching the blob's customization interface.
+    # Returns the "Blob Head" parent panel so we can nest Cheeks under it.
     # ------------------------------------------------------------------
-    add_head_customization_sockets(tree, blob_custom)
+    head_parent = add_head_customization_sockets(tree, blob_custom)
+
+    # Nest the Cheeks sub-panel under the Blob Head parent so all face
+    # customization sits in one collapsible section in the modifier UI.
+    # to_position=-1 appends to the end, after Lips.
+    if head_parent is not None:
+        tree.interface.move_to_parent(cheek_panel, head_parent, -1)
 
     # Geometry output
     tree.interface.new_socket(
