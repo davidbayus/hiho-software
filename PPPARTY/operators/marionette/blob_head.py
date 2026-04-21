@@ -244,12 +244,56 @@ def add_head_customization_sockets(tree, blob_custom):
 
     # Re-parent every blob sub-panel under the Blob Head parent so the
     # modifier renders one collapsible container instead of a stack of
-    # top-level panels. to_position=-1 appends to the end (keeps original
-    # ordering: Head Shape, Eyes, Mouth, Nose, Ears, Eyebrows, Lips).
-    for sub_panel in head_panels.values():
-        tree.interface.move_to_parent(sub_panel, head_parent, -1)
+    # top-level panels.
+    #
+    # alpha.20 fix: iterate in REVERSE with to_position=0. The previous
+    # forward+to_position=-1 pattern left the last few panels (Eyebrows,
+    # Lips) stranded at top level in Blender 5.2 — `-1` appears to mean
+    # "before the last sibling" rather than "append to end" for some
+    # code paths in the interface API. Reverse + 0 sidesteps the issue
+    # entirely: each reparent pushes the previously-moved children to
+    # positions 1, 2, ..., producing final order
+    # Head Shape, Eyes, Mouth, Nose, Ears, Eyebrows, Lips — the natural
+    # reading order kids expect.
+    for sub_panel in reversed(list(head_panels.values())):
+        tree.interface.move_to_parent(sub_panel, head_parent, 0)
 
     return head_parent
+
+
+def debug_dump_interface_panels(tree, label):
+    """Dump the tree's interface panel/socket hierarchy to a Blender
+    text block named "PPParty_Debug_Panels".
+
+    Every call REPLACES the text block contents with the current state,
+    so after Create Puppet finishes the block shows the final layout.
+    Open the Text Editor and pick "PPParty_Debug_Panels" to read it —
+    no terminal or system console required.
+
+    Used to diagnose panel-reparenting regressions in the modifier UI:
+    tells you which items actually landed under which parent,
+    independent of how Blender RENDERS the modifier panel.
+    """
+    import bpy
+
+    lines = [f"=== {label} ==="]
+    for item in tree.interface.items_tree:
+        parent_name = item.parent.name if item.parent else "<root>"
+        item_type = getattr(item, 'item_type', '?')
+        if item_type == 'SOCKET':
+            extra = f"  [{item.in_out} {item.socket_type}]"
+        else:
+            extra = ""
+        lines.append(
+            f"  {item_type:7} {item.name!r:30}  "
+            f"parent={parent_name!r}{extra}")
+
+    text_name = "PPParty_Debug_Panels"
+    text = bpy.data.texts.get(text_name)
+    if text is None:
+        text = bpy.data.texts.new(text_name)
+    text.clear()
+    text.write("\n".join(lines) + "\n")
 
 
 # ===========================================================================

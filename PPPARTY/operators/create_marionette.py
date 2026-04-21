@@ -80,6 +80,7 @@ from .marionette.blob_head import (
     enumerate_blob_custom_sockets,
     add_head_customization_sockets,
     build_blob_group,
+    debug_dump_interface_panels,
 )
 
 
@@ -1398,9 +1399,23 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     # Nest the Cheeks sub-panel under the Blob Head parent so all face
     # customization sits in one collapsible section in the modifier UI.
-    # to_position=-1 appends to the end, after Lips.
+    #
+    # alpha.20 fix: count Blob Head's existing children and pass that
+    # count as `to_position`, which places Cheeks at the end (after
+    # Lips). `to_position=-1` was observed to leave the panel stranded
+    # at top level in Blender 5.2; an explicit positive index is the
+    # reliable "append" idiom.
     if head_parent is not None:
-        tree.interface.move_to_parent(cheek_panel, head_parent, -1)
+        head_children_count = sum(
+            1 for item in tree.interface.items_tree
+            if getattr(item, 'parent', None) == head_parent)
+        tree.interface.move_to_parent(
+            cheek_panel, head_parent, head_children_count)
+
+    # alpha.20 instrumentation — dump the final panel/socket hierarchy
+    # to a Blender text block so David can paste it back if the fix
+    # didn't fully take. Harmless if it works; self-documenting if not.
+    debug_dump_interface_panels(tree, "After all reparents")
 
     # Geometry output
     tree.interface.new_socket(
