@@ -33,14 +33,12 @@ def _find_system_python():
     # venv next to addon (development install — addon run from source)
     addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     venv_python = os.path.join(addon_dir, "venv", "bin", "python3")
-    if os.path.exists(venv_python):
-        candidates.append(venv_python)
+    candidates.append(venv_python)
 
     # User-level venv (works when addon is zip-installed into Blender)
     home_venv = os.path.join(os.path.expanduser("~"), ".ppparty",
                              "venv", "bin", "python3")
-    if os.path.exists(home_venv):
-        candidates.append(home_venv)
+    candidates.append(home_venv)
 
     # Common system Python locations
     if sys.platform == "darwin":
@@ -66,8 +64,12 @@ def _find_system_python():
             "/usr/local/bin/python3",
         ]
 
+    # Require execute permission — zip extraction strips the +x bit from
+    # bundled venv pythons, leaving a non-executable file at a path that
+    # `os.path.exists()` would happily return. Checking X_OK skips those
+    # and falls through to a working system Python.
     for path in candidates:
-        if os.path.isfile(path):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
 
     # Last resort: hope "python3" is on PATH

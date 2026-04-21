@@ -3483,9 +3483,14 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
         armature = create_armature(context)
 
         # --- Create puppet mesh + GN modifier ---
+        # Modifier must exist BEFORE build_marionette_tree() runs because
+        # _create_sim_zone() invokes bpy.ops.node.add_simulation_zone(),
+        # whose poll() requires the tree to be visibly edited — which in
+        # Blender 5.2 means tied to an active object's GN modifier.
         mesh = bpy.data.meshes.new("PP_Marionette")
         puppet = bpy.data.objects.new("PP_Marionette", mesh)
         context.collection.objects.link(puppet)
+        context.view_layer.objects.active = puppet
 
         mod = puppet.modifiers.new("PPParty_Physics", 'NODES')
         tree = bpy.data.node_groups.new("PPParty_Marionette",
@@ -3493,11 +3498,69 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
         mod.node_group = tree
 
         # Build the full GN tree (blob head + physics body)
-        context.view_layer.objects.active = puppet
         build_marionette_tree(tree, body_mats, blob_mats, context)
 
-        # Set default materials on modifier sockets (head + body)
-        # The tree has Material sockets — set them to our freshly created mats.
+        # --- Studio Track: create placeholder objects for Object Info ---
+        # Simple UV spheres available in the Object dropdown. Chest/Hips/Foot
+        # are also AUTO-ASSIGNED to their Custom* sockets so the Studio Track
+        # pipeline is pre-wired on Create Marionette — David doesn't have to
+        # load test meshes every session. Hand placeholder is created but NOT
+        # auto-assigned (Custom Hand socket is hidden for V1.0.0 per hands.py
+        # phase). Student swaps placeholders for real meshes via the Object
+        # dropdown on the modifier.
+        _placeholders = {
+            'PP_Placeholder_Chest': (12, 8, 0.2),
+            'PP_Placeholder_Hips':  (12, 8, 0.17),
+            'PP_Placeholder_Hand':  (8, 6, 0.1),
+            'PP_Placeholder_Foot':  (8, 6, 0.12),
+        }
+        _placeholder_socket_map = {
+            'PP_Placeholder_Chest': 'Custom Chest',
+            'PP_Placeholder_Hips':  'Custom Hips',
+            'PP_Placeholder_Foot':  'Custom Foot',
+            # PP_Placeholder_Hand intentionally omitted — Custom Hand
+            # socket is hidden until hand tracking lands in Phase 2.
+        }
+        _placeholder_objs = {}
+        import bmesh
+        for obj_name, (segs, rings, radius) in _placeholders.items():
+            ph_mesh = bpy.data.meshes.new(obj_name)
+            ph_obj = bpy.data.objects.new(obj_name, ph_mesh)
+            context.collection.objects.link(ph_obj)
+
+            bm = bmesh.new()
+            bmesh.ops.create_uvsphere(bm, u_segments=segs,
+                                      v_segments=rings, radius=radius)
+            bm.to_mesh(ph_mesh)
+            bm.free()
+
+            ph_obj.hide_viewport = True
+            ph_obj.hide_render = True
+            ph_obj.hide_select = True
+            _placeholder_objs[obj_name] = ph_obj
+
+        # Set interface default_value as a best-effort hint — Blender 5.2
+        # does NOT reliably propagate this to an already-wired modifier
+        # instance. Both `mod[identifier] = obj` (id-property TypeError)
+        # and `mod.node_group = tree` (scrambles panel parents) failed in
+        # alpha.18 / alpha.19. Student picks the PP_Placeholder_* object
+        # from the Custom Chest / Hips / Foot dropdowns manually — the
+        # placeholders exist in the scene collection so they appear at
+        # the top of the Object picker.
+        for item in tree.interface.items_tree:
+            if (hasattr(item, 'item_type') and item.item_type == 'SOCKET'
+                    and item.in_out == 'INPUT'
+                    and item.socket_type == 'NodeSocketObject'):
+                for ph_name, sock_name in _placeholder_socket_map.items():
+                    if item.name == sock_name and ph_name in _placeholder_objs:
+                        try:
+                            item.default_value = _placeholder_objs[ph_name]
+                        except Exception:
+                            pass
+
+        # --- Set default materials on modifier sockets ---
+        # Materials are instance-level values (mod[id] = mat) — this API
+        # works for Material sockets even though it fails for Object sockets.
         _mat_defaults = {
             # Head materials (passthrough from blob template)
             'Head Material': blob_mats.get('body'),
@@ -3529,34 +3592,7 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
                     except Exception:
                         pass
 
-        # --- Studio Track: create placeholder objects for Object Info ---
-        # Simple capsule meshes available in the Object dropdown so students
-        # see "something goes here" when browsing.  NOT auto-assigned to the
-        # modifier — the default styled capsules stay visible until the
-        # student actively picks a mesh from the dropdown.
-        _placeholders = {
-            'PP_Placeholder_Chest': (12, 8, 0.2),
-            'PP_Placeholder_Hips':  (12, 8, 0.17),
-            'PP_Placeholder_Hand':  (8, 6, 0.1),
-            'PP_Placeholder_Foot':  (8, 6, 0.12),
-        }
-        for obj_name, (segs, rings, radius) in _placeholders.items():
-            ph_mesh = bpy.data.meshes.new(obj_name)
-            ph_obj = bpy.data.objects.new(obj_name, ph_mesh)
-            context.collection.objects.link(ph_obj)
-
-            # Build a simple UV sphere as placeholder geometry
-            import bmesh
-            bm = bmesh.new()
-            bmesh.ops.create_uvsphere(bm, u_segments=segs,
-                                      v_segments=rings, radius=radius)
-            bm.to_mesh(ph_mesh)
-            bm.free()
-
-            # Hide from viewport — students browse and assign via N-panel
-            ph_obj.hide_viewport = True
-            ph_obj.hide_render = True
-            ph_obj.hide_select = True
+        puppet.update_tag()
 
         # Ensure dummy mesh exists (OSC receiver writes shape keys here,
         # then pushes values directly to modifier — no drivers needed)
@@ -3584,8 +3620,10 @@ class PPPARTY_OT_create_marionette(bpy.types.Operator):
         context.scene.render.fps = 30
         context.scene.frame_end = 24000
 
+        ph_count = len(_placeholder_objs)
+        ph_names = ", ".join(sorted(_placeholder_objs.keys()))
         self.report({'INFO'},
-                    "Marionette created! Connect your phone to control it.")
+                    f"Puppet created ({ph_count} placeholders: {ph_names})")
         return {'FINISHED'}
 
 
