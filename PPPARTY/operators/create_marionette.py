@@ -80,7 +80,6 @@ from .marionette.blob_head import (
     enumerate_blob_custom_sockets,
     add_head_customization_sockets,
     build_blob_group,
-    debug_dump_interface_panels,
 )
 
 
@@ -1411,11 +1410,6 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
             if getattr(item, 'parent', None) == head_parent)
         tree.interface.move_to_parent(
             cheek_panel, head_parent, head_children_count)
-
-    # alpha.20 instrumentation — dump the final panel/socket hierarchy
-    # to a Blender text block so David can paste it back if the fix
-    # didn't fully take. Harmless if it works; self-documenting if not.
-    debug_dump_interface_panels(tree, "After all reparents")
 
     # Geometry output
     tree.interface.new_socket(

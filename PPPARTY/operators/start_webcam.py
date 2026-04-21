@@ -156,12 +156,63 @@ class PPPARTY_OT_start_webcam(bpy.types.Operator):
             self.report({'ERROR'}, f"Could not start sender: {e}")
             return {'CANCELLED'}
 
+        # Poll the sender 500ms after launch. If it died — typically an
+        # ImportError because the found Python doesn't have mediapipe or
+        # cv2 installed — we'd otherwise see "tracking started" but never
+        # get any packets. Dump stderr to a text block so the failure is
+        # discoverable without opening a terminal.
+        bpy.app.timers.register(_check_sender_alive, first_interval=0.5)
+
         # Force panel redraw
         for area in context.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
 
         return {'FINISHED'}
+
+
+def _check_sender_alive():
+    """Timer callback: verify the sender process is still running.
+    Called once, 500ms after launch. Returns None to unregister itself.
+    """
+    global _sender_process
+    from .. import receiver
+
+    if _sender_process is None:
+        return None
+
+    returncode = _sender_process.poll()
+    if returncode is None:
+        return None
+
+    try:
+        _, stderr_bytes = _sender_process.communicate(timeout=1)
+        stderr_text = stderr_bytes.decode(errors='replace')
+    except Exception as e:
+        stderr_text = f"(could not read stderr: {e})"
+
+    text_name = "PPParty_Sender_Error"
+    text = bpy.data.texts.get(text_name)
+    if text is None:
+        text = bpy.data.texts.new(text_name)
+    text.clear()
+    text.write(
+        f"MediaPipe sender died with exit code {returncode}.\n"
+        f"The webcam tracking will not work. Common causes:\n"
+        f"  - mediapipe or opencv-python not installed on the Python\n"
+        f"    that was used to launch the sender\n"
+        f"  - webcam permission denied by the OS\n"
+        f"  - another process is already using the webcam\n"
+        f"\n"
+        f"--- stderr ---\n"
+        f"{stderr_text}\n")
+
+    receiver.stop()
+    _sender_process = None
+
+    print(f"[PPParty] Sender died (exit {returncode}). "
+          f"See 'PPParty_Sender_Error' text block for details.")
+    return None
 
 
 class PPPARTY_OT_stop_webcam(bpy.types.Operator):
