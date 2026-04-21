@@ -88,6 +88,10 @@ from .marionette.body_parts import (
     add_limb,
     build_body_parts,
 )
+from .marionette.face_tracking import (
+    FACE_INPUTS,
+    build_face_tracking_interface,
+)
 
 
 # ===================================================================
@@ -134,17 +138,9 @@ LEG_HINGE_BIAS = -0.12         # negative so -(-0.12)=+0.12 → feet forced forw
 POS_NAMES = ['pos_hand_l', 'pos_hand_r', 'pos_foot_l', 'pos_foot_r']
 PREV_NAMES = ['prev_hand_l', 'prev_hand_r', 'prev_foot_l', 'prev_foot_r']
 
-# Face tracking inputs — names matching both GN_BlobPuppet interface
-# and the dummy mesh shape keys. If a name isn't on the blob head,
-# the socket still exists (driver writes to it) but nothing reads it.
-FACE_INPUTS = [
-    'jawOpen', 'mouthSmileLeft', 'mouthSmileRight',
-    'mouthFunnel', 'mouthPucker',
-    'mouthFrownLeft', 'mouthFrownRight', 'mouthLeft', 'mouthRight',
-    'mouthClose', 'eyeBlinkLeft', 'eyeBlinkRight',
-    'eyeWideLeft', 'eyeWideRight', 'eyeLookInLeft', 'eyeLookInRight',
-    'cheekSquintLeft', 'cheekSquintRight',
-]
+# FACE_INPUTS (the 18 ARKit blend shape names) now lives with the face
+# tracking interface builder in marionette/face_tracking.py. Re-exported
+# at the top of this file for callers that still reference it.
 
 
 
@@ -742,30 +738,9 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # INTERFACE — all modifier-level inputs
     # ------------------------------------------------------------------
 
-    # Face tracking (driven by MediaPipe / Live Link Face receiver).
-    # These are plumbing: the receiver writes per-frame, no student ever
-    # touches them by hand, so they stay hidden from the modifier UI.
-    ft_panel = tree.interface.new_panel("Face Tracking")
-    for name in FACE_INPUTS:
-        s = tree.interface.new_socket(
-            name, in_out='INPUT', socket_type='NodeSocketFloat',
-            parent=ft_panel)
-        s.default_value = 0.0
-        s.min_value = 0.0
-        s.max_value = 1.0
-        s.subtype = 'FACTOR'
-        s.hide_in_modifier = True
-
-    # Head rotation (driven by armature head bone) — also plumbing.
-    rot_panel = tree.interface.new_panel("Head Rotation")
-    for rname in ('headRotX', 'headRotY', 'headRotZ'):
-        s = tree.interface.new_socket(
-            rname, in_out='INPUT', socket_type='NodeSocketFloat',
-            parent=rot_panel)
-        s.default_value = 0.0
-        s.min_value = -3.14159
-        s.max_value = 3.14159
-        s.hide_in_modifier = True
+    # Face tracking + head rotation panels (all plumbing, hide_in_modifier).
+    # Implementation lives in marionette/face_tracking.py.
+    build_face_tracking_interface(tree)
 
     # Body movement sensitivity (tune these in the N-panel)
     mv_panel = tree.interface.new_panel("Body Movement")
