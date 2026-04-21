@@ -68,6 +68,7 @@ from .marionette._common import (
     _snap_nodes,
     _new_nodes,
     _frame_section,
+    _vector_lerp,
 )
 from .marionette.capsules import add_dynamic_capsule
 from .marionette.materials import (
@@ -85,6 +86,7 @@ from .marionette.body_parts import (
     add_capsule_part,
     add_sphere_part,
     add_limb,
+    build_body_parts,
 )
 
 
@@ -102,17 +104,11 @@ HIP_R_OFFSET = Vector((0.2, 0.0, -0.3))
 
 # Two-part torso: chest (shoulders attach here) + pelvis (hips attach here)
 # Connected by a waist joint — matches real marionette anatomy (Jim Rose).
+# Body-geometry radii (CHEST_RADIUS, PELVIS_RADIUS, HAND_RADIUS, etc.)
+# live with their consumer in marionette/body_parts.py.
 CHEST_OFFSET = Vector((0.0, 0.0, 0.07))
 PELVIS_OFFSET = Vector((0.0, 0.0, -0.22))
-CHEST_RADIUS = 0.2
-PELVIS_RADIUS = 0.17
-WAIST_JOINT_RADIUS = 0.05
-WAIST_TUBE_RADIUS = 0.04
 
-HAND_RADIUS = 0.1
-FOOT_RADIUS = 0.12
-JOINT_RADIUS = 0.06
-LIMB_TUBE_RADIUS = 0.03
 BLOB_HEAD_SCALE = 0.6  # Blob head scaled to sit on marionette body
 
 # Cheek capsules — reactive puffs that respond to smiling
@@ -125,9 +121,6 @@ CHEEK_PUFF_SCALE = 0.6   # max additional scale from smile (60% bigger at full s
 # Joint constraints (Jim Rose marionette research)
 SHOULDER_FLOAT_SLACK = 0.08    # max drift distance (digital 5/8" slack)
 SHOULDER_FLOAT_ENGAGE = 0.5    # fraction of arm length before float engages
-ELBOW_JOINT_RADIUS = 0.05
-KNEE_JOINT_RADIUS = 0.06
-FOOT_SPLAY_ANGLE = 0.262       # 15 degrees in radians
 HINGE_LIMIT = 0.04             # max Y-component in forbidden direction (was 0.08)
 INWARD_LIMIT = 0.3             # max X-direction toward body center (~17°)
 MIDLINE_MARGIN = 0.18          # hard X clamp — keeps hands outside chest (radius 0.2)
@@ -156,242 +149,14 @@ FACE_INPUTS = [
 
 
 # ===================================================================
-# HELPERS
-# ===================================================================
-
-def _vector_lerp(tree, x, y, label, a_out, b_out, factor_out):
-    """Build a Vector lerp: result = a + (b - a) * factor.
-
-    Returns the output socket of the final ADD node.
-    """
-    diff = add_node(tree, 'ShaderNodeVectorMath', x, y, f"{label} B-A")
-    diff.operation = 'SUBTRACT'
-    tree.links.new(b_out, diff.inputs[0])
-    tree.links.new(a_out, diff.inputs[1])
-
-    scaled = add_node(tree, 'ShaderNodeVectorMath', x + 200, y,
-                      f"{label} *BT")
-    scaled.operation = 'SCALE'
-    tree.links.new(diff.outputs['Vector'], scaled.inputs[0])
-    tree.links.new(factor_out, scaled.inputs['Scale'])
-
-    result = add_node(tree, 'ShaderNodeVectorMath', x + 400, y,
-                      f"{label} Lerp")
-    result.operation = 'ADD'
-    tree.links.new(a_out, result.inputs[0])
-    tree.links.new(scaled.outputs['Vector'], result.inputs[1])
-    return result
-
-
-# ===================================================================
 # REUSABLE NODE GROUPS — collapse repeated math into single nodes
 # ===================================================================
-# Note: PP_DynCapsule (the Minkowski capsule group) has been moved to
-# marionette/capsules.py. See REFACTOR_PLAN.md for the curriculum order.
-
-def _ensure_ik_group():
-    """Create or retrieve the PP_TwoBoneIK node group.
-
-    Analytical two-bone IK via law of cosines + double cross product.
-    Finds elbow/knee position from shoulder-to-hand or hip-to-foot.
-    Replaces ~25 inline nodes per joint.
-    """
-    existing = bpy.data.node_groups.get("PP_TwoBoneIK")
-    if existing:
-        return existing
-
-    g = bpy.data.node_groups.new("PP_TwoBoneIK", 'GeometryNodeTree')
-    g.interface.clear()
-
-    g.interface.new_socket(
-        "Start", in_out='INPUT', socket_type='NodeSocketVector')
-    g.interface.new_socket(
-        "End", in_out='INPUT', socket_type='NodeSocketVector')
-    s = g.interface.new_socket(
-        "Upper Ratio", in_out='INPUT', socket_type='NodeSocketFloat')
-    s.default_value = 0.5
-    s.min_value = 0.3
-    s.max_value = 0.7
-    s = g.interface.new_socket(
-        "Total Length", in_out='INPUT', socket_type='NodeSocketFloat')
-    s.default_value = 0.7
-    g.interface.new_socket(
-        "Bend Axis", in_out='INPUT', socket_type='NodeSocketVector')
-    # Named 'Vector' so callers can use .outputs['Vector'] unchanged
-    g.interface.new_socket(
-        "Vector", in_out='OUTPUT', socket_type='NodeSocketVector')
-
-    dx = 200
-    gin = add_node(g, 'NodeGroupInput', 0, 0, "In")
-
-    # --- Limb segment lengths ---
-    upper = add_node(g, 'ShaderNodeMath', dx, 0, "ULen")
-    upper.operation = 'MULTIPLY'
-    g.links.new(gin.outputs['Total Length'], upper.inputs[0])
-    g.links.new(gin.outputs['Upper Ratio'], upper.inputs[1])
-
-    lower = add_node(g, 'ShaderNodeMath', dx, -100, "LLen")
-    lower.operation = 'SUBTRACT'
-    g.links.new(gin.outputs['Total Length'], lower.inputs[0])
-    g.links.new(upper.outputs['Value'], lower.inputs[1])
-
-    _frame_section(g,
-        "SEGMENT LENGTHS — Split total limb length into upper"
-        " and lower segments by ratio",
-        'attach', [upper, lower])
-
-    # --- Shoulder-to-hand vector ---
-    ab = add_node(g, 'ShaderNodeVectorMath', dx * 2, 0, "AB")
-    ab.operation = 'SUBTRACT'
-    g.links.new(gin.outputs['End'], ab.inputs[0])
-    g.links.new(gin.outputs['Start'], ab.inputs[1])
-
-    d_len = add_node(g, 'ShaderNodeVectorMath', dx * 3, 0, "|AB|")
-    d_len.operation = 'LENGTH'
-    g.links.new(ab.outputs['Vector'], d_len.inputs[0])
-
-    ab_dir = add_node(g, 'ShaderNodeVectorMath', dx * 3, -100, "ABdir")
-    ab_dir.operation = 'NORMALIZE'
-    g.links.new(ab.outputs['Vector'], ab_dir.inputs[0])
-
-    # --- Law of cosines: cos(a) = (u² + d² - l²) / (2·u·d) ---
-    u2 = add_node(g, 'ShaderNodeMath', dx * 4, 80, "u2")
-    u2.operation = 'MULTIPLY'
-    g.links.new(upper.outputs['Value'], u2.inputs[0])
-    g.links.new(upper.outputs['Value'], u2.inputs[1])
-
-    d2 = add_node(g, 'ShaderNodeMath', dx * 4, 0, "d2")
-    d2.operation = 'MULTIPLY'
-    g.links.new(d_len.outputs['Value'], d2.inputs[0])
-    g.links.new(d_len.outputs['Value'], d2.inputs[1])
-
-    l2 = add_node(g, 'ShaderNodeMath', dx * 4, -80, "l2")
-    l2.operation = 'MULTIPLY'
-    g.links.new(lower.outputs['Value'], l2.inputs[0])
-    g.links.new(lower.outputs['Value'], l2.inputs[1])
-
-    u2_d2 = add_node(g, 'ShaderNodeMath', dx * 5, 40, "u2+d2")
-    u2_d2.operation = 'ADD'
-    g.links.new(u2.outputs['Value'], u2_d2.inputs[0])
-    g.links.new(d2.outputs['Value'], u2_d2.inputs[1])
-
-    numer = add_node(g, 'ShaderNodeMath', dx * 5, -40, "Num")
-    numer.operation = 'SUBTRACT'
-    g.links.new(u2_d2.outputs['Value'], numer.inputs[0])
-    g.links.new(l2.outputs['Value'], numer.inputs[1])
-
-    two_u = add_node(g, 'ShaderNodeMath', dx * 5, -120, "2u")
-    two_u.operation = 'MULTIPLY'
-    two_u.inputs[0].default_value = 2.0
-    g.links.new(upper.outputs['Value'], two_u.inputs[1])
-
-    two_ud = add_node(g, 'ShaderNodeMath', dx * 6, -120, "2ud")
-    two_ud.operation = 'MULTIPLY'
-    g.links.new(two_u.outputs['Value'], two_ud.inputs[0])
-    g.links.new(d_len.outputs['Value'], two_ud.inputs[1])
-
-    denom = add_node(g, 'ShaderNodeMath', dx * 6, -200, "Den")
-    denom.operation = 'MAXIMUM'
-    g.links.new(two_ud.outputs['Value'], denom.inputs[0])
-    denom.inputs[1].default_value = 0.001
-
-    cos_a = add_node(g, 'ShaderNodeMath', dx * 6, -40, "CosA")
-    cos_a.operation = 'DIVIDE'
-    g.links.new(numer.outputs['Value'], cos_a.inputs[0])
-    g.links.new(denom.outputs['Value'], cos_a.inputs[1])
-
-    ca_min = add_node(g, 'ShaderNodeMath', dx * 7, -40, "Ca<1")
-    ca_min.operation = 'MINIMUM'
-    g.links.new(cos_a.outputs['Value'], ca_min.inputs[0])
-    ca_min.inputs[1].default_value = 1.0
-
-    ca_clamp = add_node(g, 'ShaderNodeMath', dx * 7, -120, "Ca>-1")
-    ca_clamp.operation = 'MAXIMUM'
-    g.links.new(ca_min.outputs['Value'], ca_clamp.inputs[0])
-    ca_clamp.inputs[1].default_value = -1.0
-
-    _frame_section(g,
-        "LAW OF COSINES — Find the angle at the shoulder/hip"
-        " where two limb-length spheres intersect",
-        'physics', [u2, d2, l2, u2_d2, numer, two_u, two_ud,
-                    denom, cos_a, ca_min, ca_clamp])
-
-    # --- Projection along AB + height off line ---
-    proj = add_node(g, 'ShaderNodeMath', dx * 8, 0, "Proj")
-    proj.operation = 'MULTIPLY'
-    g.links.new(upper.outputs['Value'], proj.inputs[0])
-    g.links.new(ca_clamp.outputs['Value'], proj.inputs[1])
-
-    p2 = add_node(g, 'ShaderNodeMath', dx * 8, -80, "p2")
-    p2.operation = 'MULTIPLY'
-    g.links.new(proj.outputs['Value'], p2.inputs[0])
-    g.links.new(proj.outputs['Value'], p2.inputs[1])
-
-    h2 = add_node(g, 'ShaderNodeMath', dx * 8, -160, "h2")
-    h2.operation = 'SUBTRACT'
-    g.links.new(u2.outputs['Value'], h2.inputs[0])
-    g.links.new(p2.outputs['Value'], h2.inputs[1])
-
-    h2_safe = add_node(g, 'ShaderNodeMath', dx * 9, -160, "h2+")
-    h2_safe.operation = 'MAXIMUM'
-    g.links.new(h2.outputs['Value'], h2_safe.inputs[0])
-    h2_safe.inputs[1].default_value = 0.0
-
-    h_val = add_node(g, 'ShaderNodeMath', dx * 9, -80, "h")
-    h_val.operation = 'SQRT'
-    g.links.new(h2_safe.outputs['Value'], h_val.inputs[0])
-
-    along_sc = add_node(g, 'ShaderNodeVectorMath', dx * 9, 0, "Alng")
-    along_sc.operation = 'SCALE'
-    g.links.new(ab_dir.outputs['Vector'], along_sc.inputs[0])
-    g.links.new(proj.outputs['Value'], along_sc.inputs['Scale'])
-
-    along = add_node(g, 'ShaderNodeVectorMath', dx * 10, 0, "AlP")
-    along.operation = 'ADD'
-    g.links.new(gin.outputs['Start'], along.inputs[0])
-    g.links.new(along_sc.outputs['Vector'], along.inputs[1])
-
-    _frame_section(g,
-        "PROJECTION — Distance along the shoulder-hand line"
-        " and perpendicular height where the joint sits",
-        'control', [proj, p2, h2, h2_safe, h_val, along_sc, along])
-
-    # --- Bend direction via double cross product ---
-    side = add_node(g, 'ShaderNodeVectorMath', dx * 9, -260, "Side")
-    side.operation = 'CROSS_PRODUCT'
-    g.links.new(ab_dir.outputs['Vector'], side.inputs[0])
-    g.links.new(gin.outputs['Bend Axis'], side.inputs[1])
-
-    bend = add_node(g, 'ShaderNodeVectorMath', dx * 10, -260, "Bend")
-    bend.operation = 'CROSS_PRODUCT'
-    g.links.new(ab_dir.outputs['Vector'], bend.inputs[0])
-    g.links.new(side.outputs['Vector'], bend.inputs[1])
-
-    bend_n = add_node(g, 'ShaderNodeVectorMath', dx * 10, -160, "BNrm")
-    bend_n.operation = 'NORMALIZE'
-    g.links.new(bend.outputs['Vector'], bend_n.inputs[0])
-
-    perp = add_node(g, 'ShaderNodeVectorMath', dx * 11, -120, "Perp")
-    perp.operation = 'SCALE'
-    g.links.new(bend_n.outputs['Vector'], perp.inputs[0])
-    g.links.new(h_val.outputs['Value'], perp.inputs['Scale'])
-
-    _frame_section(g,
-        "BEND DIRECTION — Double cross product picks which"
-        " side the elbow/knee bends toward (forward or backward)",
-        'float', [side, bend, bend_n, perp])
-
-    # --- Final joint position ---
-    mid = add_node(g, 'ShaderNodeVectorMath', dx * 11, 0, "Mid")
-    mid.operation = 'ADD'
-    g.links.new(along.outputs['Vector'], mid.inputs[0])
-    g.links.new(perp.outputs['Vector'], mid.inputs[1])
-
-    gout = add_node(g, 'NodeGroupOutput', dx * 12, 0, "Out")
-    g.links.new(mid.outputs['Vector'], gout.inputs['Vector'])
-
-    return g
-
+# Note: PP_DynCapsule (the Minkowski capsule group) lives in
+# marionette/capsules.py. PP_TwoBoneIK (elbow/knee solver) lives in
+# marionette/body_parts.py (sibling of the body composition it serves).
+# PP_ShoulderFloat (Jim Rose shoulder drift) is still defined below
+# and will move with physics.py in a later refactor step.
+# See REFACTOR_PLAN.md for the curriculum order.
 
 def _ensure_float_group():
     """Create or retrieve the PP_ShoulderFloat node group.
@@ -888,36 +653,6 @@ def _apply_shoulder_float(tree, x, y, label,
     tree.links.new(endpoint_pos_out, grp.inputs['Endpoint Pos'])
     tree.links.new(float_amount_out, grp.inputs['Float Amount'])
     tree.links.new(arm_length_out, grp.inputs['Arm Length'])
-    return grp
-
-
-# ===================================================================
-# ANALYTICAL MID-JOINTS — two-bone IK solve for elbows/knees
-# ===================================================================
-
-def _compute_mid_joint(tree, x, y, label,
-                       start_socket, end_socket,
-                       upper_ratio_out, total_length_out,
-                       bend_axis, bend_axis_socket=None):
-    """Compute elbow/knee position via the PP_TwoBoneIK node group.
-
-    Law of cosines + double cross product finds the joint position.
-    bend_axis: default direction tuple (fallback when no socket wired).
-    bend_axis_socket: optional dynamic socket overriding the static default.
-    Returns the group node (.outputs['Vector'] = mid-joint position).
-    """
-    ik_tree = _ensure_ik_group()
-    grp = add_node(tree, 'GeometryNodeGroup', x, y, label)
-    grp.node_tree = ik_tree
-    tree.links.new(start_socket, grp.inputs['Start'])
-    tree.links.new(end_socket, grp.inputs['End'])
-    tree.links.new(upper_ratio_out, grp.inputs['Upper Ratio'])
-    tree.links.new(total_length_out, grp.inputs['Total Length'])
-    if bend_axis_socket is not None:
-        tree.links.new(bend_axis_socket, grp.inputs['Bend Axis'])
-    else:
-        grp.inputs['Bend Axis'].default_value = (
-            bend_axis[0] + 0.001, bend_axis[1], bend_axis[2])
     return grp
 
 
@@ -2709,374 +2444,33 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
-    # SECTION 8 — Visual body parts (capsules + customization colors)
+    # SECTIONS 8 + 9 — Visual body parts + skeleton (curves, IK, neck)
     # ------------------------------------------------------------------
-    # V0.8.0: Dynamic Minkowski capsules replace UV Spheres. Body Width
-    # slider drives chest/pelvis extension. Hand/Foot Size scales radii.
-    # Colors from Group Input customization sockets.
-    x_part = 1800
-    parts_geo = []
-
-    # --- Color materials: created once, assigned via Set Material node ---
-    # Materials use hardcoded colors as defaults, but the kid can change
-    # them via the customization panel color sockets.
-    # For now, materials are static (same as before) because GN can't
-    # change material base color per-instance. Color sockets are reserved
-    # for a future build using Attribute nodes or vertex color painting.
-
-    # --- Capsule body parts ---
-    # Track indices for Studio Track custom object replacement
-    _idx_chest = len(parts_geo)
-    # Chest: dynamic capsule, extends along X (wider torso)
-    add_capsule_part(tree, x_part, parts_geo,0, "Chest", CHEST_RADIUS,
-                      chest_pos.outputs['Vector'], body_mats['body'],
-                      scale=(1.1, 0.8, 1.05),
-                      width_output=group_in.outputs['Body Width'],
-                      ext_factor=0.15, axis='X',
-                      mat_socket=group_in.outputs['Body Part Material'])
-
-    # Pelvis: dynamic capsule, same width driver (slightly less extension)
-    _idx_pelvis = len(parts_geo)
-    add_capsule_part(tree, x_part, parts_geo,-280, "Pelvis", PELVIS_RADIUS,
-                      pelvis_pos.outputs['Vector'], body_mats['body'],
-                      scale=(1.0, 0.85, 0.9),
-                      width_output=group_in.outputs['Body Width'],
-                      ext_factor=0.12, axis='X',
-                      mat_socket=group_in.outputs['Body Part Material'])
-
-    # Waist joint (small sphere)
-    add_sphere_part(tree, x_part, parts_geo,-460, "Waist Jnt", WAIST_JOINT_RADIUS,
-                     waist_mid.outputs['Vector'], body_mats['joint'],
-                     mat_socket=group_in.outputs['Joint Material'])
-
-    # --- Direct hand placement: bypass Verlet when body tracking active ---
-    # When arms are tracked by the webcam, place hands directly at the
-    # tracked position (shoulder + wrist-shoulder delta from MediaPipe).
-    # When not tracked, fall back to Verlet physics output (marionette feel).
-    # Lerp factor = arm visibility × Body Tracking.
-    # Proportional hand placement — match the performer's arm extension
-    # ratio rather than raw tracking distance. This ensures the IK solver
-    # has room to compute proper elbow bend angles, regardless of the
-    # puppet's arm length vs the performer's arm length.
-    # Hand = shoulder + normalize(delta) × extension_ratio × ArmLength
-    x_dh = x_part - 600
-
-    # Left hand: direction + scaled reach
-    dir_l = add_node(tree, 'ShaderNodeVectorMath', x_dh, -620, "Dir HL")
-    dir_l.operation = 'NORMALIZE'
-    tree.links.new(group_in.outputs['bt_shl_delta'], dir_l.inputs[0])
-
-    reach_l = add_node(tree, 'ShaderNodeMath', x_dh + 200, -560,
-                        "Reach L")
-    reach_l.operation = 'MULTIPLY'
-    tree.links.new(group_in.outputs['bt_arm_l_ext'], reach_l.inputs[0])
-    tree.links.new(group_in.outputs['Arm Length'], reach_l.inputs[1])
-
-    hand_off_l = add_node(tree, 'ShaderNodeVectorMath', x_dh + 200, -620,
-                           "Hand Off L")
-    hand_off_l.operation = 'SCALE'
-    tree.links.new(dir_l.outputs['Vector'], hand_off_l.inputs[0])
-    tree.links.new(reach_l.outputs['Value'], hand_off_l.inputs['Scale'])
-
-    tracked_hand_l = add_node(tree, 'ShaderNodeVectorMath', x_dh + 400,
-                              -620, "Tracked HL")
-    tracked_hand_l.operation = 'ADD'
-    tree.links.new(shl_visual.outputs['Vector'],
-                   tracked_hand_l.inputs[0])
-    tree.links.new(hand_off_l.outputs['Vector'],
-                   tracked_hand_l.inputs[1])
-
-    # Right hand: direction + scaled reach
-    dir_r = add_node(tree, 'ShaderNodeVectorMath', x_dh, -780, "Dir HR")
-    dir_r.operation = 'NORMALIZE'
-    tree.links.new(group_in.outputs['bt_shr_delta'], dir_r.inputs[0])
-
-    reach_r = add_node(tree, 'ShaderNodeMath', x_dh + 200, -720,
-                        "Reach R")
-    reach_r.operation = 'MULTIPLY'
-    tree.links.new(group_in.outputs['bt_arm_r_ext'], reach_r.inputs[0])
-    tree.links.new(group_in.outputs['Arm Length'], reach_r.inputs[1])
-
-    hand_off_r = add_node(tree, 'ShaderNodeVectorMath', x_dh + 200, -780,
-                           "Hand Off R")
-    hand_off_r.operation = 'SCALE'
-    tree.links.new(dir_r.outputs['Vector'], hand_off_r.inputs[0])
-    tree.links.new(reach_r.outputs['Value'], hand_off_r.inputs['Scale'])
-
-    tracked_hand_r = add_node(tree, 'ShaderNodeVectorMath', x_dh + 400,
-                              -780, "Tracked HR")
-    tracked_hand_r.operation = 'ADD'
-    tree.links.new(shr_visual.outputs['Vector'],
-                   tracked_hand_r.inputs[0])
-    tree.links.new(hand_off_r.outputs['Vector'],
-                   tracked_hand_r.inputs[1])
-
-    hand_l_lerp = _vector_lerp(tree, x_dh + 200, -620, "HandL",
-                               sim_out.outputs['pos_hand_l'],
-                               tracked_hand_l.outputs['Vector'],
-                               arm_l_factor.outputs['Value'])
-    hand_l_pos = hand_l_lerp.outputs['Vector']
-
-    hand_r_lerp = _vector_lerp(tree, x_dh + 200, -780, "HandR",
-                               sim_out.outputs['pos_hand_r'],
-                               tracked_hand_r.outputs['Vector'],
-                               arm_r_factor.outputs['Value'])
-    hand_r_pos = hand_r_lerp.outputs['Vector']
-
-    # Hands: capsules with Width + Rotation + Tilt (mirrored L/R)
-    _idx_hand_l = len(parts_geo)
-    add_capsule_part(tree, x_part, parts_geo,-620, "Hand L", HAND_RADIUS,
-                      hand_l_pos, body_mats['hand'],
-                      width_output=group_in.outputs['Hand Width'],
-                      ext_factor=0.3, axis='Z', subdivs=4,
-                      uniform_scale_out=group_in.outputs['Hand Size'],
-                      rotation_output=group_in.outputs['Hand Rotation'],
-                      tilt_output=group_in.outputs['Hand Tilt'],
-                      tilt_axis='X',
-                      mat_socket=group_in.outputs['Hand Material'])
-    _idx_hand_r = len(parts_geo)
-    add_capsule_part(tree, x_part, parts_geo,-780, "Hand R", HAND_RADIUS,
-                      hand_r_pos, body_mats['hand'],
-                      width_output=group_in.outputs['Hand Width'],
-                      ext_factor=0.3, axis='Z', subdivs=4,
-                      uniform_scale_out=group_in.outputs['Hand Size'],
-                      rotation_output=group_in.outputs['Hand Rotation'],
-                      tilt_output=group_in.outputs['Hand Tilt'],
-                      tilt_axis='X',
-                      mat_socket=group_in.outputs['Hand Material'])
-
-    # Feet: capsules with Width + Rotation on Z (mirrored) + Depth
-    _idx_foot_l = len(parts_geo)
-    add_capsule_part(tree, x_part, parts_geo,-940, "Foot L", FOOT_RADIUS,
-                      sim_out.outputs['pos_foot_l'], body_mats['foot'],
-                      rotation=(0, 0, FOOT_SPLAY_ANGLE),
-                      width_output=group_in.outputs['Foot Width'],
-                      ext_factor=0.3, axis='Y', subdivs=4,
-                      uniform_scale_out=group_in.outputs['Foot Size'],
-                      rotation_output=group_in.outputs['Foot Rotation'],
-                      rot_axis='Z',
-                      depth_output=group_in.outputs['Foot Depth'],
-                      depth_axis='Y',
-                      mat_socket=group_in.outputs['Foot Material'])
-    _idx_foot_r = len(parts_geo)
-    add_capsule_part(tree, x_part, parts_geo,-1100, "Foot R", FOOT_RADIUS,
-                      sim_out.outputs['pos_foot_r'], body_mats['foot'],
-                      rotation=(0, 0, -FOOT_SPLAY_ANGLE),
-                      width_output=group_in.outputs['Foot Width'],
-                      ext_factor=0.3, axis='Y', subdivs=4,
-                      uniform_scale_out=group_in.outputs['Foot Size'],
-                      rotation_output=group_in.outputs['Foot Rotation'],
-                      rot_axis='Z', negate_rot=True,
-                      depth_output=group_in.outputs['Foot Depth'],
-                      depth_axis='Y',
-                      mat_socket=group_in.outputs['Foot Material'])
-
-    # Shoulder joints: capsules with Width + Rotation
-    add_capsule_part(tree, x_part, parts_geo,-1260, "Jnt ShL", JOINT_RADIUS,
-                      sim_out.outputs['floated_shl'], body_mats['joint'],
-                      width_output=group_in.outputs['Shoulder Width'],
-                      ext_factor=0.3, axis='Z', subdivs=3,
-                      rotation_output=group_in.outputs['Shoulder Rotation'],
-                      mat_socket=group_in.outputs['Joint Material'])
-    add_capsule_part(tree, x_part, parts_geo,-1360, "Jnt ShR", JOINT_RADIUS,
-                      sim_out.outputs['floated_shr'], body_mats['joint'],
-                      width_output=group_in.outputs['Shoulder Width'],
-                      ext_factor=0.3, axis='Z', subdivs=3,
-                      rotation_output=group_in.outputs['Shoulder Rotation'],
-                      mat_socket=group_in.outputs['Joint Material'])
-
-    # Hip joints (small spheres — stay spherical)
-    add_sphere_part(tree, x_part, parts_geo,-1460, "Jnt HipL", JOINT_RADIUS,
-                     hipl_visual.outputs['Vector'], body_mats['joint'],
-                     mat_socket=group_in.outputs['Joint Material'])
-    add_sphere_part(tree, x_part, parts_geo,-1560, "Jnt HipR", JOINT_RADIUS,
-                     hipr_visual.outputs['Vector'], body_mats['joint'],
-                     mat_socket=group_in.outputs['Joint Material'])
-
-    _frame_section(tree,
-        "THE PUPPET'S BODY — Minkowski capsules (chest, pelvis,"
-        " hands, feet, shoulders) + sphere joints + materials",
-        'body', _new_nodes(tree, _s))
-    _s = _snap_nodes(tree)
-
-    # ------------------------------------------------------------------
-    # SECTION 9 — Limb curves + neck
-    # ------------------------------------------------------------------
-    x_limb = 2600
-
-    profile = add_node(tree, 'GeometryNodeCurvePrimitiveCircle',
-                       x_limb - 200, -1400, "Tube Profile")
-    profile.mode = 'RADIUS'
-    profile.inputs['Radius'].default_value = LIMB_TUBE_RADIUS
-    profile.inputs['Resolution'].default_value = 6
-
-    # --- Analytical mid-joints (two-bone IK for elbows/knees) ---
-    x_mid = x_limb - 2400  # mid-joint computation nodes to the left
-
-    # Elbow bend hints: blend between default backward bend and
-    # tracked elbow direction from body landmarks
-    elbow_default = add_node(tree, 'ShaderNodeCombineXYZ',
-                             x_mid - 800, -200, "Elbow Default")
-    elbow_default.inputs['X'].default_value = 0.001
-    elbow_default.inputs['Y'].default_value = -1.0
-    elbow_default.inputs['Z'].default_value = 0.0
-
-    elbow_l_bend = _vector_lerp(
-        tree, x_mid - 600, -200, "ELB",
-        elbow_default.outputs['Vector'],
-        group_in.outputs['bt_elbow_l_hint'],
-        arm_l_factor.outputs['Value'])
-
-    elbow_r_bend = _vector_lerp(
-        tree, x_mid - 600, -550, "ERB",
-        elbow_default.outputs['Vector'],
-        group_in.outputs['bt_elbow_r_hint'],
-        arm_r_factor.outputs['Value'])
-
-    elbow_l = _compute_mid_joint(
-        tree, x_mid, -200, "Elbow L",
-        start_socket=sim_out.outputs['floated_shl'],
-        end_socket=hand_l_pos,
-        upper_ratio_out=group_in.outputs['Upper Arm Ratio'],
-        total_length_out=group_in.outputs['Arm Length'],
-        bend_axis=(0, -1, 0),
-        bend_axis_socket=elbow_l_bend.outputs['Vector'])
-
-    elbow_r = _compute_mid_joint(
-        tree, x_mid, -550, "Elbow R",
-        start_socket=sim_out.outputs['floated_shr'],
-        end_socket=hand_r_pos,
-        upper_ratio_out=group_in.outputs['Upper Arm Ratio'],
-        total_length_out=group_in.outputs['Arm Length'],
-        bend_axis=(0, -1, 0),
-        bend_axis_socket=elbow_r_bend.outputs['Vector'])
-
-    knee_l = _compute_mid_joint(
-        tree, x_mid, -900, "Knee L",
-        start_socket=hipl_visual.outputs['Vector'],
-        end_socket=sim_out.outputs['pos_foot_l'],
-        upper_ratio_out=group_in.outputs['Upper Leg Ratio'],
-        total_length_out=group_in.outputs['Leg Length'],
-        bend_axis=(0, 1, 0))  # knees bend forward
-
-    knee_r = _compute_mid_joint(
-        tree, x_mid, -1250, "Knee R",
-        start_socket=hipr_visual.outputs['Vector'],
-        end_socket=sim_out.outputs['pos_foot_r'],
-        upper_ratio_out=group_in.outputs['Upper Leg Ratio'],
-        total_length_out=group_in.outputs['Leg Length'],
-        bend_axis=(0, 1, 0))
-
-    # --- Split limbs: upper segment → joint sphere → lower segment ---
-    # Arms (floated shoulders → elbow → hand)
-    add_limb(tree, x_limb, profile, parts_geo,-100, "UArm L",
-              sim_out.outputs['floated_shl'],
-              elbow_l.outputs['Vector'], body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-    add_limb(tree, x_limb, profile, parts_geo,-170, "FArm L",
-              elbow_l.outputs['Vector'],
-              hand_l_pos, body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-    add_limb(tree, x_limb, profile, parts_geo,-240, "UArm R",
-              sim_out.outputs['floated_shr'],
-              elbow_r.outputs['Vector'], body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-    add_limb(tree, x_limb, profile, parts_geo,-310, "FArm R",
-              elbow_r.outputs['Vector'],
-              hand_r_pos, body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-
-    # Legs (hips → knee → foot)
-    add_limb(tree, x_limb, profile, parts_geo,-410, "Thigh L",
-              hipl_visual.outputs['Vector'],
-              knee_l.outputs['Vector'], body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-    add_limb(tree, x_limb, profile, parts_geo,-480, "Shin L",
-              knee_l.outputs['Vector'],
-              sim_out.outputs['pos_foot_l'], body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-    add_limb(tree, x_limb, profile, parts_geo,-550, "Thigh R",
-              hipr_visual.outputs['Vector'],
-              knee_r.outputs['Vector'], body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-    add_limb(tree, x_limb, profile, parts_geo,-620, "Shin R",
-              knee_r.outputs['Vector'],
-              sim_out.outputs['pos_foot_r'], body_mats['limb'],
-              mat_socket=group_in.outputs['Limb Material'])
-
-    # Elbow/knee joint spheres
-    add_sphere_part(tree, x_part, parts_geo,-1420, "Elbow L", ELBOW_JOINT_RADIUS,
-                     elbow_l.outputs['Vector'], body_mats['joint'],
-                     mat_socket=group_in.outputs['Joint Material'])
-    add_sphere_part(tree, x_part, parts_geo,-1520, "Elbow R", ELBOW_JOINT_RADIUS,
-                     elbow_r.outputs['Vector'], body_mats['joint'],
-                     mat_socket=group_in.outputs['Joint Material'])
-    add_sphere_part(tree, x_part, parts_geo,-1620, "Knee L", KNEE_JOINT_RADIUS,
-                     knee_l.outputs['Vector'], body_mats['joint'],
-                     mat_socket=group_in.outputs['Joint Material'])
-    add_sphere_part(tree, x_part, parts_geo,-1720, "Knee R", KNEE_JOINT_RADIUS,
-                     knee_r.outputs['Vector'], body_mats['joint'],
-                     mat_socket=group_in.outputs['Joint Material'])
-
-    # Neck (chest top → head bottom) — tracks chest sway
-    neck_top_off = add_node(tree, 'ShaderNodeCombineXYZ',
-                            x_limb - 400, -900, "Neck Top Off")
-    neck_top_off.inputs['Z'].default_value = 0.15  # above chest center
-    neck_top = add_node(tree, 'ShaderNodeVectorMath',
-                        x_limb - 200, -900, "Neck Top")
-    neck_top.operation = 'ADD'
-    tree.links.new(chest_pos.outputs['Vector'], neck_top.inputs[0])
-    tree.links.new(neck_top_off.outputs['Vector'], neck_top.inputs[1])
-
-    neck_bot_off = add_node(tree, 'ShaderNodeCombineXYZ',
-                            x_limb - 400, -1050, "Neck Bot Off")
-    neck_bot_off.inputs['Z'].default_value = 0.28  # toward head
-    neck_bot = add_node(tree, 'ShaderNodeVectorMath',
-                        x_limb - 200, -1050, "Neck Bot")
-    neck_bot.operation = 'ADD'
-    tree.links.new(chest_pos.outputs['Vector'], neck_bot.inputs[0])
-    tree.links.new(neck_bot_off.outputs['Vector'], neck_bot.inputs[1])
-
-    add_limb(tree, x_limb, profile, parts_geo,-800, "Neck",
-              neck_top.outputs['Vector'],
-              neck_bot.outputs['Vector'], body_mats['body'],
-              mat_socket=group_in.outputs['Body Part Material'])
-
-    # Spine / waist connector (chest → pelvis, thicker than limbs)
-    waist_profile = add_node(tree, 'GeometryNodeCurvePrimitiveCircle',
-                             x_limb - 200, -1550, "Waist Profile")
-    waist_profile.mode = 'RADIUS'
-    waist_profile.inputs['Radius'].default_value = WAIST_TUBE_RADIUS
-    waist_profile.inputs['Resolution'].default_value = 6
-
-    spine_ln = add_node(tree, 'GeometryNodeCurvePrimitiveLine',
-                        x_limb, -1200, "Spine Ln")
-    spine_ln.mode = 'POINTS'
-    tree.links.new(chest_pos.outputs['Vector'], spine_ln.inputs['Start'])
-    tree.links.new(pelvis_pos.outputs['Vector'], spine_ln.inputs['End'])
-
-    spine_tube = add_node(tree, 'GeometryNodeCurveToMesh',
-                          x_limb + 200, -1200, "Spine Tube")
-    tree.links.new(spine_ln.outputs['Curve'], spine_tube.inputs['Curve'])
-    tree.links.new(waist_profile.outputs['Curve'],
-                   spine_tube.inputs['Profile Curve'])
-
-    spine_sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
-                        x_limb + 400, -1200, "Spine Sm")
-    tree.links.new(spine_tube.outputs['Mesh'], spine_sm.inputs['Geometry'])
-
-    spine_mt = add_node(tree, 'GeometryNodeSetMaterial',
-                        x_limb + 600, -1200, "Spine Mt")
-    tree.links.new(spine_sm.outputs['Geometry'], spine_mt.inputs['Geometry'])
-    tree.links.new(group_in.outputs['Body Part Material'],
-                   spine_mt.inputs['Material'])
-    parts_geo.append(spine_mt.outputs['Geometry'])
-
-    _frame_section(tree,
-        "THE SKELETON — Two-bone IK (law of cosines) for"
-        " elbows/knees + limb tubes + neck + spine",
-        'skeleton', _new_nodes(tree, _s))
-    _s = _snap_nodes(tree)
+    # All capsule composition, direct hand placement, limb tubes,
+    # elbow/knee IK, neck, and spine live in marionette/body_parts.py.
+    # That module owns its own framing for both "THE PUPPET'S BODY" and
+    # "THE SKELETON" frames; the returned dict feeds Studio Track
+    # overrides (Section 10) and Assembly (Section 11).
+    body = build_body_parts(
+        tree, group_in, sim_out, body_mats,
+        chest_pos, pelvis_pos, waist_mid,
+        hipl_visual, hipr_visual,
+        shl_visual, shr_visual,
+        arm_l_factor, arm_r_factor,
+        snap_state=_s,
+    )
+    parts_geo = body['parts_geo']
+    _idx_chest = body['_idx_chest']
+    _idx_pelvis = body['_idx_pelvis']
+    _idx_hand_l = body['_idx_hand_l']
+    _idx_hand_r = body['_idx_hand_r']
+    _idx_foot_l = body['_idx_foot_l']
+    _idx_foot_r = body['_idx_foot_r']
+    hand_l_pos = body['hand_l_pos']
+    hand_r_pos = body['hand_r_pos']
+    x_part = body['x_part']
+    x_limb = body['x_limb']
+    _s = body['snap_state']
 
     # ------------------------------------------------------------------
     # SECTION 10 — Studio Track: Custom body part overrides

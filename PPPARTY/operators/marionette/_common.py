@@ -21,6 +21,8 @@ Helpers in this file:
     _new_nodes      — "list the nodes that appeared since we remembered"
     _frame_section  — wrap a set of nodes in a colored, labeled Frame so
                       the GN editor reads like a blueprint
+    _vector_lerp    — blend two Vector sockets by a float factor
+                      (result = a + (b - a) * factor)
 
 About the leading underscore on some names: in Python, a leading
 underscore is a convention meaning "this is internal to the package —
@@ -135,3 +137,41 @@ def _frame_section(tree, label, color_key, nodes):
         if n.parent is None:
             n.parent = frame
     return frame
+
+
+# ===========================================================================
+# VECTOR LERP — blend between two Vector sockets
+# ===========================================================================
+# Used wherever two vector signals need to cross-fade based on a 0..1 slider.
+# The marionette uses this to mix face-heuristic attachment deltas with
+# real body-tracking deltas when the "Body Tracking" slider is above 0, and
+# to blend default elbow/knee bend axes with expression-driven overrides.
+#
+# Math: result = a + (b - a) * factor
+#   factor = 0 -> result = a
+#   factor = 1 -> result = b
+# Three nodes: (b - a), scaled by factor, added back to a. Returns the
+# final ADD node so the caller can chain `.outputs['Vector']` off it.
+
+def _vector_lerp(tree, x, y, label, a_out, b_out, factor_out):
+    """Build a Vector lerp: result = a + (b - a) * factor.
+
+    Returns the output socket of the final ADD node.
+    """
+    diff = add_node(tree, 'ShaderNodeVectorMath', x, y, f"{label} B-A")
+    diff.operation = 'SUBTRACT'
+    tree.links.new(b_out, diff.inputs[0])
+    tree.links.new(a_out, diff.inputs[1])
+
+    scaled = add_node(tree, 'ShaderNodeVectorMath', x + 200, y,
+                      f"{label} *BT")
+    scaled.operation = 'SCALE'
+    tree.links.new(diff.outputs['Vector'], scaled.inputs[0])
+    tree.links.new(factor_out, scaled.inputs['Scale'])
+
+    result = add_node(tree, 'ShaderNodeVectorMath', x + 400, y,
+                      f"{label} Lerp")
+    result.operation = 'ADD'
+    tree.links.new(a_out, result.inputs[0])
+    tree.links.new(scaled.outputs['Vector'], result.inputs[1])
+    return result
