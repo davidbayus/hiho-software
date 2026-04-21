@@ -235,9 +235,10 @@ def matrix_to_euler(mat):
 
     # Map MediaPipe (Y-up) → Blender (Z-up):
     #   pitch → headRotX (nod),  roll → headRotY (tilt),  yaw → headRotZ (turn)
-    # Coordinate transform (MP→Blender) preserves X rotation sign,
-    # negates Y (roll), and maps Y→Z rotation (yaw keeps selfie-mirror negate).
-    return pitch, -roll, -yaw
+    # Yaw sign: NOT negated. MediaPipe's FaceLandmarker matrix is already
+    # in the camera's view frame (not mirrored), so passing yaw through
+    # directly makes the puppet turn the same way the performer does.
+    return pitch, -roll, yaw
 
 
 # ---------------------------------------------------------------------------
