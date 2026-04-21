@@ -1365,6 +1365,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # move on independent timelines; PPParty keeps that separation
     # so walking, leaning, and counter-sway stay authentic.
     studio_panel = tree.interface.new_panel("Studio Track")
+    # Custom Head placeholder socket — hidden for V1.0.0. The Blob Head is
+    # currently the only head option. Un-hide when Round E1 ships custom
+    # sculpted-head support (Face-It-style shape-key binding).
+    s = tree.interface.new_socket(
+        "Custom Head", in_out='INPUT',
+        socket_type='NodeSocketObject', parent=studio_panel)
+    s.hide_in_modifier = True
     tree.interface.new_socket(
         "Custom Chest", in_out='INPUT',
         socket_type='NodeSocketObject', parent=studio_panel)
