@@ -30,12 +30,7 @@ from .operators.start_webcam import (
     PPPARTY_OT_stop_webcam,
 )
 from .operators.debug_modifier import PPPARTY_OT_debug_modifier
-from .ui.panels import (
-    PPPARTY_PT_main_panel,
-    PPPARTY_PT_connect_panel,
-    PPPARTY_PT_debug_panel,
-    PPPARTY_PT_instructions_panel,
-)
+from .ui.panels import PPPARTY_PT_main_panel
 
 # Shared tracking receiver — handles both MediaPipe and Live Link Face
 receiver = TrackingReceiver()
@@ -75,9 +70,6 @@ classes = (
     PPPARTY_OT_disconnect_phone,
     PPPARTY_OT_debug_modifier,
     PPPARTY_PT_main_panel,
-    PPPARTY_PT_connect_panel,
-    PPPARTY_PT_debug_panel,
-    PPPARTY_PT_instructions_panel,
 )
 
 
