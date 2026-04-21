@@ -133,6 +133,16 @@ def _frame_section(tree, label, color_key, nodes):
     frame.color = FRAME_COLORS[color_key]
     frame.label_size = 20
     frame.shrink = True
+    # Seed the frame at the bottom-left corner of its children before
+    # parenting. shrink=True auto-fits the frame around its contents, but
+    # Blender doesn't recompute that until the user first interacts with
+    # the editor — so without this, every frame sits at (0, 0) the moment
+    # a freshly built .blend is opened, stacked in a pile until dragged.
+    # Blender rebases each child's offset when parented, so world
+    # positions stay put.
+    min_x = min((n.location.x for n in nodes if n.parent is None), default=0.0)
+    min_y = min((n.location.y for n in nodes if n.parent is None), default=0.0)
+    frame.location = (min_x, min_y)
     for n in nodes:
         if n.parent is None:
             n.parent = frame
