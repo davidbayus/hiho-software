@@ -94,6 +94,7 @@ from .marionette.face_tracking import (
 )
 from .marionette.body_movement import build_body_movement
 from .marionette.physics import build_physics, SHOULDER_FLOAT_SLACK
+from .marionette.studio_track import build_studio_track
 
 
 # ===================================================================
@@ -1198,151 +1199,25 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
 
     # ------------------------------------------------------------------
     # SECTION 10 — Studio Track: Custom body part overrides
-    # When a student assigns a custom object, it replaces the capsule.
-    # Uses Object Info to read geometry, Switch to select default/custom.
     # ------------------------------------------------------------------
-    x_cust = 3000
-
-    def _custom_object_switch(label, obj_socket_name, pos_socket,
-                              capsule_idx, y_row, mirror_x=False,
-                              rot_socket=None, scale_socket=None):
-        """Replace a capsule with custom object geometry if assigned.
-
-        Creates Object Info → face count check → Switch → Transform.
-        If the object has faces (student assigned something), use it.
-        Otherwise keep the default capsule.
-
-        `rot_socket` and `scale_socket` are optional Vector sockets.
-        When wired, the custom mesh picks up the same rotation/scale
-        the default capsule receives (e.g. chest lean, hips counter-
-        twist). Left unwired, the Transform stays at zero rotation +
-        unit scale so today's behavior is unchanged.
-        """
-        obj_info = add_node(tree, 'GeometryNodeObjectInfo',
-                            x_cust, y_row, f"Custom {label}")
-        obj_info.transform_space = 'RELATIVE'
-        tree.links.new(group_in.outputs[obj_socket_name],
-                       obj_info.inputs['Object'])
-
-        # Check face count — if > 0, student assigned a mesh
-        domain_sz = add_node(tree, 'GeometryNodeAttributeDomainSize',
-                             x_cust + 200, y_row,
-                             f"Custom {label} Size")
-        tree.links.new(obj_info.outputs['Geometry'],
-                       domain_sz.inputs['Geometry'])
-
-        has_custom = add_node(tree, 'FunctionNodeCompare',
-                              x_cust + 400, y_row,
-                              f"Custom {label} ?")
-        has_custom.data_type = 'INT'
-        has_custom.operation = 'GREATER_THAN'
-        tree.links.new(domain_sz.outputs['Face Count'],
-                       has_custom.inputs[2])
-        has_custom.inputs[3].default_value = 0
-
-        # Transform custom geo to body part position
-        cust_tf = add_node(tree, 'GeometryNodeTransform',
-                           x_cust + 400, y_row - 100,
-                           f"Custom {label} TF")
-        tree.links.new(obj_info.outputs['Geometry'],
-                       cust_tf.inputs['Geometry'])
-        tree.links.new(pos_socket, cust_tf.inputs['Translation'])
-        if rot_socket is not None:
-            tree.links.new(rot_socket, cust_tf.inputs['Rotation'])
-        if mirror_x:
-            cust_tf.inputs['Scale'].default_value = (-1.0, 1.0, 1.0)
-        elif scale_socket is not None:
-            tree.links.new(scale_socket, cust_tf.inputs['Scale'])
-
-        # Shade smooth
-        cust_sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
-                           x_cust + 600, y_row - 100,
-                           f"Custom {label} Sm")
-        tree.links.new(cust_tf.outputs['Geometry'],
-                       cust_sm.inputs['Geometry'])
-
-        # Switch: custom or default capsule
-        switch = add_node(tree, 'GeometryNodeSwitch',
-                          x_cust + 800, y_row,
-                          f"Custom {label} Switch")
-        switch.input_type = 'GEOMETRY'
-        tree.links.new(has_custom.outputs['Result'],
-                       switch.inputs['Switch'])
-        # False = default capsule (index 0), True = custom (index 1)
-        tree.links.new(parts_geo[capsule_idx],
-                       switch.inputs[False])
-        tree.links.new(cust_sm.outputs['Geometry'],
-                       switch.inputs[True])
-
-        # Replace the capsule entry with the switch output
-        parts_geo[capsule_idx] = switch.outputs['Output']
-
-    # --- Dampened head rotation for chest + hips custom slots ---
-    # Jim Rose waist-cord in motion: head pulls chest, chest pulls
-    # hips, each with progressively less twist. A fresh CombineXYZ
-    # is built here (rather than reusing head_rot_vec from the blob
-    # section) so this block stays scope-safe even when no blob head
-    # is loaded. Bare Minkowski capsules are sphere-ish and rotation-
-    # invariant, so only the custom-object Transform consumes these.
-    head_rot_cust = add_node(tree, 'ShaderNodeCombineXYZ',
-                             x_cust - 400, 300, "Studio Head Rot")
-    tree.links.new(group_in.outputs['headRotX'],
-                   head_rot_cust.inputs['X'])
-    tree.links.new(group_in.outputs['headRotY'],
-                   head_rot_cust.inputs['Y'])
-    tree.links.new(group_in.outputs['headRotZ'],
-                   head_rot_cust.inputs['Z'])
-
-    chest_rot_damp = add_node(tree, 'ShaderNodeVectorMath',
-                              x_cust - 200, 200, "Chest Rot x0.5")
-    chest_rot_damp.operation = 'SCALE'
-    tree.links.new(head_rot_cust.outputs['Vector'],
-                   chest_rot_damp.inputs[0])
-    chest_rot_damp.inputs['Scale'].default_value = 0.5
-
-    pelvis_rot_damp = add_node(tree, 'ShaderNodeVectorMath',
-                               x_cust - 200, -100, "Hips Rot x0.3")
-    pelvis_rot_damp.operation = 'SCALE'
-    tree.links.new(head_rot_cust.outputs['Vector'],
-                   pelvis_rot_damp.inputs[0])
-    pelvis_rot_damp.inputs['Scale'].default_value = 0.3
-
-    # Custom Chest → replaces chest capsule (upper body above waist)
-    _custom_object_switch("Chest", "Custom Chest",
-                          chest_pos.outputs['Vector'],
-                          _idx_chest, 0,
-                          rot_socket=chest_rot_damp.outputs['Vector'])
-
-    # Custom Hips → replaces pelvis capsule (lower body below waist).
-    # Chest and hips are split per the Jim Rose waist-cord principle:
-    # a real marionette treats upper and lower body as two masses
-    # linked by a twist-limited cord, moving on independent timelines.
-    _custom_object_switch("Hips", "Custom Hips",
-                          pelvis_pos.outputs['Vector'],
-                          _idx_pelvis, -300,
-                          rot_socket=pelvis_rot_damp.outputs['Vector'])
-
-    # Custom Hand → replaces both hand capsules (R is mirrored)
-    _custom_object_switch("Hand L", "Custom Hand",
-                          hand_l_pos,
-                          _idx_hand_l, -600)
-    _custom_object_switch("Hand R", "Custom Hand",
-                          hand_r_pos,
-                          _idx_hand_r, -900, mirror_x=True)
-
-    # Custom Foot → replaces both foot capsules (R is mirrored)
-    _custom_object_switch("Foot L", "Custom Foot",
-                          sim_out.outputs['pos_foot_l'],
-                          _idx_foot_l, -1200)
-    _custom_object_switch("Foot R", "Custom Foot",
-                          sim_out.outputs['pos_foot_r'],
-                          _idx_foot_r, -1500, mirror_x=True)
-
-    _frame_section(tree,
-        "STUDIO TRACK — Custom body part overrides (Object Info"
-        " nodes). Assign student meshes to replace default capsules.",
-        'output', _new_nodes(tree, _s))
-    _s = _snap_nodes(tree)
+    # Object Info → face-count check → Switch chain that swaps each of
+    # the six capsule slots (chest / hips / L+R hand / L+R foot) for
+    # student-modeled geometry when assigned. `parts_geo` is mutated in
+    # place — the six indexed entries get rebound to Switch outputs.
+    # Lives in marionette/studio_track.py (owns its own 'output' frame).
+    studio_result = build_studio_track(
+        tree, group_in,
+        parts_geo=parts_geo,
+        chest_pos=chest_pos, pelvis_pos=pelvis_pos,
+        hand_l_pos=hand_l_pos, hand_r_pos=hand_r_pos,
+        sim_out=sim_out,
+        idx_chest=_idx_chest, idx_pelvis=_idx_pelvis,
+        idx_hand_l=_idx_hand_l, idx_hand_r=_idx_hand_r,
+        idx_foot_l=_idx_foot_l, idx_foot_r=_idx_foot_r,
+        snap_state=_s,
+    )
+    parts_geo = studio_result['parts_geo']
+    _s = studio_result['snap_state']
 
     # ------------------------------------------------------------------
     # SECTION 11 — Join blob head + body → output
