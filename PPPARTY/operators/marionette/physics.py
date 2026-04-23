@@ -112,7 +112,8 @@ What this module exports
 
 import bpy
 
-from ._common import add_node, _snap_nodes, _new_nodes, _frame_section
+from ._common import (
+    add_node, _snap_nodes, _new_nodes, _frame_section, _vector_lerp)
 
 
 # ===========================================================================
@@ -298,6 +299,296 @@ def _ensure_float_group():
 
     gout = add_node(g, 'NodeGroupOutput', dx * 8, 0, "Out")
     g.links.new(floated.outputs['Vector'], gout.inputs['Vector'])
+
+    return g
+
+
+# ===========================================================================
+# REUSABLE NODE GROUP — PP_ChainVerletSegment (Phase 2, hand secondary motion)
+# ===========================================================================
+# This sub-group computes ONE segment of a finger chain for ONE frame. It is
+# the GN port of `chain_segment_step` from the Python prototype that David
+# greenlit on 2026-04-23 ("these look great, exactly as expected ty!").
+#
+# Why a sub-group at all: the algorithm has ~22 nodes of vector + scalar math.
+# Hands have 4 chains × 2 segments × 2 sides = 16 instances per frame. Pasting
+# 22 nodes 16 times would dump ~350 nodes into the main tree and make the
+# editor unreadable. The group collapses each instance to a single node.
+#
+# Caller responsibilities (NOT done inside the group):
+#   - Compute Goal in world space (palm basis × local rest offset).
+#   - Compute Root Falloff Factor per-segment as
+#         rf * (1 - seg_index / (n_segments - 1))
+#     (matches the prototype; seg 0 → fully pinned, tip → free).
+#   - Compute End Factor Scale per-segment as
+#         1 + (Stiff End Fac - 1) * (seg_index / (n_segments - 1))
+#     (matches the prototype; seg 0 → 1.0, tip → Stiff End Fac).
+#   - Handle the FIRST-FRAME snap to Goal OUTSIDE the group, same pattern as
+#     the existing Verlet endpoints (init_cmp / not_first). This keeps the
+#     sub-group pure — it doesn't need a `first_frame` input and it can be
+#     unit-tested by hand against `chain_segment_step` for any single frame.
+#   - Handle the Jakobsen segment-length distance constraint OUTSIDE the
+#     group — that's a per-pair-of-segments concern. `Parent Pos` is exposed
+#     on the interface for the future case where we want to fold the
+#     constraint inside; today it is reserved-but-unused (see docstring).
+
+def _ensure_chain_segment_group():
+    """Create or retrieve the PP_ChainVerletSegment node group.
+
+    Faithful port of the Python prototype's `chain_segment_step`. One
+    instance computes one segment, one frame:
+
+        vel        = (Pos - Prev) * Chain Velocity
+        vel_d      = vel * (1 - Chain Dampening)
+        grav_vec   = (0, 0, -Chain Gravity * dt^2)
+
+        to_goal    = Goal - Pos
+        goal_pull  = to_goal * Chain Stiffness * End Factor Scale
+
+        vel_len    = length(vel)
+        vel_t      = clamp((vel_len - Stiff Vel Min) /
+                           (Stiff Vel Max - Stiff Vel Min), 0, 1)
+        vel_stiff  = Stiff Vel Fac * vel_t
+        vel_pull   = to_goal * vel_stiff
+
+        physics    = Pos + vel_d + grav_vec + goal_pull + vel_pull
+        New Pos    = mix(physics, Goal, Root Falloff Factor)
+        New Prev   = Pos
+
+    `Parent Pos` is declared on the interface for future use (Jakobsen
+    distance constraint, if we ever decide to bake it in here instead of
+    leaving it to the caller). Today it is unwired — adding the socket
+    now means step 10 wiring won't have to refactor the interface.
+
+    `Stiff End Fac` and `Root Falloff` (the raw preset scalars) are
+    intentionally NOT on the interface — they are used only to compute
+    `End Factor Scale` and `Root Falloff Factor` per-segment, which the
+    caller does once before instantiation.
+    """
+    existing = bpy.data.node_groups.get("PP_ChainVerletSegment")
+    if existing:
+        return existing
+
+    g = bpy.data.node_groups.new(
+        "PP_ChainVerletSegment", 'GeometryNodeTree')
+    g.interface.clear()
+
+    # --- Inputs (vec3 first, then float) ---
+    g.interface.new_socket(
+        "Pos", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "Prev", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "Parent Pos", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "Goal", in_out='INPUT', socket_type='NodeSocketVector')
+
+    s = g.interface.new_socket(
+        "Root Falloff Factor", in_out='INPUT',
+        socket_type='NodeSocketFloat')
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 1.0
+    s = g.interface.new_socket(
+        "End Factor Scale", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 1.0
+    s = g.interface.new_socket(
+        "Delta Time", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 1.0 / 30.0
+
+    # 7 used chain-sim params (Stiff End Fac and Root Falloff omitted —
+    # caller pre-bakes them into End Factor Scale and Root Falloff Factor).
+    s = g.interface.new_socket(
+        "Chain Velocity", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 1.0
+    s = g.interface.new_socket(
+        "Chain Dampening", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.25
+    s = g.interface.new_socket(
+        "Chain Gravity", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.02
+    s = g.interface.new_socket(
+        "Chain Stiffness", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.35
+    s = g.interface.new_socket(
+        "Stiff Vel Fac", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.1
+    s = g.interface.new_socket(
+        "Stiff Vel Min", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.05
+    s = g.interface.new_socket(
+        "Stiff Vel Max", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.5
+
+    # --- Outputs ---
+    g.interface.new_socket(
+        "New Pos", in_out='OUTPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "New Prev", in_out='OUTPUT', socket_type='NodeSocketVector')
+
+    dx = 200
+    gin = add_node(g, 'NodeGroupInput', 0, 0, "In")
+
+    # --- VELOCITY + DAMPING ---
+    # vel_raw = Pos - Prev
+    vel_raw = add_node(g, 'ShaderNodeVectorMath', dx, 0, "VelRaw")
+    vel_raw.operation = 'SUBTRACT'
+    g.links.new(gin.outputs['Pos'], vel_raw.inputs[0])
+    g.links.new(gin.outputs['Prev'], vel_raw.inputs[1])
+
+    # vel = vel_raw * Chain Velocity
+    vel = add_node(g, 'ShaderNodeVectorMath', dx * 2, 0, "Vel")
+    vel.operation = 'SCALE'
+    g.links.new(vel_raw.outputs['Vector'], vel.inputs[0])
+    g.links.new(gin.outputs['Chain Velocity'], vel.inputs['Scale'])
+
+    # one_minus_cd = 1 - Chain Dampening
+    one_minus_cd = add_node(g, 'ShaderNodeMath', dx, -120, "1-CD")
+    one_minus_cd.operation = 'SUBTRACT'
+    one_minus_cd.inputs[0].default_value = 1.0
+    g.links.new(gin.outputs['Chain Dampening'], one_minus_cd.inputs[1])
+
+    # vel_d = vel * (1 - cd)
+    vel_d = add_node(g, 'ShaderNodeVectorMath', dx * 3, 0, "VelD")
+    vel_d.operation = 'SCALE'
+    g.links.new(vel.outputs['Vector'], vel_d.inputs[0])
+    g.links.new(one_minus_cd.outputs['Value'], vel_d.inputs['Scale'])
+
+    _frame_section(g,
+        "VELOCITY — Verlet implicit velocity from (Pos - Prev),"
+        " scaled by Chain Velocity then attenuated by Dampening",
+        'verlet', [vel_raw, vel, one_minus_cd, vel_d])
+
+    # --- GRAVITY (= (0, 0, -1) * Chain Gravity * dt^2) ---
+    dt_sq = add_node(g, 'ShaderNodeMath', dx, -260, "dt^2")
+    dt_sq.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Delta Time'], dt_sq.inputs[0])
+    g.links.new(gin.outputs['Delta Time'], dt_sq.inputs[1])
+
+    grav_mag = add_node(g, 'ShaderNodeMath', dx * 2, -260, "GravMag")
+    grav_mag.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Chain Gravity'], grav_mag.inputs[0])
+    g.links.new(dt_sq.outputs['Value'], grav_mag.inputs[1])
+
+    grav_z = add_node(g, 'ShaderNodeMath', dx * 3, -260, "-GravZ")
+    grav_z.operation = 'MULTIPLY'
+    g.links.new(grav_mag.outputs['Value'], grav_z.inputs[0])
+    grav_z.inputs[1].default_value = -1.0
+
+    grav_vec = add_node(g, 'ShaderNodeCombineXYZ', dx * 4, -260, "GravVec")
+    g.links.new(grav_z.outputs['Value'], grav_vec.inputs['Z'])
+
+    _frame_section(g,
+        "GRAVITY — Down-Z vector scaled by Chain Gravity * dt^2,"
+        " same Verlet convention as the body endpoints",
+        'physics', [dt_sq, grav_mag, grav_z, grav_vec])
+
+    # --- GOAL PULL (rest-pose memory, attenuated toward chain tip) ---
+    to_goal = add_node(g, 'ShaderNodeVectorMath', dx, -420, "ToGoal")
+    to_goal.operation = 'SUBTRACT'
+    g.links.new(gin.outputs['Goal'], to_goal.inputs[0])
+    g.links.new(gin.outputs['Pos'], to_goal.inputs[1])
+
+    stiff_x_efs = add_node(g, 'ShaderNodeMath', dx * 2, -420, "Stf*EFS")
+    stiff_x_efs.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Chain Stiffness'], stiff_x_efs.inputs[0])
+    g.links.new(gin.outputs['End Factor Scale'], stiff_x_efs.inputs[1])
+
+    goal_pull = add_node(g, 'ShaderNodeVectorMath', dx * 3, -420, "GoalPull")
+    goal_pull.operation = 'SCALE'
+    g.links.new(to_goal.outputs['Vector'], goal_pull.inputs[0])
+    g.links.new(stiff_x_efs.outputs['Value'], goal_pull.inputs['Scale'])
+
+    _frame_section(g,
+        "GOAL PULL — Spring back toward rest pose."
+        " End Factor Scale lets the tip droop more freely than the base.",
+        'rest', [to_goal, stiff_x_efs, goal_pull])
+
+    # --- VELOCITY-SCALED STIFFNESS (Cody's marquee feature) ---
+    # vel_t = clamp((|vel| - Stiff Vel Min) / (Stiff Vel Max - Stiff Vel Min),
+    #               0, 1)  — Map Range with clamp=True does this in one node.
+    vel_len = add_node(g, 'ShaderNodeVectorMath', dx, -580, "VelLen")
+    vel_len.operation = 'LENGTH'
+    g.links.new(vel.outputs['Vector'], vel_len.inputs[0])
+
+    vel_t = add_node(g, 'ShaderNodeMapRange', dx * 2, -580, "VelT")
+    vel_t.data_type = 'FLOAT'
+    vel_t.interpolation_type = 'LINEAR'
+    vel_t.clamp = True
+    g.links.new(vel_len.outputs['Value'], vel_t.inputs['Value'])
+    g.links.new(gin.outputs['Stiff Vel Min'], vel_t.inputs['From Min'])
+    g.links.new(gin.outputs['Stiff Vel Max'], vel_t.inputs['From Max'])
+    vel_t.inputs['To Min'].default_value = 0.0
+    vel_t.inputs['To Max'].default_value = 1.0
+
+    vel_stiff = add_node(g, 'ShaderNodeMath', dx * 3, -580, "VStf")
+    vel_stiff.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Stiff Vel Fac'], vel_stiff.inputs[0])
+    g.links.new(vel_t.outputs['Result'], vel_stiff.inputs[1])
+
+    vsp = add_node(g, 'ShaderNodeVectorMath', dx * 4, -580, "VStfPull")
+    vsp.operation = 'SCALE'
+    g.links.new(to_goal.outputs['Vector'], vsp.inputs[0])
+    g.links.new(vel_stiff.outputs['Value'], vsp.inputs['Scale'])
+
+    _frame_section(g,
+        "VELOCITY STIFFNESS — Extra spring kick when the segment is"
+        " moving fast (Goo-physics 'marquee feature'). Ramps from 0 at"
+        " Stiff Vel Min to Stiff Vel Fac at Stiff Vel Max.",
+        'control', [vel_len, vel_t, vel_stiff, vsp])
+
+    # --- INTEGRATE (Pos + vel_d + grav + goal_pull + vel_stiff_pull) ---
+    add1 = add_node(g, 'ShaderNodeVectorMath', dx * 5, 0, "+VelD")
+    add1.operation = 'ADD'
+    g.links.new(gin.outputs['Pos'], add1.inputs[0])
+    g.links.new(vel_d.outputs['Vector'], add1.inputs[1])
+
+    add2 = add_node(g, 'ShaderNodeVectorMath', dx * 6, 0, "+Grav")
+    add2.operation = 'ADD'
+    g.links.new(add1.outputs['Vector'], add2.inputs[0])
+    g.links.new(grav_vec.outputs['Vector'], add2.inputs[1])
+
+    add3 = add_node(g, 'ShaderNodeVectorMath', dx * 7, 0, "+GoalP")
+    add3.operation = 'ADD'
+    g.links.new(add2.outputs['Vector'], add3.inputs[0])
+    g.links.new(goal_pull.outputs['Vector'], add3.inputs[1])
+
+    physics_pos = add_node(g, 'ShaderNodeVectorMath', dx * 8, 0, "Physics")
+    physics_pos.operation = 'ADD'
+    g.links.new(add3.outputs['Vector'], physics_pos.inputs[0])
+    g.links.new(vsp.outputs['Vector'], physics_pos.inputs[1])
+
+    _frame_section(g,
+        "INTEGRATE — Sum all five contributions: damped velocity carries"
+        " momentum, gravity drops, goal pull springs home,"
+        " velocity stiffness adds the kick.",
+        'physics', [add1, add2, add3, physics_pos])
+
+    # --- ROOT FALLOFF MIX (segments near the chain root stay pinned) ---
+    # mix(physics_pos, Goal, Root Falloff Factor) implemented as a 3-node
+    # vector lerp via the shared `_vector_lerp` helper:
+    #     result = physics_pos + (Goal - physics_pos) * Factor
+    #     Factor = 0 → physics_pos (no pin); Factor = 1 → Goal (full pin).
+    # ShaderNodeMix would also work but its sockets are positional + named
+    # ambiguously across data types — the helper keeps wiring obvious and
+    # matches the rest of the codebase (see body_movement.py BT blend).
+    snap_mix = _snap_nodes(g)
+    new_pos = _vector_lerp(
+        g, dx * 9, 0, "RootMix",
+        a_out=physics_pos.outputs['Vector'],
+        b_out=gin.outputs['Goal'],
+        factor_out=gin.outputs['Root Falloff Factor'])
+
+    _frame_section(g,
+        "ROOT FALLOFF — Blend toward Goal by per-segment pin strength."
+        " Caller pre-computes Root Falloff Factor"
+        " (seg 0 = full pin, tip = free).",
+        'float', _new_nodes(g, snap_mix))
+
+    # --- OUTPUTS ---
+    gout = add_node(g, 'NodeGroupOutput', dx * 11, 0, "Out")
+    g.links.new(new_pos.outputs['Vector'], gout.inputs['New Pos'])
+    g.links.new(gin.outputs['Pos'], gout.inputs['New Prev'])
 
     return g
 
@@ -759,6 +1050,14 @@ def build_physics(tree, group_in, context, *,
         snap_state  — updated snap (set) after the VERLET PHYSICS frame
     """
     _s = snap_state
+
+    # Phase 2 sub-group bootstrap. `_ensure_chain_segment_group` is
+    # idempotent — calling it here makes PP_ChainVerletSegment available
+    # in the .blend's node-group library so the standalone step-5/14
+    # validation works (drop a manual GeometryNodeGroup, assign the group,
+    # compare output to /tmp/chain_sim_prototype.py). The group is NOT
+    # instantiated in this tree — that lands in step 10/14.
+    _ensure_chain_segment_group()
 
     # ======================================================================
     # SECTION 5 — Simulation Zone
