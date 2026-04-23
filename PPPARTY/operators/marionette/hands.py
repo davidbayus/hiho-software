@@ -115,11 +115,11 @@ from ._common import (add_node, _frame_section,
 #   FINGER_SEG_LENGTH      length of each finger segment (tube)
 #   FINGER_JOINT_RADIUS    size of the joint beads at mid-finger and fingertip
 
-PALM_PLATE_SIZE = (0.14, 0.025, 0.12)
-PALM_CORNER_RADIUS = 0.018
-FINGER_SEG_RADIUS = 0.013
-FINGER_SEG_LENGTH = 0.05
-FINGER_JOINT_RADIUS = 0.014
+PALM_PLATE_SIZE = (0.20, 0.035, 0.18)
+PALM_CORNER_RADIUS = 0.028
+FINGER_SEG_RADIUS = 0.020
+FINGER_SEG_LENGTH = 0.08
+FINGER_JOINT_RADIUS = 0.022
 
 
 # Palm-corner local-space offsets from palm center (= wrist position in V1).
@@ -145,7 +145,7 @@ _PALM_HALF_Z = PALM_PLATE_SIZE[2] * 0.5   # wrist-to-finger half-depth
 
 # Shift the palm "center" slightly toward the finger side so the plate
 # doesn't clip into the forearm tip. (Half of its Z extent toward -Z.)
-_PALM_CENTER_Z_BIAS = -0.04
+_PALM_CENTER_Z_BIAS = -0.06
 
 PALM_CORNER_OFFSETS = {
     # (X_local_for_LEFT_hand, Y_local, Z_world — N means "+Z_local/-Z_world")
