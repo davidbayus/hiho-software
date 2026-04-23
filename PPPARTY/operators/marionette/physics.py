@@ -594,6 +594,306 @@ def _ensure_chain_segment_group():
 
 
 # ===========================================================================
+# REUSABLE NODE GROUP — PP_JiggleSpring (Phase 2, palm-corner flop)
+# ===========================================================================
+# Single-bone spring-mass jiggle. Much simpler than the chain segment —
+# no chain index, no velocity-scaled stiffness, no gravity. A spring wants
+# to return to (Parent Pos + Rest Offset); damping bleeds off oscillation;
+# friction attenuates velocity over time. GN port of `jiggle_step` from
+# /tmp/jiggle_sim_prototype.py, validated against DEFAULTJIGGLE /
+# JIGGLELOOSE / JIGGLESTIFF / PPPALMV1 in the Python prototype on
+# 2026-04-23 ("settle time 1.67s on step input, no overshoot").
+#
+# One instance per palm corner. V1: 4 corners per side × 2 sides = 8
+# instances total, all parameterized from the shared
+# JIGGLE_PRESET_FOR_PALM (PPPALMV1) preset at build time.
+#
+# Caller responsibilities (NOT done inside the group):
+#   - Compute `Parent Pos` as the palm plate center in world space.
+#   - Compute `Rest Offset` as the NE/NW/SE/SW local offset, rotated by
+#     the palm basis so the corner sits at the right spot on the palm
+#     regardless of hand orientation.
+#   - Handle the FIRST-FRAME snap to (Parent Pos + Rest Offset) OUTSIDE
+#     the group, same pattern as the Verlet endpoints and chain segments
+#     (init_cmp / not_first). Keeps the sub-group pure — no `first_frame`
+#     input to wire, and the group unit-tests cleanly against
+#     `jiggle_step` for any mid-sim frame.
+
+def _ensure_jiggle_spring_group():
+    """Create or retrieve the PP_JiggleSpring node group.
+
+    Faithful port of the Python prototype's `jiggle_step`. One instance
+    computes one palm corner, one frame:
+
+        target       = Parent Pos + Rest Offset
+        vel          = (Pos - Prev) * Jiggle Speed
+
+        force_spring = (target - Pos) * Jiggle Stiffness
+        force_damp   = vel * (-Jiggle Damping * dt)
+        force        = force_spring + force_damp
+
+        accel        = force / max(Jiggle Mass, 1e-9)
+        vel_next     = (vel + accel * dt) * (1 - Jiggle Friction * dt)
+        new_pos_raw  = Pos + vel_next
+
+        New Pos      = lerp(target, new_pos_raw, Jiggle Sim Influence)
+        New Prev     = Pos
+
+    Sim Influence acts as a "how much does physics matter?" dial:
+    1.0 → fully simulated (pure jiggle), 0.0 → snap to target (no
+    jiggle, corner rides rigidly on the palm). Implemented with
+    `_vector_lerp` (`target + (new_pos - target) * infl`) for the same
+    reason as chain segment's Root Falloff blend: `ShaderNodeMix` has
+    duplicate-named sockets across data types, and the helper is the
+    codebase's convention.
+
+    Mass guard: `max(Mass, 1e-9)` prevents a divide-by-zero if a caller
+    or preset sets Mass to 0. The preset dict only holds positive masses
+    (0.15–0.2); this guard is belt-and-suspenders against user override.
+    """
+    existing = bpy.data.node_groups.get("PP_JiggleSpring")
+    if existing:
+        return existing
+
+    g = bpy.data.node_groups.new(
+        "PP_JiggleSpring", 'GeometryNodeTree')
+    g.interface.clear()
+
+    # --- Inputs (vec3 first, then float) ---
+    g.interface.new_socket(
+        "Pos", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "Prev", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "Parent Pos", in_out='INPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "Rest Offset", in_out='INPUT', socket_type='NodeSocketVector')
+
+    s = g.interface.new_socket(
+        "Delta Time", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 1.0 / 30.0
+
+    # 6 jiggle params — defaults match DEFAULTJIGGLE from
+    # physics_presets.py (same convention as chain segment using
+    # DEFAULTGEONODES-style defaults). Caller overwrites with PPPALMV1
+    # values at Create-Puppet time. Order mirrors the algorithm's
+    # evaluation order so a reader scanning the interface sees the
+    # same narrative arc as a reader scanning the node graph:
+    # Speed (velocity), Stiffness (spring), Damping (damp), Mass
+    # (accel), Friction (vel_next), Sim Influence (blend).
+    s = g.interface.new_socket(
+        "Jiggle Speed", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.8
+    s = g.interface.new_socket(
+        "Jiggle Stiffness", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.1
+    s = g.interface.new_socket(
+        "Jiggle Damping", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 8.0
+    s = g.interface.new_socket(
+        "Jiggle Mass", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.15
+    s = g.interface.new_socket(
+        "Jiggle Friction", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 5.0
+    s = g.interface.new_socket(
+        "Jiggle Sim Influence", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 1.0
+
+    # --- Outputs ---
+    g.interface.new_socket(
+        "New Pos", in_out='OUTPUT', socket_type='NodeSocketVector')
+    g.interface.new_socket(
+        "New Prev", in_out='OUTPUT', socket_type='NodeSocketVector')
+
+    dx = 200
+    gin = add_node(g, 'NodeGroupInput', 0, 0, "In")
+
+    # --- VELOCITY (Verlet implicit velocity, scaled by Jiggle Speed) ---
+    # Same pattern as chain segment's VELOCITY section: (Pos - Prev)
+    # gives per-frame displacement, Jiggle Speed lets the animator
+    # attenuate or amplify momentum.
+    vel_raw = add_node(g, 'ShaderNodeVectorMath', dx, 0, "VelRaw")
+    vel_raw.operation = 'SUBTRACT'
+    g.links.new(gin.outputs['Pos'], vel_raw.inputs[0])
+    g.links.new(gin.outputs['Prev'], vel_raw.inputs[1])
+
+    vel = add_node(g, 'ShaderNodeVectorMath', dx * 2, 0, "Vel")
+    vel.operation = 'SCALE'
+    g.links.new(vel_raw.outputs['Vector'], vel.inputs[0])
+    g.links.new(gin.outputs['Jiggle Speed'], vel.inputs['Scale'])
+
+    _frame_section(g,
+        "VELOCITY — Verlet implicit velocity from (Pos - Prev),"
+        " scaled by Jiggle Speed",
+        'verlet', [vel_raw, vel])
+
+    # --- SPRING FORCE (Hooke's law pull toward rest target) ---
+    # target = Parent Pos + Rest Offset. The corner rides on the palm
+    # plate at a fixed local offset; the spring wants to bring the
+    # simulated position back to that anchor.
+    target = add_node(g, 'ShaderNodeVectorMath', dx, -140, "Target")
+    target.operation = 'ADD'
+    g.links.new(gin.outputs['Parent Pos'], target.inputs[0])
+    g.links.new(gin.outputs['Rest Offset'], target.inputs[1])
+
+    to_target = add_node(g, 'ShaderNodeVectorMath', dx * 2, -140, "ToTgt")
+    to_target.operation = 'SUBTRACT'
+    g.links.new(target.outputs['Vector'], to_target.inputs[0])
+    g.links.new(gin.outputs['Pos'], to_target.inputs[1])
+
+    force_spring = add_node(
+        g, 'ShaderNodeVectorMath', dx * 3, -140, "FSpring")
+    force_spring.operation = 'SCALE'
+    g.links.new(to_target.outputs['Vector'], force_spring.inputs[0])
+    g.links.new(
+        gin.outputs['Jiggle Stiffness'], force_spring.inputs['Scale'])
+
+    _frame_section(g,
+        "SPRING FORCE — Hooke's law. Pulls the corner back toward"
+        " (Parent Pos + Rest Offset) proportional to displacement.",
+        'rest', [target, to_target, force_spring])
+
+    # --- DAMPING FORCE (opposes velocity, scaled by Damping * dt) ---
+    # This is what actually settles the oscillation. Without damping
+    # the spring would ring forever.
+    damping_x_dt = add_node(g, 'ShaderNodeMath', dx, -280, "Damp*dt")
+    damping_x_dt.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Jiggle Damping'], damping_x_dt.inputs[0])
+    g.links.new(gin.outputs['Delta Time'], damping_x_dt.inputs[1])
+
+    neg_damping_x_dt = add_node(
+        g, 'ShaderNodeMath', dx * 2, -280, "-Damp*dt")
+    neg_damping_x_dt.operation = 'MULTIPLY'
+    g.links.new(damping_x_dt.outputs['Value'], neg_damping_x_dt.inputs[0])
+    neg_damping_x_dt.inputs[1].default_value = -1.0
+
+    force_damp = add_node(
+        g, 'ShaderNodeVectorMath', dx * 3, -280, "FDamp")
+    force_damp.operation = 'SCALE'
+    g.links.new(vel.outputs['Vector'], force_damp.inputs[0])
+    g.links.new(
+        neg_damping_x_dt.outputs['Value'], force_damp.inputs['Scale'])
+
+    _frame_section(g,
+        "DAMPING FORCE — Bleeds kinetic energy off proportional to"
+        " velocity and dt. This is what actually settles the oscillation.",
+        'physics', [damping_x_dt, neg_damping_x_dt, force_damp])
+
+    # --- NET FORCE + ACCEL (force / mass, with divide-by-zero floor) ---
+    # Newton's F = m·a solved for a. MassSafe floors at 1e-9 so a
+    # misconfigured preset (Mass = 0) doesn't produce NaN acceleration
+    # and blow up the sim zone.
+    force = add_node(g, 'ShaderNodeVectorMath', dx * 4, -200, "Force")
+    force.operation = 'ADD'
+    g.links.new(force_spring.outputs['Vector'], force.inputs[0])
+    g.links.new(force_damp.outputs['Vector'], force.inputs[1])
+
+    mass_safe = add_node(g, 'ShaderNodeMath', dx * 4, -380, "MassSafe")
+    mass_safe.operation = 'MAXIMUM'
+    g.links.new(gin.outputs['Jiggle Mass'], mass_safe.inputs[0])
+    mass_safe.inputs[1].default_value = 1e-9
+
+    inv_mass = add_node(g, 'ShaderNodeMath', dx * 5, -380, "1/Mass")
+    inv_mass.operation = 'DIVIDE'
+    inv_mass.inputs[0].default_value = 1.0
+    g.links.new(mass_safe.outputs['Value'], inv_mass.inputs[1])
+
+    accel = add_node(g, 'ShaderNodeVectorMath', dx * 5, -200, "Accel")
+    accel.operation = 'SCALE'
+    g.links.new(force.outputs['Vector'], accel.inputs[0])
+    g.links.new(inv_mass.outputs['Value'], accel.inputs['Scale'])
+
+    _frame_section(g,
+        "NET FORCE + ACCEL — Newton's F = m·a, solved for a."
+        " MassSafe floors at 1e-9 as a divide-by-zero guard.",
+        'physics', [force, mass_safe, inv_mass, accel])
+
+    # --- VELOCITY UPDATE ((vel + accel*dt) * (1 - friction*dt)) ---
+    # Explicit-Euler-style integration step for velocity, then a
+    # multiplicative friction term that attenuates overall motion
+    # regardless of direction. Friction is NOT "air resistance" here;
+    # it's a kinematic drag knob that helps the corner stop drifting
+    # when the palm is still.
+    accel_x_dt = add_node(g, 'ShaderNodeVectorMath', dx * 6, -200, "A*dt")
+    accel_x_dt.operation = 'SCALE'
+    g.links.new(accel.outputs['Vector'], accel_x_dt.inputs[0])
+    g.links.new(gin.outputs['Delta Time'], accel_x_dt.inputs['Scale'])
+
+    vel_plus_accel = add_node(
+        g, 'ShaderNodeVectorMath', dx * 7, 0, "V+A")
+    vel_plus_accel.operation = 'ADD'
+    g.links.new(vel.outputs['Vector'], vel_plus_accel.inputs[0])
+    g.links.new(accel_x_dt.outputs['Vector'], vel_plus_accel.inputs[1])
+
+    friction_x_dt = add_node(
+        g, 'ShaderNodeMath', dx * 6, -520, "Fric*dt")
+    friction_x_dt.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Jiggle Friction'], friction_x_dt.inputs[0])
+    g.links.new(gin.outputs['Delta Time'], friction_x_dt.inputs[1])
+
+    one_minus_fric_dt = add_node(
+        g, 'ShaderNodeMath', dx * 7, -520, "1-F*dt")
+    one_minus_fric_dt.operation = 'SUBTRACT'
+    one_minus_fric_dt.inputs[0].default_value = 1.0
+    g.links.new(
+        friction_x_dt.outputs['Value'], one_minus_fric_dt.inputs[1])
+
+    vel_next = add_node(
+        g, 'ShaderNodeVectorMath', dx * 8, 0, "VNext")
+    vel_next.operation = 'SCALE'
+    g.links.new(vel_plus_accel.outputs['Vector'], vel_next.inputs[0])
+    g.links.new(
+        one_minus_fric_dt.outputs['Value'], vel_next.inputs['Scale'])
+
+    _frame_section(g,
+        "VELOCITY UPDATE — Integrate acceleration into velocity,"
+        " then attenuate by (1 - Friction * dt) for kinematic drag",
+        'verlet', [accel_x_dt, vel_plus_accel,
+                   friction_x_dt, one_minus_fric_dt, vel_next])
+
+    # --- NEW POS (Pos + vel_next) — the Verlet position update ---
+    new_pos_raw = add_node(
+        g, 'ShaderNodeVectorMath', dx * 9, 0, "NewRaw")
+    new_pos_raw.operation = 'ADD'
+    g.links.new(gin.outputs['Pos'], new_pos_raw.inputs[0])
+    g.links.new(vel_next.outputs['Vector'], new_pos_raw.inputs[1])
+
+    _frame_section(g,
+        "NEW POS — Integrate velocity into position (Verlet step)."
+        " This is the pre-blend physics answer.",
+        'physics', [new_pos_raw])
+
+    # --- SIM INFLUENCE BLEND (lerp target → new_pos by Sim Influence) ---
+    # Sim Influence = 1.0 → fully physics (new_pos_raw), 0.0 → snap to
+    # target (corner rides rigidly on the palm, no jiggle at all).
+    # `_vector_lerp(a=target, b=new_pos_raw, factor=sim_influence)`:
+    #   result = target + (new_pos_raw - target) * sim_influence
+    # Matches the prototype's
+    #   new_pos = new_pos * si + target * (1 - si)
+    # (algebraically identical). Three vector-math nodes; see chain
+    # segment's Root Falloff mix for rationale over ShaderNodeMix.
+    snap_mix = _snap_nodes(g)
+    new_pos = _vector_lerp(
+        g, dx * 10, 0, "InflMix",
+        a_out=target.outputs['Vector'],
+        b_out=new_pos_raw.outputs['Vector'],
+        factor_out=gin.outputs['Jiggle Sim Influence'])
+
+    _frame_section(g,
+        "SIM INFLUENCE — Blend between rest target and physics position."
+        " 1.0 = full jiggle, 0.0 = snap to rest (physics disabled).",
+        'float', _new_nodes(g, snap_mix))
+
+    # --- OUTPUTS ---
+    gout = add_node(g, 'NodeGroupOutput', dx * 13, 0, "Out")
+    g.links.new(new_pos.outputs['Vector'], gout.inputs['New Pos'])
+    g.links.new(gin.outputs['Pos'], gout.inputs['New Prev'])
+
+    return g
+
+
+# ===========================================================================
 # SIMULATION ZONE — must use operator for proper pairing (Blender 5.2)
 # ===========================================================================
 
@@ -1051,13 +1351,16 @@ def build_physics(tree, group_in, context, *,
     """
     _s = snap_state
 
-    # Phase 2 sub-group bootstrap. `_ensure_chain_segment_group` is
-    # idempotent — calling it here makes PP_ChainVerletSegment available
-    # in the .blend's node-group library so the standalone step-5/14
-    # validation works (drop a manual GeometryNodeGroup, assign the group,
-    # compare output to /tmp/chain_sim_prototype.py). The group is NOT
-    # instantiated in this tree — that lands in step 10/14.
+    # Phase 2 sub-group bootstrap. Both `_ensure_chain_segment_group`
+    # and `_ensure_jiggle_spring_group` are idempotent — calling them
+    # here makes PP_ChainVerletSegment and PP_JiggleSpring available in
+    # the .blend's node-group library so standalone step-5/6 validation
+    # works (drop a manual GeometryNodeGroup, assign the group, compare
+    # output to the Python prototypes in /tmp/). Neither group is
+    # instantiated in this tree — chain wiring lands in step 10/14,
+    # jiggle wiring in step 11/14.
     _ensure_chain_segment_group()
+    _ensure_jiggle_spring_group()
 
     # ======================================================================
     # SECTION 5 — Simulation Zone
