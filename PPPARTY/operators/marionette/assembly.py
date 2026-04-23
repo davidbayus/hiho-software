@@ -67,6 +67,7 @@ from .blob_head import (
 from .body_parts import build_body_parts
 from .face_tracking import FACE_INPUTS, build_face_tracking_interface
 from .body_movement import build_body_movement
+from .hands import build_hands
 from .physics import build_physics, SHOULDER_FLOAT_SLACK
 from .studio_track import build_studio_track
 
@@ -1103,6 +1104,20 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     x_part = body['x_part']
     x_limb = body['x_limb']
     _s = body['snap_state']
+
+    # ------------------------------------------------------------------
+    # SECTION 9.5 — Hand geometry (Phase 2, step 7/14)
+    # ------------------------------------------------------------------
+    # Palm plate + 4 corner beads + 4 finger chains per side. Built
+    # at rest pose — no physics yet; finger chains land on sim zone
+    # state items in step 10, palm corner jiggle in step 11.
+    # Lives in marionette/hands.py (owns its own 'body' frame).
+    hand_result = build_hands(
+        tree, group_in, sim_out, body_mats,
+        hand_l_pos=hand_l_pos, hand_r_pos=hand_r_pos,
+        snap_state=_s)
+    parts_geo.extend(hand_result['parts_geo'])
+    _s = hand_result['snap_state']
 
     # ------------------------------------------------------------------
     # SECTION 10 — Studio Track: Custom body part overrides
