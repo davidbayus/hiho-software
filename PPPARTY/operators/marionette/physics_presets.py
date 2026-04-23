@@ -22,7 +22,8 @@ CHAIN_PRESETS      — 4 named presets for multi-segment chain sim
                      Each preset is 9 floats matching the interface-socket
                      names in NATIVE_PHYSICS_DESIGN.md §New Group Input.
 
-JIGGLE_PRESETS     — 3 named presets for single-bone spring-mass jiggle.
+JIGGLE_PRESETS     — 4 named presets for single-bone spring-mass jiggle
+                     (3 from Cody's Goo + 1 PPParty-tuned for palm corners).
                      Each preset is 6 floats. Used for palm-corner flop.
 
 CHAIN_PRESET_BY_ROLE — maps PPParty rig roles ("finger") to preset names.
@@ -126,9 +127,13 @@ CHAIN_PRESETS = {
 
 
 # ===========================================================================
-# JIGGLE PRESETS — 3 × 6 params each
+# JIGGLE PRESETS — 4 × 6 params each (3 Cody originals + 1 PPParty-tuned)
 # ===========================================================================
-# Source: /tmp/goo_reference/goo_physics/presets/jiggle_spring_presets.json
+# Sources:
+#   - Cody originals (DEFAULTJIGGLE / JIGGLELOOSE / JIGGLESTIFF):
+#     /tmp/goo_reference/goo_physics/presets/jiggle_spring_presets.json
+#   - PPPALMV1: derived from JIGGLELOOSE, tuned in /tmp/jiggle_palm_tuning.py
+#     on 2026-04-23 (Python prototype candidate C).
 
 JIGGLE_PRESETS = {
     "DEFAULTJIGGLE": {
@@ -158,6 +163,24 @@ JIGGLE_PRESETS = {
         "Jiggle Damping":        10.064,
         "Jiggle Sim Influence":  1.0,
     },
+    "PPPALMV1": {
+        # PPParty-tuned palm-corner preset (V1 of our own, not Cody's).
+        # Derived from JIGGLELOOSE: stiffness 1.5× (0.10→0.15) and damping
+        # 0.75× (10.064→7.5). Other knobs unchanged. Settle time 1.67s on
+        # step input, no overshoot, preserves Cody's soft-drag character.
+        #
+        # Why not JIGGLELOOSE? Cody's originals are tuned for hair + skirts
+        # (~2.7s settle). Too slow for finger motion. Design doc suggested
+        # 0.5s but that was pre-prototype intuition. David, 2026-04-23:
+        # "lets split the diff and do 1.5 hows that sound, then we can
+        # test and refine."
+        "Jiggle Speed":          0.77,
+        "Jiggle Friction":       5.0,
+        "Jiggle Mass":           0.2,
+        "Jiggle Stiffness":      0.15,
+        "Jiggle Damping":        7.5,
+        "Jiggle Sim Influence":  1.0,
+    },
 }
 
 
@@ -171,7 +194,7 @@ CHAIN_PRESET_BY_ROLE = {
     "finger": "HAIRSIDE",
 }
 
-JIGGLE_PRESET_FOR_PALM = "JIGGLELOOSE"
+JIGGLE_PRESET_FOR_PALM = "PPPALMV1"
 
 
 # ===========================================================================
