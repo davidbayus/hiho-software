@@ -22,8 +22,10 @@ We recreate them in Geometry Nodes with three building blocks:
 
     1. A SIMULATION ZONE — Blender's way of saying "anything between these
        two nodes carries state from one frame to the next." Inside the zone
-       we keep the eight hand/foot positions (current + previous frame)
-       plus two floated shoulder positions and a first-frame flag.
+       we keep the eight hand/foot positions (current + previous frame),
+       two floated shoulder positions, a first-frame flag, and — added for
+       hand secondary motion in Phase 2 — 32 finger-segment positions and
+       16 palm-corner positions (per side, current + previous for each).
 
     2. VERLET INTEGRATION — a three-line physics trick that computes
        velocity from the difference between current and previous position,
@@ -53,8 +55,13 @@ The four sections this module builds, in order
 
     SECTION 5 — THE SIMULATION ZONE
         Create the paired SimulationInput + SimulationOutput nodes. Add
-        state items for the four endpoint positions + four previous-frame
-        positions + two floated shoulders + one `initialized` flag.
+        state items: four endpoint positions + four previous + two
+        floated shoulders + one `initialized` flag (11 total, body-era)
+        plus 48 hand-physics items declared for Phase 2 (finger chains +
+        palm corners). The Phase 2 items are passthrough-wired in this
+        section — they exist and carry their value forward untouched
+        until steps 10/11 of the implementation plan overwrite the
+        passthrough with real chain/jiggle wiring.
         Link Geometry in → out (we don't touch geometry inside the zone,
         just state). Nothing physical happens here; we're just declaring
         WHAT gets carried forward.
@@ -130,6 +137,64 @@ LEG_HINGE_BIAS = -0.12         # negative so -(-0.12)=+0.12 → feet forced forw
 # previous position. Verlet integration needs both to compute velocity.
 POS_NAMES = ['pos_hand_l', 'pos_hand_r', 'pos_foot_l', 'pos_foot_r']
 PREV_NAMES = ['prev_hand_l', 'prev_hand_r', 'prev_foot_l', 'prev_foot_r']
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — hand secondary motion state items (see NATIVE_PHYSICS_DESIGN.md §5)
+# ---------------------------------------------------------------------------
+# The hand has two kinds of secondary motion: finger chains (Verlet segments
+# that lag and swing) and palm corners (single-bone jiggle springs that flop).
+# Both need pos + prev state so the sim zone can compute velocity frame to
+# frame, same pattern as the body's hand/foot endpoints above.
+#
+# Chains: 4 per side × 2 segments × 2 sides × 2 vecs = 32 items.
+#   - fingerA = thumb (anchor at palm SW corner)
+#   - fingerB = tracked middle finger (driven by MediaPipe landmark 8)
+#   - fingerC, fingerD = untracked side fingers (chain sim only)
+# Palm corners: 4 per side × 2 sides × 2 vecs = 16 items.
+#   - ne, nw, se, sw = compass labels relative to the palm plate (the +Y
+#     direction points toward the fingertips; NE = finger-side far from
+#     thumb when palm faces viewer).
+#
+# These items are declared by `build_physics` but not yet driven by chain or
+# jiggle math — the sim zone passes them through (last frame's value becomes
+# this frame's value unchanged) until steps 10 and 11 of the 14-step plan
+# wire the real sub-groups in. This split lets us validate the zone still
+# evaluates at the higher state count before taking on sub-group work.
+
+HAND_CHAINS = ('fingerA', 'fingerB', 'fingerC', 'fingerD')
+HAND_SIDES = ('l', 'r')
+FINGER_SEGMENTS = 2  # V1: 2 segments per finger (base→mid→tip)
+PALM_CORNERS = ('ne', 'nw', 'se', 'sw')
+
+HAND_CHAIN_POS_NAMES = [
+    f'pos_{chain}_{side}_seg{seg}'
+    for chain in HAND_CHAINS
+    for side in HAND_SIDES
+    for seg in range(FINGER_SEGMENTS)
+]
+HAND_CHAIN_PREV_NAMES = [
+    f'prev_{chain}_{side}_seg{seg}'
+    for chain in HAND_CHAINS
+    for side in HAND_SIDES
+    for seg in range(FINGER_SEGMENTS)
+]
+
+PALM_CORNER_POS_NAMES = [
+    f'pos_palm_{side}_{corner}'
+    for side in HAND_SIDES
+    for corner in PALM_CORNERS
+]
+PALM_CORNER_PREV_NAMES = [
+    f'prev_palm_{side}_{corner}'
+    for side in HAND_SIDES
+    for corner in PALM_CORNERS
+]
+
+# Sanity: design doc specifies 32 chain + 16 palm = 48 new items.
+# Assert at import time so a refactor mistake in these lists fails fast.
+assert len(HAND_CHAIN_POS_NAMES) == 16 and len(HAND_CHAIN_PREV_NAMES) == 16
+assert len(PALM_CORNER_POS_NAMES) == 8 and len(PALM_CORNER_PREV_NAMES) == 8
 
 
 # ===========================================================================
@@ -710,7 +775,27 @@ def build_physics(tree, group_in, context, *,
     sim_out.state_items.new('VECTOR', 'floated_shr')
     sim_out.state_items.new('FLOAT', 'initialized')
 
+    # --- Phase 2 hand physics state items ---
+    # 32 finger-chain + 16 palm-corner vectors. Declared here, passthrough-
+    # wired below, sim-wired in steps 10/11. See module-level HAND_CHAIN_*
+    # and PALM_CORNER_* constants for the naming scheme.
+    _hand_state_names = (
+        HAND_CHAIN_POS_NAMES + HAND_CHAIN_PREV_NAMES +
+        PALM_CORNER_POS_NAMES + PALM_CORNER_PREV_NAMES)
+    for name in _hand_state_names:
+        sim_out.state_items.new('VECTOR', name)
+
     tree.links.new(sim_in.outputs['Geometry'], sim_out.inputs['Geometry'])
+
+    # Passthrough each Phase 2 hand item so the zone evaluates. Each item's
+    # previous-frame value is copied straight to the next frame; once
+    # hands.py lands in step 7 and the Verlet/jiggle sub-groups in 10/11,
+    # these passthrough links get replaced by the real sim output. Keeping
+    # the passthrough explicit (rather than leaving sim_out.inputs unwired)
+    # makes intent obvious and avoids any evaluation surprises from
+    # unconnected zone inputs.
+    for name in _hand_state_names:
+        tree.links.new(sim_in.outputs[name], sim_out.inputs[name])
 
     # NOTE: Torso momentum (V0.7.0) was removed. Smoothing the sway
     # inside the sim zone creates a circular dependency:
