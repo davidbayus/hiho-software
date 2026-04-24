@@ -470,16 +470,14 @@ class TrackingReceiver:
         if not self._running:
             return None  # Unregister timer
 
-        # Lazy-cache shape key blocks and pose bone
-        if self._cached_key_blocks is None:
-            dummy = bpy.data.objects.get(DUMMY_MESH_NAME)
-            if not dummy or not dummy.data.shape_keys:
-                return 0.01
-            self._cached_key_blocks = dummy.data.shape_keys.key_blocks
-            if self._target_armature and self._target_bone:
-                arm = self._target_armature
-                if arm.type == 'ARMATURE':
-                    self._cached_bone = arm.pose.bones.get(self._target_bone)
+        # Lazy-cache the pose bone for head rotation.
+        # The phone-era dummy-mesh shape-key cache was removed in alpha.42 —
+        # nothing downstream reads those shape keys anymore (face values go
+        # straight to the GN modifier via _push_to_puppet).
+        if self._cached_bone is None and self._target_armature and self._target_bone:
+            arm = self._target_armature
+            if arm.type == 'ARMATURE':
+                self._cached_bone = arm.pose.bones.get(self._target_bone)
 
         # Swap pending dict — O(1)
         with self._lock:
@@ -488,16 +486,6 @@ class TrackingReceiver:
 
         if not updates:
             return 0.01
-
-        key_blocks = self._cached_key_blocks
-
-        # Apply shape key values
-        for name, value in updates.items():
-            if name.startswith('_'):
-                continue
-            kb = key_blocks.get(name)
-            if kb:
-                kb.value = value
 
         # Apply head rotation to armature bone
         head_euler = updates.get('_head_rotation')
