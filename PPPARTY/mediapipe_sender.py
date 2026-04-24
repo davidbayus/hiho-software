@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""MediaPipe face + body tracking → UDP sender for PPParty.
+"""MediaPipe face + body + hand tracking → UDP sender for PPParty.
 
 Standalone script — runs in system Python, NOT inside Blender.
-Captures webcam, runs MediaPipe FaceLandmarker + PoseLandmarker,
+Captures webcam, runs MediaPipe FaceLandmarker + PoseLandmarker + HandLandmarker,
 packs blend shapes + body landmarks into UDP packets, sends to Blender.
+
+alpha.45: HandLandmarker added as 3rd async detector (sender-side only).
+21 landmarks per hand render in the preview overlay. The 3 tracked endpoints
+used by PPParty's Option C hand rig — WRIST (0), THUMB_TIP (4),
+INDEX_FINGER_TIP (8) — are highlighted. UDP packet format is unchanged;
+wire-level hand data lands in alpha.46 (5b).
 
 Usage:
     python mediapipe_sender.py
@@ -107,9 +113,19 @@ BLACKLISTED = {
 # MediaPipe model file URLs (downloaded on first run)
 FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
 POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+HAND_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
 
 FACE_MODEL_FILE = "face_landmarker.task"
 POSE_MODEL_FILE = "pose_landmarker_lite.task"
+HAND_MODEL_FILE = "hand_landmarker.task"
+
+# MediaPipe hand landmark indices (subset used by PPParty Option C).
+# The full 21-landmark layout is documented in MediaPipe's hand docs;
+# these are the 3 endpoints the Blender side will consume in alpha.46.
+HAND_WRIST = 0
+HAND_THUMB_TIP = 4
+HAND_INDEX_TIP = 8
+HAND_TRACKED_INDICES = (HAND_WRIST, HAND_THUMB_TIP, HAND_INDEX_TIP)
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +308,7 @@ def run(args):
     # Ensure models are available
     face_model = args.model_face or ensure_model(FACE_MODEL_FILE, FACE_MODEL_URL)
     pose_model = args.model_pose or ensure_model(POSE_MODEL_FILE, POSE_MODEL_URL)
+    hand_model = args.model_hand or ensure_model(HAND_MODEL_FILE, HAND_MODEL_URL)
 
     # UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -300,8 +317,10 @@ def run(args):
     # --- Shared result containers (written by callbacks) ---
     face_result_container = [None]  # [FaceLandmarkerResult]
     pose_result_container = [None]  # [PoseLandmarkerResult]
+    hand_result_container = [None]  # [HandLandmarkerResult]
     face_timestamp = [0]
     pose_timestamp = [0]
+    hand_timestamp = [0]
 
     def on_face_result(result, output_image, timestamp_ms):
         face_result_container[0] = result
@@ -310,6 +329,10 @@ def run(args):
     def on_pose_result(result, output_image, timestamp_ms):
         pose_result_container[0] = result
         pose_timestamp[0] = timestamp_ms
+
+    def on_hand_result(result, output_image, timestamp_ms):
+        hand_result_container[0] = result
+        hand_timestamp[0] = timestamp_ms
 
     # --- MediaPipe setup ---
     BaseOptions = mp.tasks.BaseOptions
@@ -335,6 +358,19 @@ def run(args):
         running_mode=VisionRunningMode.LIVE_STREAM,
         num_poses=1,
         result_callback=on_pose_result,
+    )
+
+    # Hand landmarker (21 landmarks per hand, both hands) — alpha.45.
+    # Preview-only at this stage: landmarks feed the overlay but not the UDP
+    # packet. Wire-level integration lands in alpha.46 alongside the Blender
+    # receiver sockets.
+    HandLandmarker = mp.tasks.vision.HandLandmarker
+    HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
+    hand_options = HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=hand_model),
+        running_mode=VisionRunningMode.LIVE_STREAM,
+        num_hands=2,
+        result_callback=on_hand_result,
     )
 
     # Open webcam
@@ -374,7 +410,8 @@ def run(args):
     )
 
     with FaceLandmarker.create_from_options(face_options) as face_lm, \
-         PoseLandmarker.create_from_options(pose_options) as pose_lm:
+         PoseLandmarker.create_from_options(pose_options) as pose_lm, \
+         HandLandmarker.create_from_options(hand_options) as hand_lm:
 
         while True:
             ret, frame = cap.read()
@@ -393,9 +430,10 @@ def run(args):
             # Timestamp in milliseconds (monotonic)
             ts_ms = int(time.monotonic() * 1000)
 
-            # Run both detectors (async — results come via callbacks)
+            # Run all three detectors (async — results come via callbacks)
             face_lm.detect_async(mp_image, ts_ms)
             pose_lm.detect_async(mp_image, ts_ms)
+            hand_lm.detect_async(mp_image, ts_ms)
 
             # --- Pack latest results ---
             blend_shapes = None
@@ -533,6 +571,67 @@ def run(args):
                         y = int(lm.y * h)
                         cv2.circle(frame, (x, y), 4, (0, 128, 255), -1)
 
+                # Draw hand landmarks (magenta skeleton + highlighted endpoints)
+                hand_res = hand_result_container[0]
+                if hand_res and hand_res.hand_landmarks:
+                    h, w = frame.shape[:2]
+                    # MediaPipe hand skeleton — 5 finger chains rooted at wrist
+                    # plus a palm arch connecting the MCPs.
+                    _HAND_CHAINS = [
+                        (0, 1, 2, 3, 4),        # thumb
+                        (0, 5, 6, 7, 8),        # index
+                        (9, 10, 11, 12),        # middle (no root-to-9 line)
+                        (13, 14, 15, 16),       # ring
+                        (0, 17, 18, 19, 20),    # pinky
+                    ]
+                    _PALM_ARCH = [(5, 9), (9, 13), (13, 17)]
+
+                    for hand_idx, hlm in enumerate(hand_res.hand_landmarks):
+                        # Label (L/R) from handedness output
+                        label = "?"
+                        if (hand_res.handedness
+                                and hand_idx < len(hand_res.handedness)
+                                and hand_res.handedness[hand_idx]):
+                            label = hand_res.handedness[hand_idx][0].category_name[0]
+
+                        def _hpx(idx, _hlm=hlm, _w=w, _h=h):
+                            return (int(_hlm[idx].x * _w), int(_hlm[idx].y * _h))
+
+                        # Finger chain lines (magenta)
+                        for chain in _HAND_CHAINS:
+                            for i in range(len(chain) - 1):
+                                a, b = chain[i], chain[i + 1]
+                                if a < len(hlm) and b < len(hlm):
+                                    cv2.line(frame, _hpx(a), _hpx(b),
+                                             (200, 80, 220), 2)
+                        for a, b in _PALM_ARCH:
+                            if a < len(hlm) and b < len(hlm):
+                                cv2.line(frame, _hpx(a), _hpx(b),
+                                         (200, 80, 220), 2)
+
+                        # All 21 dots (small, magenta)
+                        for lm in hlm:
+                            x = int(lm.x * w)
+                            y = int(lm.y * h)
+                            cv2.circle(frame, (x, y), 2, (200, 80, 220), -1)
+
+                        # Highlight the 3 tracked endpoints (yellow, larger).
+                        # These are the only landmarks the Blender rig will
+                        # consume in alpha.46 — visually distinguishing them
+                        # helps us confirm tracking stability during testing.
+                        for idx in HAND_TRACKED_INDICES:
+                            if idx < len(hlm):
+                                px, py = _hpx(idx)
+                                cv2.circle(frame, (px, py), 6, (0, 255, 255), -1)
+                                cv2.circle(frame, (px, py), 6, (0, 0, 0), 1)
+
+                        # Handedness label near wrist
+                        if len(hlm) > 0:
+                            wx, wy = _hpx(HAND_WRIST)
+                            cv2.putText(frame, label, (wx + 10, wy - 10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                                        (0, 255, 255), 2)
+
                 # Blend shape bars (right side of frame)
                 if blend_shapes is not None:
                     h, w = frame.shape[:2]
@@ -570,9 +669,14 @@ def run(args):
 
                 # FPS + status (bottom left)
                 h = frame.shape[0]
-                face_ok = "FACE" if blend_shapes is not None else "---"
-                body_ok = "BODY" if body_landmarks is not None else "---"
-                cv2.putText(frame, f"FPS: {fps_display:.1f}  {face_ok} | {body_ok}",
+                face_ok = "FACE" if blend_shapes is not None else "----"
+                body_ok = "BODY" if body_landmarks is not None else "----"
+                hand_res_for_status = hand_result_container[0]
+                hand_count = (len(hand_res_for_status.hand_landmarks)
+                              if hand_res_for_status
+                              and hand_res_for_status.hand_landmarks else 0)
+                hand_ok = f"HANDS:{hand_count}" if hand_count else "HANDS:0"
+                cv2.putText(frame, f"FPS: {fps_display:.1f}  {face_ok} | {body_ok} | {hand_ok}",
                             (10, h - 15),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
@@ -582,9 +686,13 @@ def run(args):
             else:
                 # Headless mode — print FPS periodically
                 if frame_count == 0:
-                    face_ok = "FACE" if blend_shapes is not None else "---"
-                    body_ok = "BODY" if body_landmarks is not None else "---"
-                    print(f"\rFPS: {fps_display:.1f}  {face_ok} | {body_ok}",
+                    face_ok = "FACE" if blend_shapes is not None else "----"
+                    body_ok = "BODY" if body_landmarks is not None else "----"
+                    hand_res_for_status = hand_result_container[0]
+                    hand_count = (len(hand_res_for_status.hand_landmarks)
+                                  if hand_res_for_status
+                                  and hand_res_for_status.hand_landmarks else 0)
+                    print(f"\rFPS: {fps_display:.1f}  {face_ok} | {body_ok} | HANDS:{hand_count}",
                           end='', flush=True)
 
     # Cleanup
@@ -619,6 +727,8 @@ def main():
                         help="Path to face_landmarker.task model file")
     parser.add_argument("--model-pose", type=str, default=None,
                         help="Path to pose_landmarker_lite.task model file")
+    parser.add_argument("--model-hand", type=str, default=None,
+                        help="Path to hand_landmarker.task model file")
     parser.add_argument("--smooth-min-cutoff", type=float, default=1.5,
                         help="Face One Euro min cutoff Hz — lower = smoother "
                              "when still (default: 1.5)")
