@@ -471,10 +471,16 @@ def _add_finger_tube(tree, x, y, parts_geo, label, profile,
 
 def _add_finger_joint(tree, x, y, parts_geo, label, pos_socket,
                       mat_socket):
-    """Small UV sphere at a finger joint. Adds 1 geo socket."""
+    """Small UV sphere at a finger joint. Adds 1 geo socket.
+
+    Density is intentionally coarser (6×4) than palm corner beads
+    (8×6) — finger joints are tiny at viewing distance, so the
+    extra rings weren't earning their poly cost. The hex silhouette
+    at 6 segments still reads as a sphere once shade-smoothed.
+    """
     sphere = add_node(tree, 'GeometryNodeMeshUVSphere', x, y, label)
-    sphere.inputs['Segments'].default_value = 8
-    sphere.inputs['Rings'].default_value = 6
+    sphere.inputs['Segments'].default_value = 6
+    sphere.inputs['Rings'].default_value = 4
     sphere.inputs['Radius'].default_value = FINGER_JOINT_RADIUS
 
     tf = add_node(tree, 'GeometryNodeTransform', x + 200, y,
@@ -514,7 +520,14 @@ def _add_finger_joint(tree, x, y, parts_geo, label, pos_socket,
 def _add_finger_chain(tree, x, y, parts_geo, side, chain_name,
                       palm_pos_socket, profile, mat_limb_socket,
                       mat_joint_socket):
-    """Build one finger's two segments + two joint beads. Adds 4 geo sockets."""
+    """Build one finger's two tubes + one mid-joint bead. Adds 3 geo sockets.
+
+    The fingertip bead (J1) was dropped as a perf cut — the tube's
+    Curve-to-Mesh endpoint already closes off cleanly, so J1 was
+    just a decorative cap that cost ~16 tris per finger × 8 fingers.
+    Mid-joint bead (J0) is kept — it's the visible knuckle and reads
+    as an articulation point when fingers bend in step 10 physics.
+    """
     rest = CHAIN_REST[chain_name]
     anchor_off = _yaw_mirror_for_side(rest['anchor'], side)
     rest_dir = _yaw_mirror_for_side(rest['dir'], side)
@@ -545,11 +558,10 @@ def _add_finger_chain(tree, x, y, parts_geo, side, chain_name,
     _add_finger_tube(tree, x + 200, y - 60, parts_geo, f"{label} T1",
                      profile, seg0_pos, seg1_pos, mat_limb_socket)
 
-    # Two joint beads: one at mid (seg0), one at tip (seg1)
+    # One joint bead at the mid-knuckle (seg0). The fingertip (seg1)
+    # relies on the tube's cap alone — see docstring.
     _add_finger_joint(tree, x + 200, y - 120, parts_geo,
                       f"{label} J0", seg0_pos, mat_joint_socket)
-    _add_finger_joint(tree, x + 200, y - 180, parts_geo,
-                      f"{label} J1", seg1_pos, mat_joint_socket)
 
 
 # =============================================================================
