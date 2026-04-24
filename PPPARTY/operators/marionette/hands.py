@@ -117,9 +117,11 @@ from ._common import (add_node, _frame_section,
 
 PALM_PLATE_SIZE = (0.20, 0.035, 0.18)
 PALM_CORNER_RADIUS = 0.028
+THUMB_KNUCKLE_RADIUS = 0.035
 FINGER_SEG_RADIUS = 0.020
 FINGER_SEG_LENGTH = 0.08
 FINGER_JOINT_RADIUS = 0.022
+PALM_TAPER = 0.3
 
 
 # Palm-corner local-space offsets from palm center (= wrist position in V1).
@@ -147,12 +149,22 @@ _PALM_HALF_Z = PALM_PLATE_SIZE[2] * 0.5   # wrist-to-finger half-depth
 # doesn't clip into the forearm tip. (Half of its Z extent toward -Z.)
 _PALM_CENTER_Z_BIAS = -0.06
 
+# Tapered wrist edge — SW/SE corners sit inboard of the raw palm edge by
+# the same PALM_TAPER factor the plate cube uses, so the beads stay flush
+# on the tapered shape instead of floating off the narrowed wrist side.
+_WRIST_EDGE_X = (1.0 - PALM_TAPER) * _PALM_HALF_X
+
+# Knuckle-row span (NW/NE corners). Wider than the old 0.5× so the NW/NE
+# beads co-locate with the fingerC/D anchor positions and read as
+# "knuckle beads where those fingers meet the palm."
+_SIDE_SPREAD_X = _PALM_HALF_X * 0.8
+
 PALM_CORNER_OFFSETS = {
     # (X_local_for_LEFT_hand, Y_local, Z_world — N means "+Z_local/-Z_world")
-    'sw': (-_PALM_HALF_X, 0.0, _PALM_CENTER_Z_BIAS + _PALM_HALF_Z),
-    'se': (+_PALM_HALF_X, 0.0, _PALM_CENTER_Z_BIAS + _PALM_HALF_Z),
-    'nw': (-_PALM_HALF_X, 0.0, _PALM_CENTER_Z_BIAS - _PALM_HALF_Z),
-    'ne': (+_PALM_HALF_X, 0.0, _PALM_CENTER_Z_BIAS - _PALM_HALF_Z),
+    'sw': (-_WRIST_EDGE_X, 0.0, _PALM_CENTER_Z_BIAS + _PALM_HALF_Z),
+    'se': (+_WRIST_EDGE_X, 0.0, _PALM_CENTER_Z_BIAS + _PALM_HALF_Z),
+    'nw': (-_SIDE_SPREAD_X, 0.0, _PALM_CENTER_Z_BIAS - _PALM_HALF_Z),
+    'ne': (+_SIDE_SPREAD_X, 0.0, _PALM_CENTER_Z_BIAS - _PALM_HALF_Z),
 }
 
 # Per-chain anchor offset (where the finger roots on the palm) and rest
@@ -174,7 +186,7 @@ PALM_CORNER_OFFSETS = {
 # MediaPipe-tracked coordinates.
 
 _N_EDGE_Z = _PALM_CENTER_Z_BIAS - _PALM_HALF_Z    # Z coord of palm's N edge
-_SIDE_SPREAD_X = _PALM_HALF_X * 0.5               # how far C/D sit from center
+# (_SIDE_SPREAD_X is now defined above so PALM_CORNER_OFFSETS can use it.)
 
 CHAIN_REST = {
     'fingerA': {
@@ -252,7 +264,21 @@ def _palm_offset_vec(tree, x, y, label, palm_pos_socket, offset):
 
 def _add_palm_plate(tree, x, y, parts_geo, side, palm_pos_socket,
                     mat_socket):
-    """Build the palm rectangle mesh at palm_pos. Adds 1 geo socket."""
+    """Build the palm rectangle mesh at palm_pos. Adds 1 geo socket.
+
+    The cube is tapered along X as a linear function of Z before it's
+    translated into place — the wrist end (+Z_local) gets narrower by
+    PALM_TAPER, the finger end (-Z_local) stays full width. With only
+    2×2×2 verts the result is a clean trapezoidal prism (4 finger-side
+    verts at full X, 4 wrist-side verts at (1-PALM_TAPER)*X). The
+    PALM_CORNER_OFFSETS already use _WRIST_EDGE_X for SW/SE so the
+    corner beads sit flush on the tapered edge.
+
+    Taper multiplier for an X coord at Z_local is:
+        f(Z) = 1 - PALM_TAPER * (Z + _PALM_HALF_Z) / (2 * _PALM_HALF_Z)
+             = Z * rate + base          (Multiply-Add, one node)
+    where rate = -PALM_TAPER / (2 * _PALM_HALF_Z) and base = 1 - PALM_TAPER/2.
+    """
     cube = add_node(tree, 'GeometryNodeMeshCube', x, y, f"Palm {side}")
     cube.inputs['Size'].default_value = PALM_PLATE_SIZE
     # Low subdivs — it's a little rectangle, not a character.
@@ -260,23 +286,57 @@ def _add_palm_plate(tree, x, y, parts_geo, side, palm_pos_socket,
     cube.inputs['Vertices Y'].default_value = 2
     cube.inputs['Vertices Z'].default_value = 2
 
-    # Translate to palm center (which sits at the wrist plus a small Z
-    # bias toward the finger side so the plate doesn't clip forearm).
+    # --- Taper network (6 nodes): shrink X based on Z_local -------------
+    taper_rate = -PALM_TAPER / (2.0 * _PALM_HALF_Z)
+    taper_base = 1.0 - PALM_TAPER * 0.5
+
+    in_pos = add_node(tree, 'GeometryNodeInputPosition', x, y - 160,
+                      f"Palm {side} InPos")
+
+    sep = add_node(tree, 'ShaderNodeSeparateXYZ', x + 160, y - 160,
+                   f"Palm {side} Sep")
+    tree.links.new(in_pos.outputs['Position'], sep.inputs[0])
+
+    mul_fac = add_node(tree, 'ShaderNodeMath', x + 320, y - 160,
+                       f"Palm {side} Fac")
+    mul_fac.operation = 'MULTIPLY_ADD'
+    mul_fac.inputs[1].default_value = taper_rate
+    mul_fac.inputs[2].default_value = taper_base
+    tree.links.new(sep.outputs['Z'], mul_fac.inputs[0])
+
+    mul_x = add_node(tree, 'ShaderNodeMath', x + 480, y - 160,
+                     f"Palm {side} X*F")
+    mul_x.operation = 'MULTIPLY'
+    tree.links.new(sep.outputs['X'], mul_x.inputs[0])
+    tree.links.new(mul_fac.outputs['Value'], mul_x.inputs[1])
+
+    comb = add_node(tree, 'ShaderNodeCombineXYZ', x + 640, y - 160,
+                    f"Palm {side} Cmb")
+    tree.links.new(mul_x.outputs['Value'], comb.inputs['X'])
+    tree.links.new(sep.outputs['Y'], comb.inputs['Y'])
+    tree.links.new(sep.outputs['Z'], comb.inputs['Z'])
+
+    set_pos = add_node(tree, 'GeometryNodeSetPosition', x + 800, y,
+                       f"Palm {side} Tpr")
+    tree.links.new(cube.outputs['Mesh'], set_pos.inputs['Geometry'])
+    tree.links.new(comb.outputs['Vector'], set_pos.inputs['Position'])
+
+    # --- Translate to palm center ---------------------------------------
     center_off = (0.0, 0.0, _PALM_CENTER_Z_BIAS)
     center_pos = _palm_offset_vec(
         tree, x, y + 100, f"Palm{side.upper()} C",
         palm_pos_socket, center_off)
 
-    tf = add_node(tree, 'GeometryNodeTransform', x + 200, y,
+    tf = add_node(tree, 'GeometryNodeTransform', x + 1000, y,
                   f"Palm {side} TF")
-    tree.links.new(cube.outputs['Mesh'], tf.inputs['Geometry'])
+    tree.links.new(set_pos.outputs['Geometry'], tf.inputs['Geometry'])
     tree.links.new(center_pos, tf.inputs['Translation'])
 
-    sm = add_node(tree, 'GeometryNodeSetShadeSmooth', x + 400, y,
+    sm = add_node(tree, 'GeometryNodeSetShadeSmooth', x + 1200, y,
                   f"Palm {side} Sm")
     tree.links.new(tf.outputs['Geometry'], sm.inputs['Geometry'])
 
-    mt = add_node(tree, 'GeometryNodeSetMaterial', x + 600, y,
+    mt = add_node(tree, 'GeometryNodeSetMaterial', x + 1400, y,
                   f"Palm {side} Mt")
     tree.links.new(sm.outputs['Geometry'], mt.inputs['Geometry'])
     tree.links.new(mat_socket, mt.inputs['Material'])
@@ -292,8 +352,14 @@ def _add_palm_plate(tree, x, y, parts_geo, side, palm_pos_socket,
 # not just a direct socket.
 
 def _add_palm_corner(tree, x, y, parts_geo, side, corner_label,
-                     palm_pos_socket, corner_offset, mat_socket):
-    """Small sphere at one palm corner. Adds 1 geo socket."""
+                     palm_pos_socket, corner_offset, mat_socket,
+                     radius=PALM_CORNER_RADIUS):
+    """Small sphere at one palm corner. Adds 1 geo socket.
+
+    `radius` defaults to the regular palm-corner bead size, but the SW
+    corner (thumb knuckle) bumps up to THUMB_KNUCKLE_RADIUS so the thumb
+    reads as a distinct, chunkier knuckle rather than a fourth corner.
+    """
     corner_pos = _palm_offset_vec(
         tree, x, y + 100,
         f"Palm{side.upper()}.{corner_label}",
@@ -303,7 +369,7 @@ def _add_palm_corner(tree, x, y, parts_geo, side, corner_label,
                       f"Corner {side}.{corner_label}")
     sphere.inputs['Segments'].default_value = 8
     sphere.inputs['Rings'].default_value = 6
-    sphere.inputs['Radius'].default_value = PALM_CORNER_RADIUS
+    sphere.inputs['Radius'].default_value = radius
 
     tf = add_node(tree, 'GeometryNodeTransform', x + 200, y,
                   f"Corner {side}.{corner_label} TF")
@@ -499,15 +565,19 @@ def build_hands(tree, group_in, sim_out, body_mats,
                         palm_pos, mat_hand)
 
         # 4 palm corner beads (4 geo sockets). Stacked rows below the
-        # palm plate so the GN editor is readable.
+        # palm plate so the GN editor is readable. SW corner is the
+        # thumb knuckle and gets a bigger bead than the other three
+        # — cartoon proportions, not corner-of-a-rectangle proportions.
         for c_idx, corner in enumerate(PALM_CORNERS):
             # Mirror the X component per side so right-hand corners
             # mirror left-hand corners around body center.
             corner_off = _mirror_x_for_side(
                 PALM_CORNER_OFFSETS[corner], side)
+            radius = (THUMB_KNUCKLE_RADIUS if corner == 'sw'
+                      else PALM_CORNER_RADIUS)
             _add_palm_corner(tree, x_hands, y_base - 120 - c_idx * 80,
                              parts_geo, side, corner, palm_pos,
-                             corner_off, mat_hand)
+                             corner_off, mat_hand, radius=radius)
 
         # 4 finger chains, 4 geo sockets each (2 tubes + 2 joint beads)
         # → 16 per side. Stack them below the corner block.
