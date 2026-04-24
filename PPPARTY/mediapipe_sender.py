@@ -3,13 +3,16 @@
 
 Standalone script — runs in system Python, NOT inside Blender.
 Captures webcam, runs MediaPipe FaceLandmarker + PoseLandmarker + HandLandmarker,
-packs blend shapes + body landmarks into UDP packets, sends to Blender.
+packs blend shapes + body landmarks + hand endpoints into UDP packets, sends
+to Blender.
 
-alpha.45: HandLandmarker added as 3rd async detector (sender-side only).
-21 landmarks per hand render in the preview overlay. The 3 tracked endpoints
-used by PPParty's Option C hand rig — WRIST (0), THUMB_TIP (4),
-INDEX_FINGER_TIP (8) — are highlighted. UDP packet format is unchanged;
-wire-level hand data lands in alpha.46 (5b).
+alpha.46 (5b.i): Hand endpoints wired into the UDP packet. Three tracked
+endpoints per hand — WRIST (0), THUMB_TIP (4), INDEX_FINGER_TIP (8) —
+sent in body-anchored world coordinates (meters, same frame as
+pose_world_landmarks). Wrist comes from pose_world[15/16]; tips computed
+as wrist + hand_world_landmarks offset. Receiver-blind: alpha.45 receivers
+skip the new FLAG_HAS_HANDS bit and tolerate trailing bytes, so this commit
+is safe to deploy ahead of receiver-side hand parsing.
 
 Usage:
     python mediapipe_sender.py
@@ -44,6 +47,7 @@ MAGIC = b'MPPT'
 VERSION = 0x01
 FLAG_HAS_FACE = 0x01
 FLAG_HAS_BODY = 0x02
+FLAG_HAS_HANDS = 0x04  # alpha.46 (5b.i) — per-hand 3-endpoint packet
 
 # MediaPipe blend shapes come out in alphabetical order (52 total).
 # Index 0 is "_neutral" which we skip — we send indices 1-51 (51 values)
@@ -215,6 +219,23 @@ def make_body_filters(min_cutoff=0.8, beta=0.01):
     return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(102)]
 
 
+def make_hand_filters(min_cutoff=0.8, beta=0.015):
+    """Create filters for 2 hands × 2 tips × 3 axes = 12 filters.
+
+    Only the thumb/index tips are filtered here — the wrist anchor reuses
+    body_filters via pose_world_landmarks[15/16], so no double-filtering.
+    Tips are the noisiest hand landmarks; slightly hotter beta than body
+    since hand motion is typically faster than torso sway.
+
+    Filter layout:
+        [0..2]   L thumb tip xyz
+        [3..5]   L index tip xyz
+        [6..8]   R thumb tip xyz
+        [9..11]  R index tip xyz
+    """
+    return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(12)]
+
+
 # ---------------------------------------------------------------------------
 # Head rotation from face transformation matrix
 # ---------------------------------------------------------------------------
@@ -262,7 +283,7 @@ def matrix_to_euler(mat):
 # ---------------------------------------------------------------------------
 
 def pack_frame(blend_shapes, head_rotation, body_landmarks,
-               body_center=None):
+               body_center=None, hands=None):
     """Pack a single frame into the MPPT binary UDP packet.
 
     Args:
@@ -271,9 +292,21 @@ def pack_frame(blend_shapes, head_rotation, body_landmarks,
         body_landmarks: list of 33 (x, y, z, visibility) tuples, or None
         body_center: tuple of 3 floats (x, y, z) — image-space hip
             midpoint centered at (0,0), or None
+        hands: tuple (left_hand, right_hand). Each element is either
+            None (hand not tracked) or a tuple of 3 vec3s
+            (wrist_xyz, thumb_xyz, index_xyz) in body-anchored world
+            coordinates (meters, same frame as pose_world_landmarks).
 
     Returns:
         bytes ready to send via UDP
+
+    alpha.46 (5b.i) hand section layout — appended after body section,
+    guarded by FLAG_HAS_HANDS. Sent only when at least one hand is tracked:
+        1 byte  — presence (bit 0: L present, bit 1: R present)
+        If L:   9 floats (L_wrist, L_thumb_tip, L_index_tip × xyz)
+        If R:   9 floats (R_wrist, R_thumb_tip, R_index_tip × xyz)
+    VERSION byte is NOT bumped — alpha.45 receivers ignore the new flag
+    bit and tolerate trailing bytes, so old receivers remain compatible.
     """
     flags = 0x00
     body = b''
@@ -293,6 +326,27 @@ def pack_frame(blend_shapes, head_rotation, body_landmarks,
         bc = body_center if body_center else (0.0, 0.0, 0.0)
         flat.extend(bc)
         body += struct.pack('<135f', *flat)
+
+    if hands is not None:
+        left_hand, right_hand = hands
+        if left_hand is not None or right_hand is not None:
+            flags |= FLAG_HAS_HANDS
+            presence = 0
+            if left_hand is not None:
+                presence |= 0x01
+            if right_hand is not None:
+                presence |= 0x02
+            body += struct.pack('B', presence)
+            for hand in (left_hand, right_hand):
+                if hand is None:
+                    continue
+                wrist, thumb, index_tip = hand
+                body += struct.pack(
+                    '<9f',
+                    wrist[0], wrist[1], wrist[2],
+                    thumb[0], thumb[1], thumb[2],
+                    index_tip[0], index_tip[1], index_tip[2],
+                )
 
     header = MAGIC + struct.pack('BB', VERSION, flags)
     return header + body
@@ -408,6 +462,14 @@ def run(args):
         min_cutoff=body_mc,
         beta=body_beta,
     )
+    hand_mc = (args.smooth_hand_min_cutoff if args.smooth_hand_min_cutoff
+               is not None else args.smooth_min_cutoff * 0.8)
+    hand_beta = (args.smooth_hand_beta if args.smooth_hand_beta
+                 is not None else args.smooth_beta * 1.5)
+    hand_filters = make_hand_filters(
+        min_cutoff=hand_mc,
+        beta=hand_beta,
+    )
 
     with FaceLandmarker.create_from_options(face_options) as face_lm, \
          PoseLandmarker.create_from_options(pose_options) as pose_lm, \
@@ -514,10 +576,81 @@ def run(args):
                         body_filters[101](body_center[2], t_now),
                     )
 
+            # --- Hand endpoints (body-anchored world space, alpha.46) ---
+            # Wrist anchor from pose_world[15/16] (filtered). Tips computed
+            # as wrist + hand_world_landmarks offset — hand_world is
+            # hand-local meters with wrist at origin and axes aligned to
+            # world space, so the vector add lands the tip in body-relative
+            # meters, same frame as pose_world. No hand data sent when
+            # either the hand is missing OR the body landmarks aren't
+            # available (no anchor → no body-space position).
+            hands = None
+            hand_res = hand_result_container[0]
+            if (hand_res and hand_res.hand_world_landmarks
+                    and body_landmarks is not None):
+                left_hand = None
+                right_hand = None
+                for hand_idx, hwl in enumerate(hand_res.hand_world_landmarks):
+                    if not (hand_res.handedness
+                            and hand_idx < len(hand_res.handedness)
+                            and hand_res.handedness[hand_idx]):
+                        continue
+                    label = hand_res.handedness[hand_idx][0].category_name
+                    # MediaPipe labels assume mirrored input; we cv2.flip
+                    # the frame, so "Left" == performer's left hand ==
+                    # pose LEFT_WRIST (15), "Right" == RIGHT_WRIST (16).
+                    if label == "Left":
+                        pose_wrist_idx = 15
+                    elif label == "Right":
+                        pose_wrist_idx = 16
+                    else:
+                        continue
+
+                    wrist_lm = body_landmarks[pose_wrist_idx]
+                    wrist_xyz = (wrist_lm[0], wrist_lm[1], wrist_lm[2])
+
+                    thumb_off = hwl[HAND_THUMB_TIP]
+                    index_off = hwl[HAND_INDEX_TIP]
+                    thumb_xyz = (
+                        wrist_xyz[0] + thumb_off.x,
+                        wrist_xyz[1] + thumb_off.y,
+                        wrist_xyz[2] + thumb_off.z,
+                    )
+                    index_xyz = (
+                        wrist_xyz[0] + index_off.x,
+                        wrist_xyz[1] + index_off.y,
+                        wrist_xyz[2] + index_off.z,
+                    )
+
+                    # Filter tips (wrist is already filtered via body_filters).
+                    # Layout: L thumb = [0..2], L index = [3..5],
+                    #         R thumb = [6..8], R index = [9..11].
+                    base = 0 if label == "Left" else 6
+                    thumb_filt = (
+                        hand_filters[base + 0](thumb_xyz[0], t_now),
+                        hand_filters[base + 1](thumb_xyz[1], t_now),
+                        hand_filters[base + 2](thumb_xyz[2], t_now),
+                    )
+                    index_filt = (
+                        hand_filters[base + 3](index_xyz[0], t_now),
+                        hand_filters[base + 4](index_xyz[1], t_now),
+                        hand_filters[base + 5](index_xyz[2], t_now),
+                    )
+
+                    hand_entry = (wrist_xyz, thumb_filt, index_filt)
+                    if label == "Left":
+                        left_hand = hand_entry
+                    else:
+                        right_hand = hand_entry
+
+                if left_hand is not None or right_hand is not None:
+                    hands = (left_hand, right_hand)
+
             # Send UDP packet if we have any data
-            if blend_shapes is not None or body_landmarks is not None:
+            if (blend_shapes is not None or body_landmarks is not None
+                    or hands is not None):
                 packet = pack_frame(blend_shapes, head_rotation,
-                                    body_landmarks, body_center)
+                                    body_landmarks, body_center, hands)
                 sock.sendto(packet, target)
 
             # FPS counter
@@ -739,6 +872,10 @@ def main():
                         help="Body-specific min cutoff Hz (default: face × 0.8)")
     parser.add_argument("--smooth-body-beta", type=float, default=None,
                         help="Body-specific speed coefficient (default: face × 2)")
+    parser.add_argument("--smooth-hand-min-cutoff", type=float, default=None,
+                        help="Hand-tip min cutoff Hz (default: face × 0.8)")
+    parser.add_argument("--smooth-hand-beta", type=float, default=None,
+                        help="Hand-tip speed coefficient (default: face × 1.5)")
     args = parser.parse_args()
     run(args)
 

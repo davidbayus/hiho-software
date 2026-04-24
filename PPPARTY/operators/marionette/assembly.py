@@ -204,7 +204,9 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     for bt_name in ('bt_shl_delta', 'bt_shr_delta',
                      'bt_hipl_delta', 'bt_hipr_delta',
                      'bt_elbow_l_hint', 'bt_elbow_r_hint',
-                     'bt_body_center'):
+                     'bt_body_center',
+                     'bt_wrist_l', 'bt_thumb_l', 'bt_index_l',
+                     'bt_wrist_r', 'bt_thumb_r', 'bt_index_r'):
         s = tree.interface.new_socket(
             bt_name, in_out='INPUT', socket_type='NodeSocketVector',
             parent=bt_panel)
@@ -1140,6 +1142,53 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     )
     parts_geo = studio_result['parts_geo']
     _s = studio_result['snap_state']
+
+    # ------------------------------------------------------------------
+    # SECTION 10b — ALPHA.46 DEBUG: Hand endpoint spheres
+    # ------------------------------------------------------------------
+    # Six small spheres that track raw MediaPipe hand positions
+    # (wrist + thumb tip + index tip, per hand). Positions come in
+    # body-anchored world space via the bt_*_l/r sockets. Lets us see
+    # whether hand tracking data is arriving and landing where we
+    # expect before we wire it into the marionette rig proper.
+    x_hd = 3000
+    for i, (sock_name, radius, y_row) in enumerate([
+        ('bt_wrist_l', 0.05, -1400),
+        ('bt_thumb_l', 0.03, -1550),
+        ('bt_index_l', 0.03, -1700),
+        ('bt_wrist_r', 0.05, -1850),
+        ('bt_thumb_r', 0.03, -2000),
+        ('bt_index_r', 0.03, -2150),
+    ]):
+        sphere = add_node(tree, 'GeometryNodeMeshUVSphere',
+                          x_hd, y_row, f"HD {sock_name}")
+        sphere.inputs['Segments'].default_value = 10
+        sphere.inputs['Rings'].default_value = 6
+        sphere.inputs['Radius'].default_value = radius
+
+        tf = add_node(tree, 'GeometryNodeTransform',
+                      x_hd + 200, y_row, f"HD {sock_name} TF")
+        tree.links.new(sphere.outputs['Mesh'], tf.inputs['Geometry'])
+        tree.links.new(group_in.outputs[sock_name],
+                       tf.inputs['Translation'])
+
+        sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
+                      x_hd + 400, y_row, f"HD {sock_name} Sm")
+        tree.links.new(tf.outputs['Geometry'], sm.inputs['Geometry'])
+
+        mt = add_node(tree, 'GeometryNodeSetMaterial',
+                      x_hd + 600, y_row, f"HD {sock_name} Mt")
+        tree.links.new(sm.outputs['Geometry'], mt.inputs['Geometry'])
+        tree.links.new(group_in.outputs['Joint Material'],
+                       mt.inputs['Material'])
+
+        parts_geo.append(mt.outputs['Geometry'])
+
+    _frame_section(tree,
+        "ALPHA.46 DEBUG — Hand endpoint spheres: 6 visual probes"
+        " tracking raw MediaPipe wrist + thumb + index tip positions",
+        'body', _new_nodes(tree, _s))
+    _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
     # SECTION 11 — Join blob head + body → output

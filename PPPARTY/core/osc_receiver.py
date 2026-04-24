@@ -29,6 +29,17 @@ MPPT_MAGIC = b'MPPT'
 MPPT_VERSION = 0x01
 MPPT_FLAG_FACE = 0x01
 MPPT_FLAG_BODY = 0x02
+MPPT_FLAG_HANDS = 0x04  # alpha.46: 3 endpoints per hand in body-anchored meters
+
+# Hand endpoint socket names (6 Vector sockets on the GN modifier).
+# These are the 3 tracked endpoints per hand, body-anchored world space:
+#   wrist, thumb tip, index-finger tip (per Option C design doc).
+# L = performer's left hand → maps to puppet's right side (selfie flip),
+# R = performer's right hand → puppet's left side.
+HAND_ENDPOINT_NAMES = (
+    'bt_wrist_l', 'bt_thumb_l', 'bt_index_l',
+    'bt_wrist_r', 'bt_thumb_r', 'bt_index_r',
+)
 
 # MediaPipe blend shape names in alphabetical order (52 total).
 # Index into this list matches the order MediaPipe outputs them.
@@ -141,9 +152,12 @@ def decode_mediapipe(raw_bytes):
     Packet format:
         4 bytes  — magic b'MPPT'
         1 byte   — version
-        1 byte   — flags (bit 0: face, bit 1: body)
+        1 byte   — flags (bit 0: face, bit 1: body, bit 2: hands [alpha.46])
         If face:  52 floats (blend shapes) + 3 floats (head rotation)
-        If body:  33 × 4 floats (x, y, z, visibility per landmark)
+        If body:  33 × 4 floats (x, y, z, visibility) + 3 body-center floats
+        If hands: 1 presence byte (bit 0 L, bit 1 R)
+                  + 9 floats per present hand
+                    (wrist_xyz, thumb_tip_xyz, index_tip_xyz)
 
     Returns a list of tuples, or None on failure.
     """
@@ -198,6 +212,31 @@ def decode_mediapipe(raw_bytes):
 
         # Body center: image-space hip midpoint (centered at 0,0)
         result.append(('body_center', (data[132], data[133], data[134])))
+
+    # Hand endpoints: body-anchored world coords (meters, same frame as
+    # pose_world_landmarks). Up to 2 hands, each with wrist + thumb_tip +
+    # index_tip. Missing hands are omitted from the entries dict so the
+    # push side can distinguish "not present" from "present at origin".
+    if flags & MPPT_FLAG_HANDS:
+        if len(raw_bytes) < offset + 1:
+            return None
+        presence = raw_bytes[offset]
+        offset += 1
+        entries = {}
+        for label, bit in (('l', 0x01), ('r', 0x02)):
+            if not (presence & bit):
+                continue
+            hand_size = 9 * 4  # 9 floats × 4 bytes
+            if len(raw_bytes) < offset + hand_size:
+                return None
+            hd = struct.unpack('<9f',
+                               raw_bytes[offset:offset + hand_size])
+            offset += hand_size
+            entries[f'bt_wrist_{label}'] = (hd[0], hd[1], hd[2])
+            entries[f'bt_thumb_{label}'] = (hd[3], hd[4], hd[5])
+            entries[f'bt_index_{label}'] = (hd[6], hd[7], hd[8])
+        if entries:
+            result.append(('hand_endpoints', entries))
 
     return result if result else None
 
@@ -475,6 +514,8 @@ class TrackingReceiver:
                                     self._pending['_body_landmarks'] = entry[1]
                                 elif entry[0] == 'body_center':
                                     self._pending['_body_center'] = entry[1]
+                                elif entry[0] == 'hand_endpoints':
+                                    self._pending['_hand_endpoints'] = entry[1]
             except OSError:
                 break
 
@@ -779,6 +820,40 @@ class TrackingReceiver:
                         wrote_any = True
                     except Exception:
                         pass
+
+        # Push hand endpoints (alpha.46). Incoming values are in pose_world
+        # space (MP metric, Y-down, Z-toward-camera). Same _mp_to_puppet
+        # transform used for body tracking — see _push_body_tracking for the
+        # axis rationale. Applied to absolute positions here rather than
+        # deltas because hand endpoints come pre-anchored to pose_world[15/16].
+        hand_ep = updates.get('_hand_endpoints')
+        if hand_ep and self._bt_socket_ids:
+            for name, pos in hand_ep.items():
+                if name not in HAND_ENDPOINT_NAMES:
+                    continue
+                sid = self._bt_socket_ids.get(name)
+                if not sid:
+                    continue
+                # MP (x,y,z) → puppet (x * scale, z * scale, -y * scale)
+                puppet_pos = [
+                    pos[0] * self._BT_SCALE,
+                    pos[2] * self._BT_SCALE,
+                    -pos[1] * self._BT_SCALE,
+                ]
+                if not self._value_changed(name, puppet_pos):
+                    continue
+                try:
+                    if self._write_method == 'idprop':
+                        mod[sid] = puppet_pos
+                    elif self._write_method == 'default':
+                        iface = self._iface_map.get(name)
+                        if iface:
+                            iface.default_value = puppet_pos
+                    else:
+                        mod[sid] = puppet_pos
+                    wrote_any = True
+                except Exception:
+                    pass
 
         if wrote_any:
             self._dep_graph_dirty = True
