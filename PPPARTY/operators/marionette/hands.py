@@ -93,6 +93,8 @@ slots into assembly.py between build_body_parts and build_studio_track
 with one call.
 """
 
+import math
+
 from ._common import (add_node, _frame_section,
                       _snap_nodes, _new_nodes)
 
@@ -123,6 +125,13 @@ FINGER_SEG_LENGTH = 0.08
 FINGER_JOINT_RADIUS = 0.022
 PALM_TAPER = 0.3
 
+# Yaw the whole hand around Z so thumbs angle forward/outward instead of
+# flat-forward — that's the natural relaxed-arm pose (palms face inward
+# toward thighs, thumbs swing forward). LEFT hand yaws negative, RIGHT
+# hand yaws positive; mirrored by _yaw_mirror_for_side.
+PALM_YAW_DEG = 45.0
+_PALM_YAW_RAD = math.radians(PALM_YAW_DEG)
+
 
 # Palm-corner local-space offsets from palm center (= wrist position in V1).
 # Compass convention is documented in the module docstring above. The N
@@ -131,9 +140,10 @@ PALM_TAPER = 0.3
 # emerge.
 #
 # In V1 there is no palm basis matrix: palm-local axes are aligned to
-# world axes with the +X side mirrored per hand side. The offsets below
-# are the left-hand version (thumb on +X_world side, toward body center);
-# _mirror_x_for_side flips the X component for the right hand.
+# world axes with the +X side mirrored per hand side, plus a fixed ±45°
+# yaw around Z (forward-outward thumb pose). The offsets below are the
+# pre-yaw left-hand version; _yaw_mirror_for_side applies both the X
+# mirror and the per-side yaw in one call.
 #
 # Axes in world space for V1 rest pose:
 #   palm-local +X  →  world +X (toward body center for LEFT hand)
@@ -168,8 +178,8 @@ PALM_CORNER_OFFSETS = {
 }
 
 # Per-chain anchor offset (where the finger roots on the palm) and rest
-# direction (unit vector from anchor toward fingertip). World-space values
-# for the LEFT hand; _mirror_x_for_side flips the X component per side.
+# direction (unit vector from anchor toward fingertip). Pre-yaw values
+# for the LEFT hand; _yaw_mirror_for_side applies X mirror + ±45° yaw.
 #
 #   fingerA = thumb — anchored at SW corner of the palm (thumb-side,
 #       wrist-side). Thumb points slightly outward and down.
@@ -215,15 +225,43 @@ HAND_CHAINS = ('fingerA', 'fingerB', 'fingerC', 'fingerD')
 FINGER_SEGMENTS = 2
 PALM_CORNERS = ('ne', 'nw', 'se', 'sw')
 
+# Render-only bead set — which corners get a visible sphere in the
+# geometry pass. A subset of PALM_CORNERS: the SE corner is a physics
+# reservation only (jiggle state in step 11), not something a cartoon
+# palm needs to look at. If step 11 decides SE deserves a visible bump
+# later, promote it back into PALM_BEAD_CORNERS.
+PALM_BEAD_CORNERS = ('ne', 'nw', 'sw')
 
-def _mirror_x_for_side(vec, side):
-    """Mirror the X component of a tuple based on hand side.
 
-    Left hand: return as-is (thumb on +X_world = body-center side).
-    Right hand: negate X (thumb on -X_world = body-center side).
+def _yaw_mirror_for_side(vec, side):
+    """Mirror X then yaw around Z, both keyed to hand side.
+
+    Two transforms rolled into one so every call site doesn't have to
+    chain them. Applied to palm-local offsets (corner beads, finger
+    anchors, finger rest-direction vectors) so geometry on both hands
+    ends up in the natural relaxed-arm pose: palms turned inward
+    toward the body, thumbs swinging forward and outward.
+
+        LEFT  hand: mirror X unchanged, yaw = -PALM_YAW_RAD
+        RIGHT hand: mirror X flipped,   yaw = +PALM_YAW_RAD
+
+    The palm plate itself gets the same yaw via its Transform node's
+    Rotation input (see _add_palm_plate) so the corner beads, finger
+    anchors, and the plate geometry all rotate together around the
+    palm center. Z is untouched — fingers still dangle down in world.
     """
     mx = 1.0 if side == 'l' else -1.0
-    return (vec[0] * mx, vec[1], vec[2])
+    yaw = -_PALM_YAW_RAD if side == 'l' else _PALM_YAW_RAD
+    c = math.cos(yaw)
+    s = math.sin(yaw)
+    x = vec[0] * mx
+    y = vec[1]
+    return (x * c - y * s, x * s + y * c, vec[2])
+
+
+def _palm_yaw_for_side(side):
+    """Z-axis yaw angle (radians) applied to the palm plate per side."""
+    return -_PALM_YAW_RAD if side == 'l' else _PALM_YAW_RAD
 
 
 # =============================================================================
@@ -331,6 +369,10 @@ def _add_palm_plate(tree, x, y, parts_geo, side, palm_pos_socket,
                   f"Palm {side} TF")
     tree.links.new(set_pos.outputs['Geometry'], tf.inputs['Geometry'])
     tree.links.new(center_pos, tf.inputs['Translation'])
+    # Yaw the plate around Z so it matches the rotated corner/finger
+    # offsets from _yaw_mirror_for_side. -45° for L, +45° for R.
+    tf.inputs['Rotation'].default_value = (0.0, 0.0,
+                                           _palm_yaw_for_side(side))
 
     sm = add_node(tree, 'GeometryNodeSetShadeSmooth', x + 1200, y,
                   f"Palm {side} Sm")
@@ -474,8 +516,8 @@ def _add_finger_chain(tree, x, y, parts_geo, side, chain_name,
                       mat_joint_socket):
     """Build one finger's two segments + two joint beads. Adds 4 geo sockets."""
     rest = CHAIN_REST[chain_name]
-    anchor_off = _mirror_x_for_side(rest['anchor'], side)
-    rest_dir = _mirror_x_for_side(rest['dir'], side)
+    anchor_off = _yaw_mirror_for_side(rest['anchor'], side)
+    rest_dir = _yaw_mirror_for_side(rest['dir'], side)
 
     # Cumulative offsets for each segment endpoint (from palm center).
     seg0_off = (
@@ -564,14 +606,21 @@ def build_hands(tree, group_in, sim_out, body_mats,
         _add_palm_plate(tree, x_hands, y_base, parts_geo, side,
                         palm_pos, mat_hand)
 
-        # 4 palm corner beads (4 geo sockets). Stacked rows below the
+        # 3 palm beads render (4 geo sockets). Stacked rows below the
         # palm plate so the GN editor is readable. SW corner is the
-        # thumb knuckle and gets a bigger bead than the other three
+        # thumb knuckle and gets a bigger bead than the other two
         # — cartoon proportions, not corner-of-a-rectangle proportions.
-        for c_idx, corner in enumerate(PALM_CORNERS):
-            # Mirror the X component per side so right-hand corners
-            # mirror left-hand corners around body center.
-            corner_off = _mirror_x_for_side(
+        #
+        # The SE corner gets NO bead: real palms don't have a bony
+        # bump on the pinky-side wrist, and the tapered palm edge
+        # reads fine on its own there. The state-item slot for 'se'
+        # is still reserved in physics.py's PALM_CORNERS (for future
+        # jiggle math in step 11) — just nothing to render on it here.
+        for c_idx, corner in enumerate(PALM_BEAD_CORNERS):
+            # Mirror + yaw the offset per side so left/right palms
+            # end up in the relaxed-arm pose with thumbs swinging
+            # forward and outward.
+            corner_off = _yaw_mirror_for_side(
                 PALM_CORNER_OFFSETS[corner], side)
             radius = (THUMB_KNUCKLE_RADIUS if corner == 'sw'
                       else PALM_CORNER_RADIUS)
