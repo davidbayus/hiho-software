@@ -338,6 +338,11 @@ class TrackingReceiver:
         self._bt_factor_id = None    # Body Tracking float → socket identifier
         self._vis_socket_ids = None  # vis_arm_l etc → socket identifier
         self._ext_socket_ids = None  # bt_arm_*_ext → socket identifier
+        # Delta cache (alpha.43): skip modifier writes when value hasn't
+        # changed. Blender invalidates the dep graph on every write — even
+        # a write of the same value — so a still face was dirtying the
+        # graph 30×/sec with identical numbers.
+        self._last_written = {}
 
     @property
     def is_running(self):
@@ -428,6 +433,7 @@ class TrackingReceiver:
         self._bt_factor_id = None
         self._vis_socket_ids = None
         self._ext_socket_ids = None
+        self._last_written.clear()
 
         if bpy.app.timers.is_registered(self._apply_updates):
             bpy.app.timers.unregister(self._apply_updates)
@@ -510,6 +516,31 @@ class TrackingReceiver:
                         area.tag_redraw()
 
         return 0.01
+
+    def _value_changed(self, key, value, eps=1e-4):
+        """Return True if value differs from cached; update cache on change.
+
+        Handles both float scalars and 3-component vectors (tuple/list).
+        Blender dirties the dep graph on every modifier write, so skipping
+        same-value writes is the biggest single FPS win on a still subject.
+        """
+        last = self._last_written.get(key)
+        if last is None:
+            if isinstance(value, (tuple, list)):
+                self._last_written[key] = tuple(value)
+            else:
+                self._last_written[key] = value
+            return True
+        if isinstance(value, (tuple, list)):
+            for i, v in enumerate(value):
+                if abs(v - last[i]) > eps:
+                    self._last_written[key] = tuple(value)
+                    return True
+            return False
+        if abs(value - last) > eps:
+            self._last_written[key] = value
+            return True
+        return False
 
     def _push_to_puppet(self, updates):
         """Push tracking data directly to PPParty GN modifier inputs.
@@ -649,6 +680,8 @@ class TrackingReceiver:
         for name, value in updates.items():
             if name.startswith('_'):
                 continue
+            if not self._value_changed(name, value):
+                continue
             if self._write_method == 'rna':
                 rna_name = self._rna_map.get(name)
                 if rna_name:
@@ -678,6 +711,8 @@ class TrackingReceiver:
         head_euler = updates.get('_head_rotation')
         if head_euler:
             for i, rname in enumerate(['headRotX', 'headRotY', 'headRotZ']):
+                if not self._value_changed(rname, head_euler[i]):
+                    continue
                 if self._write_method == 'rna':
                     rna_name = self._rna_map.get(rname)
                     if rna_name:
@@ -716,20 +751,21 @@ class TrackingReceiver:
             if sid:
                 # Map image-space to puppet: x→x, y(up)→z, z(depth)→y
                 puppet_center = [body_ctr[0], body_ctr[2], body_ctr[1]]
-                try:
-                    if self._write_method == 'idprop':
-                        mod[sid] = puppet_center
-                    elif self._write_method == 'rna':
-                        rna = self._rna_map.get('bt_body_center')
-                        if rna:
-                            setattr(mod, rna, puppet_center)
-                    else:
-                        iface = self._iface_map.get('bt_body_center')
-                        if iface:
-                            iface.default_value = puppet_center
-                    wrote_any = True
-                except Exception:
-                    pass
+                if self._value_changed('bt_body_center', puppet_center):
+                    try:
+                        if self._write_method == 'idprop':
+                            mod[sid] = puppet_center
+                        elif self._write_method == 'rna':
+                            rna = self._rna_map.get('bt_body_center')
+                            if rna:
+                                setattr(mod, rna, puppet_center)
+                        else:
+                            iface = self._iface_map.get('bt_body_center')
+                            if iface:
+                                iface.default_value = puppet_center
+                        wrote_any = True
+                    except Exception:
+                        pass
 
         if wrote_any and self._cached_puppet_obj:
             self._cached_puppet_obj.update_tag()
@@ -846,6 +882,8 @@ class TrackingReceiver:
             sid = self._bt_socket_ids.get(name)
             if not sid:
                 continue
+            if not self._value_changed(name, vec):
+                continue
             try:
                 if self._write_method == 'idprop':
                     mod[sid] = list(vec)
@@ -898,6 +936,8 @@ class TrackingReceiver:
                 sid = self._ext_socket_ids.get(name)
                 if not sid:
                     continue
+                if not self._value_changed(name, ratio):
+                    continue
                 try:
                     if self._write_method == 'idprop':
                         mod[sid] = ratio
@@ -934,6 +974,8 @@ class TrackingReceiver:
             for name, score in vis_scores.items():
                 sid = self._vis_socket_ids.get(name)
                 if not sid:
+                    continue
+                if not self._value_changed(name, score):
                     continue
                 try:
                     if self._write_method == 'idprop':
