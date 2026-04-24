@@ -343,6 +343,12 @@ class TrackingReceiver:
         # a write of the same value — so a still face was dirtying the
         # graph 30×/sec with identical numbers.
         self._last_written = {}
+        # Dep-graph invalidation gate (alpha.44): _push_to_puppet sets this
+        # flag instead of calling update_tag() directly. The timer coalesces
+        # all writes within a ~33ms window into one update_tag() call on
+        # the 30 FPS redraw tick — one graph invalidation per frame, not
+        # one per write.
+        self._dep_graph_dirty = False
 
     @property
     def is_running(self):
@@ -434,6 +440,7 @@ class TrackingReceiver:
         self._vis_socket_ids = None
         self._ext_socket_ids = None
         self._last_written.clear()
+        self._dep_graph_dirty = False
 
         if bpy.app.timers.is_registered(self._apply_updates):
             bpy.app.timers.unregister(self._apply_updates)
@@ -506,10 +513,16 @@ class TrackingReceiver:
         # Push face tracking + head rotation to GN modifier
         self._push_to_puppet(updates)
 
-        # Refresh viewport at ~30fps
+        # Coalesce dep-graph invalidation + viewport refresh at ~30fps.
+        # Before alpha.44, update_tag() fired on every write from the 100Hz
+        # timer — up to 3× per redraw frame. Gating both to the same 33ms
+        # window means the GN tree re-evaluates once per visible frame.
         now = time.time()
         if now - self._last_redraw_time > 0.033:
             self._last_redraw_time = now
+            if self._dep_graph_dirty and self._cached_puppet_obj:
+                self._cached_puppet_obj.update_tag()
+                self._dep_graph_dirty = False
             for window in bpy.context.window_manager.windows:
                 for area in window.screen.areas:
                     if area.type == 'VIEW_3D':
@@ -767,8 +780,8 @@ class TrackingReceiver:
                     except Exception:
                         pass
 
-        if wrote_any and self._cached_puppet_obj:
-            self._cached_puppet_obj.update_tag()
+        if wrote_any:
+            self._dep_graph_dirty = True
 
     # MediaPipe landmark indices
     _LM_L_SHOULDER = 11
