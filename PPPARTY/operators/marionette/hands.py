@@ -251,7 +251,7 @@ def _yaw_mirror_for_side(vec, side):
     palm center. Z is untouched — fingers still dangle down in world.
     """
     mx = 1.0 if side == 'l' else -1.0
-    yaw = -_PALM_YAW_RAD if side == 'l' else _PALM_YAW_RAD
+    yaw = _PALM_YAW_RAD if side == 'l' else -_PALM_YAW_RAD
     c = math.cos(yaw)
     s = math.sin(yaw)
     x = vec[0] * mx
@@ -261,7 +261,7 @@ def _yaw_mirror_for_side(vec, side):
 
 def _palm_yaw_for_side(side):
     """Z-axis yaw angle (radians) applied to the palm plate per side."""
-    return -_PALM_YAW_RAD if side == 'l' else _PALM_YAW_RAD
+    return _PALM_YAW_RAD if side == 'l' else -_PALM_YAW_RAD
 
 
 # =============================================================================
