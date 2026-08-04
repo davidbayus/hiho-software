@@ -1,0 +1,66 @@
+schema_version = "1.0.0"
+
+id = "hiho_mocap"
+version = "1.4.38"
+name = "HIHO MOCAP"
+tagline = "Artist-friendly multi-cam mocap on current Blender"
+# TODO: replace with real maintainer email before publishing to extensions.blender.org
+maintainer = "David Bayus + HIHO 4D ART CLUB <hiho-4d-art-club@example.invalid>"
+type = "add-on"
+
+tags = ["Animation", "Rigging", "Tracking"]
+
+blender_version_min = "5.0.0"
+
+license = ["SPDX:AGPL-3.0-or-later"]
+
+# Headless build (2026-06-01): FreeMoCap + OpenCV run in an EXTERNAL Python env
+# (see external/ + core/external_runner.py), launched as a subprocess, never
+# inside Blender. So the addon ships zero heavy wheels, is pure Python, and runs
+# on current Blender (and in principle any OS). The env is set via the panel's
+# "FreeMoCap env" path. This is what dissolves the old Blender 5.0 pin.
+wheels = []
+
+[permissions]
+files = "Read/write recordings, calibration, and mocap output to disk"
+camera = "Launch external multi-camera capture for motion capture"
+
+[build]
+paths_exclude_pattern = [
+    "__pycache__/",
+    "*.pyc",
+    "*.pyo",
+    ".DS_Store",
+    "/.git/",
+    "/*.zip",
+    "/MOCAP_TAKES/",
+    "/MOCAP_CALIBRATION_FILES/",
+    "/HIHO_MOCAP_LIBRARY/",
+    # Heavy bundles now live in the external env, not the addon:
+    "/wheels/",
+    "/vendor/",
+    "/mediapipe_models/",
+    # Retired pre-headless modules (audit L1) — kept in repo, not shipped:
+    "/operators/record.py",
+    "/operators/cameras.py",
+    "/operators/bind.py",
+    "/operators/capture_cameras.py",
+    "/core/blender_preview.py",
+    "/core/freemocap_runner.py",
+    "/core/capture_cameras.py",
+    # Design / research docs (not shipped):
+    "/AUDIT_*.md",
+    "/STEP_*.md",
+    "/STAGE_*.md",
+    "/*_DESIGN*.md",
+    "/*_RESEARCH*.md",
+    "/*_ROADMAP*.md",
+    "/ARCHITECTURE.md",
+    "/CAMERA_MANAGER_DESIGN.md",
+    "/BUGS_AND_BACKLOG.md",
+    "/DEV_LOG_*.md",
+    "/HIHO_ADOPTABLE_INNOVATIONS.md",
+    "/HIHO_MOCAP_v1_PLAN.md",
+    "/HIHO_MOCAP_WRAPPER_ARCHITECTURE.md",
+    "/README.md",
+]
