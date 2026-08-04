@@ -3,7 +3,8 @@ UI Panels — Where the buttons live in Blender.
 
 Shows up in the 3D Viewport sidebar (press N to open) under "PaWrappa."
 
-V0.3.3 — Better hints pointing to Adjust Last Operation panel.
+V0.3.4 — Corrected back-seam bias, flatter clusters (average-normal
+growth), and plain-English stretch feedback after each unwrap.
 One big button, one slider, clear instructions.
 """
 

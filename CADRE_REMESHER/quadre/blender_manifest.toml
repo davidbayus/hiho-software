@@ -1,0 +1,30 @@
+schema_version = "1.0.0"
+
+id = "quadre"
+version = "0.3.0"
+name = "QUADRE"
+tagline = "One-button quad remesher for character work"
+maintainer = "Prof. David Bayus, CADRE Lab (SJSU)"
+type = "add-on"
+
+website = "https://github.com/cadre-lab/quadre"
+
+tags = ["Mesh"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+platforms = ["windows-x64", "macos-arm64", "linux-x64"]
+
+[permissions]
+files = "Import/export temporary OBJ files for quad remeshing"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/*.zip",
+]

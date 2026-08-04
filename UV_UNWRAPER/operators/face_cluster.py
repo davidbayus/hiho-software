@@ -139,8 +139,50 @@ class PAWRAPPA_OT_face_cluster(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='OBJECT')
 
         self._restore_mode(original_mode)
-        self.report({'INFO'}, seam_result)
+
+        stretch = self._measure_uv_stretch(mesh)
+        if stretch is None:
+            verdict = ""
+        elif stretch < 1.15:
+            verdict = " — low stretching, good to paint!"
+        elif stretch < 1.45:
+            verdict = " — some stretching (usually fine for painting)"
+        else:
+            verdict = " — a lot of stretching, try the slider further LEFT (more pieces)"
+
+        self.report({'INFO'}, seam_result + verdict)
         return {'FINISHED'}
+
+    def _measure_uv_stretch(self, mesh):
+        """Area-weighted mean UV distortion: 1.0 = perfect, higher = stretchier.
+        Compares each face's share of UV space against its share of 3D surface."""
+        if not mesh.uv_layers.active:
+            return None
+        uv = mesh.uv_layers.active.data
+
+        areas3d = []
+        areas2d = []
+        for poly in mesh.polygons:
+            pts = [uv[li].uv for li in poly.loop_indices]
+            a2 = 0.0
+            for i in range(1, len(pts) - 1):
+                a, b, c = pts[0], pts[i], pts[i + 1]
+                a2 += abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2
+            areas2d.append(a2)
+            areas3d.append(poly.area)
+
+        total3 = sum(areas3d)
+        total2 = sum(areas2d)
+        if total3 < 1e-12 or total2 < 1e-12:
+            return None
+
+        weighted = 0.0
+        for a3, a2 in zip(areas3d, areas2d):
+            if a3 < 1e-12:
+                continue
+            r = (a2 / total2) / (a3 / total3)
+            weighted += (max(r, 1.0 / r) if r > 1e-9 else 100.0) * (a3 / total3)
+        return weighted
 
     def _cluster_and_seam(self, obj) -> str:
         """Full pipeline: score edges → cluster faces → extract seams."""
@@ -182,14 +224,19 @@ class PAWRAPPA_OT_face_cluster(bpy.types.Operator):
 
         # --- Step 6: Lloyd iteration — grow clusters, recompute seeds ---
         labels = {}
+        cluster_normals = None
         for iteration in range(self.iterations):
             labels = self._assign_faces_to_seeds(
                 bm, seeds, face_adj, shared_edge, edge_costs,
-                face_normals, num_faces
+                face_normals, num_faces, cluster_normals
             )
 
-            # Recompute seeds (face nearest to cluster centroid)
+            # Recompute seeds (face nearest to cluster centroid) and each
+            # cluster's average normal — comparing candidate faces against
+            # the whole cluster's direction (not just the seed face's)
+            # keeps charts flatter, which unwraps with less stretch
             seeds = self._recompute_seeds(labels, face_centers, bm)
+            cluster_normals = self._compute_cluster_normals(labels, face_normals)
 
         # --- Step 7: Merge small clusters ---
         labels = self._merge_small_clusters(
@@ -230,13 +277,16 @@ class PAWRAPPA_OT_face_cluster(bpy.types.Operator):
             else:
                 cost = edge.calc_face_angle(0.0)
 
-            # Back bias: edges on back-facing surfaces are slightly cheaper
-            # to cross, so seams prefer to form there
-            if self.back_bias and cost > 0.01:
+            # Back bias: cluster boundaries (seams) form along HIGH-cost
+            # edges, so back-facing edges must cost MORE for seams to
+            # prefer the back. Additive, because on smooth surfaces (the
+            # very places a hidden seam matters) the dihedral cost is ~0
+            # and a multiplier would have no effect.
+            if self.back_bias:
                 f1, f2 = edge.link_faces
                 avg_normal_y = (f1.normal.y + f2.normal.y) / 2.0
                 if avg_normal_y > 0:
-                    cost *= 0.85
+                    cost += 0.2 * avg_normal_y
 
             edge_costs[edge.index] = cost
 
@@ -313,6 +363,7 @@ class PAWRAPPA_OT_face_cluster(bpy.types.Operator):
         edge_costs: Dict[int, float],
         face_normals: Dict[int, any],
         num_faces: int,
+        cluster_normals: Dict[int, any] = None,
     ) -> Dict[int, int]:
         """Assign every face to the nearest seed using a proper priority queue."""
         normal_w = self.normal_weight
@@ -341,9 +392,14 @@ class PAWRAPPA_OT_face_cluster(bpy.types.Operator):
             visited.add(face_idx)
             labels[face_idx] = cluster_id
 
-            # Get the cluster's proxy normal (seed face normal)
-            seed_idx = seeds[cluster_id] if cluster_id < len(seeds) else face_idx
-            seed_normal = face_normals.get(seed_idx)
+            # Get the cluster's proxy normal — average of the whole cluster
+            # from the previous Lloyd pass when available, else the seed face
+            seed_normal = None
+            if cluster_normals is not None:
+                seed_normal = cluster_normals.get(cluster_id)
+            if seed_normal is None:
+                seed_idx = seeds[cluster_id] if cluster_id < len(seeds) else face_idx
+                seed_normal = face_normals.get(seed_idx)
             if seed_normal is None:
                 continue
 
@@ -424,6 +480,32 @@ class PAWRAPPA_OT_face_cluster(bpy.types.Operator):
             new_seeds.append(best_face)
 
         return new_seeds
+
+    def _compute_cluster_normals(
+        self,
+        labels: Dict[int, int],
+        face_normals: Dict[int, any],
+    ) -> Dict[int, any]:
+        """Average normal per cluster, keyed to match the next pass's
+        cluster ids (position in sorted cluster-id order, same ordering
+        as _recompute_seeds)."""
+        from mathutils import Vector
+
+        sums: Dict[int, any] = {}
+        for face_idx, cluster_id in labels.items():
+            n = face_normals.get(face_idx)
+            if n is None:
+                continue
+            if cluster_id not in sums:
+                sums[cluster_id] = Vector((0.0, 0.0, 0.0))
+            sums[cluster_id] += n
+
+        result = {}
+        for position, cid in enumerate(sorted(sums.keys())):
+            avg = sums[cid]
+            if avg.length > 1e-8:
+                result[position] = avg.normalized()
+        return result
 
     def _merge_small_clusters(
         self,

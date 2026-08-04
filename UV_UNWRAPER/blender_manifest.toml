@@ -1,0 +1,25 @@
+schema_version = "1.0.0"
+
+id = "pawrappa"
+version = "0.3.5"
+name = "PaWrappa the UV Unwrapper"
+tagline = "One-click paintable UVs, no seam marking"
+maintainer = "Prof. David Bayus, CADRE Lab (SJSU)"
+type = "add-on"
+
+website = "https://github.com/cadre-lab/pawrappa"
+
+tags = ["UV"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/*.zip",
+]

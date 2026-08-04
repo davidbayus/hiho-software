@@ -12,7 +12,7 @@ Three modes for three shape types:
 bl_info = {
     "name": "PaWrappa the UV Unwrapper",
     "author": "David Bayus / CADRE Lab / SJSU",
-    "version": (0, 3, 3),
+    "version": (0, 3, 5),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > PaWrappa",
     "description": "One-click automatic UV unwrapping with three shape modes",
