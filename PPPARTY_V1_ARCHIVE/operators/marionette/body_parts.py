@@ -771,27 +771,11 @@ def build_body_parts(tree, group_in, sim_out, body_mats,
                                arm_r_factor.outputs['Value'])
     hand_r_pos = hand_r_lerp.outputs['Vector']
 
-    # Hands: capsules with Width + Rotation + Tilt (mirrored L/R)
-    _idx_hand_l = len(parts_geo)
-    add_capsule_part(tree, x_part, parts_geo, -620, "Hand L", HAND_RADIUS,
-                      hand_l_pos, body_mats['hand'],
-                      width_output=group_in.outputs['Hand Width'],
-                      ext_factor=0.3, axis='Z', subdivs=4,
-                      uniform_scale_out=group_in.outputs['Hand Size'],
-                      rotation_output=group_in.outputs['Hand Rotation'],
-                      tilt_output=group_in.outputs['Hand Tilt'],
-                      tilt_axis='X',
-                      mat_socket=group_in.outputs['Hand Material'])
-    _idx_hand_r = len(parts_geo)
-    add_capsule_part(tree, x_part, parts_geo, -780, "Hand R", HAND_RADIUS,
-                      hand_r_pos, body_mats['hand'],
-                      width_output=group_in.outputs['Hand Width'],
-                      ext_factor=0.3, axis='Z', subdivs=4,
-                      uniform_scale_out=group_in.outputs['Hand Size'],
-                      rotation_output=group_in.outputs['Hand Rotation'],
-                      tilt_output=group_in.outputs['Hand Tilt'],
-                      tilt_axis='X',
-                      mat_socket=group_in.outputs['Hand Material'])
+    # Hands are drawn separately in marionette/hands.py (alpha.48+):
+    # palm plate + palm-corner beads + 4 finger chains. The old
+    # cartoon-capsule hand was removed — `hand_l_pos` / `hand_r_pos`
+    # survive as the FALLBACK for the new hand's palm socket when
+    # bt_wrist_* is still zero (pre-tracking). See build_hands().
 
     # Feet: capsules with Width + Rotation on Z (mirrored) + Depth
     _idx_foot_l = len(parts_geo)
@@ -1030,8 +1014,6 @@ def build_body_parts(tree, group_in, sim_out, body_mats,
         'parts_geo': parts_geo,
         '_idx_chest': _idx_chest,
         '_idx_pelvis': _idx_pelvis,
-        '_idx_hand_l': _idx_hand_l,
-        '_idx_hand_r': _idx_hand_r,
         '_idx_foot_l': _idx_foot_l,
         '_idx_foot_r': _idx_foot_r,
         'hand_l_pos': hand_l_pos,

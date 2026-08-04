@@ -420,6 +420,38 @@ def _ensure_chain_segment_group():
         "Stiff Vel Max", in_out='INPUT', socket_type='NodeSocketFloat')
     s.default_value = 0.5
 
+    # --- Tip-pull inputs (alpha.52 / dropout delta, NATIVE_PHYSICS_DESIGN_
+    # DELTA_DROPOUT.md §Delta 3). Tracked Tip is the world-space position
+    # MediaPipe reports for the tracked fingertip (already lerped by the
+    # receiver during REACQUIRING). Tip Pull Live is the per-frame Live
+    # float — 1.0=tracked → full pull, 0.0=released → no pull, in-between
+    # during the asymmetric ramp. Tip Pull Strength is set per-instance
+    # by hands.py from physics_presets.TIP_PULL_STRENGTH (0.6 default),
+    # NOT user-tunable as a slider — same status as MIDLINE_MARGIN.
+    #
+    # Sub-group defaults are intentionally "off-by-default": Tip Pull Live
+    # defaults to 0.0 so an instantiated sub-group with nothing wired
+    # produces zero tip-pull contribution (chain runs as plain Verlet +
+    # goal pull). Tracked Tip defaults to (0,0,0) which only matters when
+    # Live > 0; untracked chains leave Live at 0 and don't care about
+    # Tracked Tip. Tracked chains in hands.py (step 3d) wire Live to
+    # `Hand <side> Live` from the modifier interface (which defaults to
+    # 1.0, so a freshly-built rig pre-tracking still pulls correctly
+    # toward the tracked socket — which is also (0,0,0) pre-tracking,
+    # so the rest-pose fallback in hands.py takes over).
+    g.interface.new_socket(
+        "Tracked Tip", in_out='INPUT', socket_type='NodeSocketVector')
+    s = g.interface.new_socket(
+        "Tip Pull Live", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.0
+    s.min_value = 0.0
+    s.max_value = 1.0
+    s = g.interface.new_socket(
+        "Tip Pull Strength", in_out='INPUT', socket_type='NodeSocketFloat')
+    s.default_value = 0.6
+    s.min_value = 0.0
+    s.max_value = 5.0
+
     # --- Outputs ---
     g.interface.new_socket(
         "New Pos", in_out='OUTPUT', socket_type='NodeSocketVector')
@@ -537,7 +569,40 @@ def _ensure_chain_segment_group():
         " Stiff Vel Min to Stiff Vel Fac at Stiff Vel Max.",
         'control', [vel_len, vel_t, vel_stiff, vsp])
 
-    # --- INTEGRATE (Pos + vel_d + grav + goal_pull + vel_stiff_pull) ---
+    # --- TIP PULL (alpha.52 — pull toward MediaPipe-tracked fingertip,
+    # gated by the per-hand Live float). Three nodes, parallel to the
+    # other contribution chains (gravity, goal pull, vel stiffness).
+    # to_tip = Tracked Tip - Pos    — vector toward tracked tip
+    # tps_live = Tip Pull Strength * Tip Pull Live    — gated magnitude
+    # tip_pull = to_tip * tps_live  — final contribution vector
+    # When Live = 0 (RELEASED), tps_live = 0 → contribution is identically
+    # zero → chain runs as a free Verlet rope under gravity + goal pull.
+    # When Live = 1 (TRACKED), tps_live = Tip Pull Strength → chain is
+    # pulled toward the tracked tip with full strength.
+    to_tip = add_node(g, 'ShaderNodeVectorMath', dx * 1, -740, "ToTip")
+    to_tip.operation = 'SUBTRACT'
+    g.links.new(gin.outputs['Tracked Tip'], to_tip.inputs[0])
+    g.links.new(gin.outputs['Pos'], to_tip.inputs[1])
+
+    tps_live = add_node(g, 'ShaderNodeMath', dx * 2, -740, "TPS*Live")
+    tps_live.operation = 'MULTIPLY'
+    g.links.new(gin.outputs['Tip Pull Strength'], tps_live.inputs[0])
+    g.links.new(gin.outputs['Tip Pull Live'], tps_live.inputs[1])
+
+    tip_pull = add_node(g, 'ShaderNodeVectorMath', dx * 3, -740, "TipPull")
+    tip_pull.operation = 'SCALE'
+    g.links.new(to_tip.outputs['Vector'], tip_pull.inputs[0])
+    g.links.new(tps_live.outputs['Value'], tip_pull.inputs['Scale'])
+
+    _frame_section(g,
+        "TIP PULL — Pull toward the MediaPipe-tracked fingertip, gated"
+        " by the per-hand Live float. Live=0 → contribution is zero,"
+        " chain dangles freely. Live=1 → full pull, chain reaches for"
+        " the tracked tip. Receiver lerps Tracked Tip during recovery.",
+        'control', [to_tip, tps_live, tip_pull])
+
+    # --- INTEGRATE (Pos + vel_d + grav + goal_pull + vel_stiff_pull
+    #                + tip_pull) ---
     add1 = add_node(g, 'ShaderNodeVectorMath', dx * 5, 0, "+VelD")
     add1.operation = 'ADD'
     g.links.new(gin.outputs['Pos'], add1.inputs[0])
@@ -553,29 +618,34 @@ def _ensure_chain_segment_group():
     g.links.new(add2.outputs['Vector'], add3.inputs[0])
     g.links.new(goal_pull.outputs['Vector'], add3.inputs[1])
 
-    physics_pos = add_node(g, 'ShaderNodeVectorMath', dx * 8, 0, "Physics")
+    physics_pos = add_node(g, 'ShaderNodeVectorMath', dx * 8, 0, "+VStf")
     physics_pos.operation = 'ADD'
     g.links.new(add3.outputs['Vector'], physics_pos.inputs[0])
     g.links.new(vsp.outputs['Vector'], physics_pos.inputs[1])
 
+    add_tip = add_node(g, 'ShaderNodeVectorMath', dx * 9, 0, "Physics")
+    add_tip.operation = 'ADD'
+    g.links.new(physics_pos.outputs['Vector'], add_tip.inputs[0])
+    g.links.new(tip_pull.outputs['Vector'], add_tip.inputs[1])
+
     _frame_section(g,
-        "INTEGRATE — Sum all five contributions: damped velocity carries"
-        " momentum, gravity drops, goal pull springs home,"
-        " velocity stiffness adds the kick.",
-        'physics', [add1, add2, add3, physics_pos])
+        "INTEGRATE — Sum all six contributions: damped velocity carries"
+        " momentum, gravity drops, goal pull springs home, velocity"
+        " stiffness adds the kick, tip pull reaches for tracked tip.",
+        'physics', [add1, add2, add3, physics_pos, add_tip])
 
     # --- ROOT FALLOFF MIX (segments near the chain root stay pinned) ---
-    # mix(physics_pos, Goal, Root Falloff Factor) implemented as a 3-node
+    # mix(add_tip, Goal, Root Falloff Factor) implemented as a 3-node
     # vector lerp via the shared `_vector_lerp` helper:
-    #     result = physics_pos + (Goal - physics_pos) * Factor
-    #     Factor = 0 → physics_pos (no pin); Factor = 1 → Goal (full pin).
+    #     result = add_tip + (Goal - add_tip) * Factor
+    #     Factor = 0 → add_tip (no pin); Factor = 1 → Goal (full pin).
     # ShaderNodeMix would also work but its sockets are positional + named
     # ambiguously across data types — the helper keeps wiring obvious and
     # matches the rest of the codebase (see body_movement.py BT blend).
     snap_mix = _snap_nodes(g)
     new_pos = _vector_lerp(
-        g, dx * 9, 0, "RootMix",
-        a_out=physics_pos.outputs['Vector'],
+        g, dx * 10, 0, "RootMix",
+        a_out=add_tip.outputs['Vector'],
         b_out=gin.outputs['Goal'],
         factor_out=gin.outputs['Root Falloff Factor'])
 
@@ -586,7 +656,7 @@ def _ensure_chain_segment_group():
         'float', _new_nodes(g, snap_mix))
 
     # --- OUTPUTS ---
-    gout = add_node(g, 'NodeGroupOutput', dx * 11, 0, "Out")
+    gout = add_node(g, 'NodeGroupOutput', dx * 12, 0, "Out")
     g.links.new(new_pos.outputs['Vector'], gout.inputs['New Pos'])
     g.links.new(gin.outputs['Pos'], gout.inputs['New Prev'])
 
@@ -1564,4 +1634,12 @@ def build_physics(tree, group_in, context, *,
         'sim_in': sim_in,
         'sim_out': sim_out,
         'snap_state': _s,
+        # First-frame init plumbing — exposed so other in-zone modules
+        # (hands.py chain physics, alpha.54+) can reuse the same compare
+        # node instead of re-deriving it from sim_in.outputs['initialized'].
+        # Same socket pair _add_verlet_endpoint already consumes locally:
+        #   init_cmp_out  = 1 on frame 1, 0 thereafter (snap to rest)
+        #   not_first_out = 0 on frame 1, 1 thereafter (run physics)
+        'init_cmp_out': init_cmp.outputs['Result'],
+        'not_first_out': not_first.outputs['Value'],
     }

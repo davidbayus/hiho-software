@@ -48,6 +48,7 @@ VERSION = 0x01
 FLAG_HAS_FACE = 0x01
 FLAG_HAS_BODY = 0x02
 FLAG_HAS_HANDS = 0x04  # alpha.46 (5b.i) — per-hand 3-endpoint packet
+FLAG_HAS_PALM_BASIS = 0x08  # alpha.56 — per-hand palm orientation (palm_x, palm_y)
 
 # MediaPipe blend shapes come out in alphabetical order (52 total).
 # Index 0 is "_neutral" which we skip — we send indices 1-51 (51 values)
@@ -127,8 +128,10 @@ HAND_MODEL_FILE = "hand_landmarker.task"
 # The full 21-landmark layout is documented in MediaPipe's hand docs;
 # these are the 3 endpoints the Blender side will consume in alpha.46.
 HAND_WRIST = 0
+HAND_INDEX_MCP = 5     # alpha.56 — base of index finger (palm basis input)
 HAND_THUMB_TIP = 4
 HAND_INDEX_TIP = 8
+HAND_PINKY_MCP = 17    # alpha.56 — base of pinky finger (palm basis input)
 HAND_TRACKED_INDICES = (HAND_WRIST, HAND_THUMB_TIP, HAND_INDEX_TIP)
 
 
@@ -220,20 +223,86 @@ def make_body_filters(min_cutoff=0.8, beta=0.01):
 
 
 def make_hand_filters(min_cutoff=0.8, beta=0.015):
-    """Create filters for 2 hands × 2 tips × 3 axes = 12 filters.
+    """Create filters for 2 hands × (2 tips + 2 basis vectors) × 3 axes = 24.
 
-    Only the thumb/index tips are filtered here — the wrist anchor reuses
+    Tips: only thumb/index are filtered here — the wrist anchor reuses
     body_filters via pose_world_landmarks[15/16], so no double-filtering.
     Tips are the noisiest hand landmarks; slightly hotter beta than body
     since hand motion is typically faster than torso sway.
 
+    Palm basis (alpha.56): palm_x and palm_y unit vectors per hand,
+    computed from wrist + index_MCP + pinky_MCP. Filtered per component
+    so the receiver-side palm rotation doesn't jitter; the small loss
+    of unit-ness from per-component filtering is invisible at the GN
+    rotation step where these get used.
+
     Filter layout:
-        [0..2]   L thumb tip xyz
-        [3..5]   L index tip xyz
-        [6..8]   R thumb tip xyz
-        [9..11]  R index tip xyz
+        [0..2]    L thumb tip xyz
+        [3..5]    L index tip xyz
+        [6..8]    R thumb tip xyz
+        [9..11]   R index tip xyz
+        [12..14]  L palm_x xyz       (alpha.56)
+        [15..17]  L palm_y xyz       (alpha.56)
+        [18..20]  R palm_x xyz       (alpha.56)
+        [21..23]  R palm_y xyz       (alpha.56)
     """
-    return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(12)]
+    return [OneEuroFilter(min_cutoff=min_cutoff, beta=beta) for _ in range(24)]
+
+
+def compute_palm_basis(wrist, index_mcp, pinky_mcp):
+    """Build an orthonormal palm basis from 3 hand-world landmarks.
+
+    Returns (palm_x, palm_y) as 3-tuples. The third basis vector
+    palm_z = cross(palm_x, palm_y) points OUT of the palm and is
+    reconstructed receiver-side via cross product (saves 3 floats
+    on the wire and one round of orthogonalization).
+
+    Inputs are 3-tuples in any consistent coord frame. We feed them
+    from MP hand_world_landmarks: wrist-anchored meters with axes
+    aligned to the camera world (same frame the receiver maps to
+    puppet space via the existing _mp_to_puppet remap).
+
+    palm_x = normalize(pinky_MCP - index_MCP)  — across the palm
+                                                  (radial → ulnar)
+    palm_y is built so {palm_x, palm_y, palm_z} forms a right-handed
+    orthonormal frame with palm_y roughly pointing wrist → fingers.
+
+    Returns None if the basis is degenerate (any landmark coincident).
+    """
+    # Across-palm axis
+    px = (pinky_mcp[0] - index_mcp[0],
+          pinky_mcp[1] - index_mcp[1],
+          pinky_mcp[2] - index_mcp[2])
+    px_mag = math.sqrt(px[0] * px[0] + px[1] * px[1] + px[2] * px[2])
+    if px_mag < 1e-6:
+        return None
+    px = (px[0] / px_mag, px[1] / px_mag, px[2] / px_mag)
+
+    # Rough forward (wrist → fingers midpoint)
+    mid = ((index_mcp[0] + pinky_mcp[0]) * 0.5,
+           (index_mcp[1] + pinky_mcp[1]) * 0.5,
+           (index_mcp[2] + pinky_mcp[2]) * 0.5)
+    fwd = (mid[0] - wrist[0], mid[1] - wrist[1], mid[2] - wrist[2])
+
+    # Palm normal = px × fwd
+    pn = (px[1] * fwd[2] - px[2] * fwd[1],
+          px[2] * fwd[0] - px[0] * fwd[2],
+          px[0] * fwd[1] - px[1] * fwd[0])
+    pn_mag = math.sqrt(pn[0] * pn[0] + pn[1] * pn[1] + pn[2] * pn[2])
+    if pn_mag < 1e-6:
+        return None
+    pn = (pn[0] / pn_mag, pn[1] / pn_mag, pn[2] / pn_mag)
+
+    # palm_y = pn × px — orthogonal to both, in palm plane
+    py = (pn[1] * px[2] - pn[2] * px[1],
+          pn[2] * px[0] - pn[0] * px[2],
+          pn[0] * px[1] - pn[1] * px[0])
+    py_mag = math.sqrt(py[0] * py[0] + py[1] * py[1] + py[2] * py[2])
+    if py_mag < 1e-6:
+        return None
+    py = (py[0] / py_mag, py[1] / py_mag, py[2] / py_mag)
+
+    return px, py
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +352,7 @@ def matrix_to_euler(mat):
 # ---------------------------------------------------------------------------
 
 def pack_frame(blend_shapes, head_rotation, body_landmarks,
-               body_center=None, hands=None):
+               body_center=None, hands=None, palm_bases=None):
     """Pack a single frame into the MPPT binary UDP packet.
 
     Args:
@@ -296,6 +365,11 @@ def pack_frame(blend_shapes, head_rotation, body_landmarks,
             None (hand not tracked) or a tuple of 3 vec3s
             (wrist_xyz, thumb_xyz, index_xyz) in body-anchored world
             coordinates (meters, same frame as pose_world_landmarks).
+        palm_bases: tuple (left_basis, right_basis). Each element is
+            either None or a tuple of 2 vec3s (palm_x, palm_y) — unit
+            basis vectors in the same world-aligned frame as the hand
+            tips. The third basis vector palm_z is reconstructed
+            receiver-side via cross(palm_x, palm_y).
 
     Returns:
         bytes ready to send via UDP
@@ -307,6 +381,15 @@ def pack_frame(blend_shapes, head_rotation, body_landmarks,
         If R:   9 floats (R_wrist, R_thumb_tip, R_index_tip × xyz)
     VERSION byte is NOT bumped — alpha.45 receivers ignore the new flag
     bit and tolerate trailing bytes, so old receivers remain compatible.
+
+    alpha.56 palm basis section — appended after the hand section,
+    guarded by FLAG_HAS_PALM_BASIS (own flag, NOT a per-hand block size
+    bump — that would corrupt alpha.45–.55 receivers which expect 9
+    floats per hand). Same per-flag presence pattern:
+        1 byte  — presence (bit 0: L palm, bit 1: R palm)
+        If L:   6 floats (L_palm_x, L_palm_y × xyz)
+        If R:   6 floats (R_palm_x, R_palm_y × xyz)
+    Old receivers ignore the unknown flag bit and the trailing bytes.
     """
     flags = 0x00
     body = b''
@@ -346,6 +429,26 @@ def pack_frame(blend_shapes, head_rotation, body_landmarks,
                     wrist[0], wrist[1], wrist[2],
                     thumb[0], thumb[1], thumb[2],
                     index_tip[0], index_tip[1], index_tip[2],
+                )
+
+    if palm_bases is not None:
+        left_basis, right_basis = palm_bases
+        if left_basis is not None or right_basis is not None:
+            flags |= FLAG_HAS_PALM_BASIS
+            presence = 0
+            if left_basis is not None:
+                presence |= 0x01
+            if right_basis is not None:
+                presence |= 0x02
+            body += struct.pack('B', presence)
+            for basis in (left_basis, right_basis):
+                if basis is None:
+                    continue
+                px, py = basis
+                body += struct.pack(
+                    '<6f',
+                    px[0], px[1], px[2],
+                    py[0], py[1], py[2],
                 )
 
     header = MAGIC + struct.pack('BB', VERSION, flags)
@@ -585,11 +688,14 @@ def run(args):
             # either the hand is missing OR the body landmarks aren't
             # available (no anchor → no body-space position).
             hands = None
+            palm_bases = None
             hand_res = hand_result_container[0]
             if (hand_res and hand_res.hand_world_landmarks
                     and body_landmarks is not None):
                 left_hand = None
                 right_hand = None
+                left_basis = None
+                right_basis = None
                 for hand_idx, hwl in enumerate(hand_res.hand_world_landmarks):
                     if not (hand_res.handedness
                             and hand_idx < len(hand_res.handedness)
@@ -643,14 +749,56 @@ def run(args):
                     else:
                         right_hand = hand_entry
 
+                    # Palm basis (alpha.56). Computed in hand_world_landmarks
+                    # frame (wrist-anchored, axes aligned to camera world)
+                    # so the result composes cleanly with the same MP→puppet
+                    # axis remap the receiver applies to bt_ vectors. Per-
+                    # component One Euro filter; the slight unit-length drift
+                    # is invisible at the GN rotation step in alpha.57.
+                    # Layout: L palm_x = [12..14], L palm_y = [15..17],
+                    #         R palm_x = [18..20], R palm_y = [21..23].
+                    wrist_in_hand = (hwl[HAND_WRIST].x,
+                                     hwl[HAND_WRIST].y,
+                                     hwl[HAND_WRIST].z)
+                    index_mcp_in_hand = (hwl[HAND_INDEX_MCP].x,
+                                         hwl[HAND_INDEX_MCP].y,
+                                         hwl[HAND_INDEX_MCP].z)
+                    pinky_mcp_in_hand = (hwl[HAND_PINKY_MCP].x,
+                                         hwl[HAND_PINKY_MCP].y,
+                                         hwl[HAND_PINKY_MCP].z)
+                    basis = compute_palm_basis(wrist_in_hand,
+                                               index_mcp_in_hand,
+                                               pinky_mcp_in_hand)
+                    if basis is not None:
+                        px_raw, py_raw = basis
+                        pbase = 12 if label == "Left" else 18
+                        px_filt = (
+                            hand_filters[pbase + 0](px_raw[0], t_now),
+                            hand_filters[pbase + 1](px_raw[1], t_now),
+                            hand_filters[pbase + 2](px_raw[2], t_now),
+                        )
+                        py_filt = (
+                            hand_filters[pbase + 3](py_raw[0], t_now),
+                            hand_filters[pbase + 4](py_raw[1], t_now),
+                            hand_filters[pbase + 5](py_raw[2], t_now),
+                        )
+                        basis_entry = (px_filt, py_filt)
+                        if label == "Left":
+                            left_basis = basis_entry
+                        else:
+                            right_basis = basis_entry
+
                 if left_hand is not None or right_hand is not None:
                     hands = (left_hand, right_hand)
+                if left_basis is not None or right_basis is not None:
+                    palm_bases = (left_basis, right_basis)
 
             # Send UDP packet if we have any data
             if (blend_shapes is not None or body_landmarks is not None
-                    or hands is not None):
+                    or hands is not None or palm_bases is not None):
                 packet = pack_frame(blend_shapes, head_rotation,
-                                    body_landmarks, body_center, hands)
+                                    body_landmarks, body_center, hands,
+                                    palm_bases)
                 sock.sendto(packet, target)
 
             # FPS counter

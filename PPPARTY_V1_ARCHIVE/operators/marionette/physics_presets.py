@@ -198,6 +198,34 @@ JIGGLE_PRESET_FOR_PALM = "PPPALMV1"
 
 
 # ===========================================================================
+# TIP PULL — strength of the pull toward MediaPipe-tracked fingertip
+# ===========================================================================
+# Multiplier on the tip-pull term in PP_ChainVerletSegment (added 2026-04-25
+# per NATIVE_PHYSICS_DESIGN_DELTA_DROPOUT.md §Delta 3). Each tracked chain
+# segment integrates `(Tracked Tip - Pos) * TIP_PULL_STRENGTH * Tip Pull Live`
+# into its physics step. `Tip Pull Live` is the per-frame Live float
+# (1=tracked, 0=released, in-between=transitioning) which the receiver
+# computes from a per-hand presence timer.
+#
+# Why a constant, not a slider:
+#   The 9 chain params (Chain Velocity etc.) are exposed in the N-panel
+#   "Physics Tuning" section because students may want to tune them. Tip
+#   Pull Strength is the engineer's "how rigidly does the chain follow
+#   tracking" knob — not something a kid touches. Build-time constant.
+#
+# Tuning intuition (from chain prototype, 2026-04-25):
+#   0.3 → loose-wristed: chain points toward tracking but lags significantly
+#   0.6 → SOFT FOLLOW (current default): chain points + has visible give
+#   1.5 → tight: chain pinned closely to tracked tip, stiffer feel
+#   2.5+ → effectively rigid: tip Verlet jitter visible, tracker smoothing
+#         needed
+#
+# Soft 0.6 is the alpha.51 starting value. Re-tune live in Blender after
+# the rig is built — feel-on-rig matters more than plot-shape.
+TIP_PULL_STRENGTH = 0.6
+
+
+# ===========================================================================
 # Sanity checks — run at import time so typos fail fast
 # ===========================================================================
 

@@ -212,6 +212,49 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
             parent=bt_panel)
         s.hide_in_modifier = True
 
+    # Hand liveness floats (alpha.52 / dropout delta) — receiver computes
+    # these from a per-hand presence timer. 1.0 = tracked, 0.0 = released,
+    # in-between = the asymmetric ramp during dropout/reacquisition.
+    # hands.py reads them in step 3d to gate the tip-pull term on each
+    # tracked-finger PP_ChainVerletSegment instance. Default 1.0 so a
+    # freshly-built rig before tracking ever starts behaves identically
+    # to alpha.50 (full tip pull, falls through to rest-pose fallback).
+    # See NATIVE_PHYSICS_DESIGN_DELTA_DROPOUT.md §Delta 2.
+    for live_name in ('Hand L Live', 'Hand R Live'):
+        s = tree.interface.new_socket(
+            live_name, in_out='INPUT', socket_type='NodeSocketFloat',
+            parent=bt_panel)
+        s.default_value = 1.0
+        s.min_value = 0.0
+        s.max_value = 1.0
+        s.hide_in_modifier = True
+
+    # Palm basis vectors (alpha.56) — orthonormal in-palm orientation
+    # per hand. palm_x = across the palm (radial → ulnar after the
+    # selfie L/R swap), palm_y = wrist → fingers in palm plane. The
+    # third basis vector palm_z is reconstructed GN-side via
+    # cross(palm_x, palm_y) — saves 2 sockets per hand.
+    #
+    # alpha.57: hands.py consumes these to replace _yaw_mirror_for_side
+    # at anchor / palm corners / finger rest_dirs / palm plate. Defaults
+    # encode the V1-like rest pose (palms face forward, fingers dangle
+    # down): palm_x = world +X (across), palm_y = world -Z (fingers
+    # toward floor). Right-handed for both sides — no chirality flip on
+    # first tracking event. The cosmetic ±45° yaw of V1 is dropped from
+    # the default — once MP detects the hand, the live basis takes over
+    # and the palm rotates to match the performer.
+    for vname, default in (
+        ('palm_x_l', (1.0, 0.0, 0.0)),
+        ('palm_y_l', (0.0, 0.0, -1.0)),
+        ('palm_x_r', (1.0, 0.0, 0.0)),
+        ('palm_y_r', (0.0, 0.0, -1.0)),
+    ):
+        s = tree.interface.new_socket(
+            vname, in_out='INPUT', socket_type='NodeSocketVector',
+            parent=bt_panel)
+        s.default_value = default
+        s.hide_in_modifier = True
+
     s = tree.interface.new_socket(
         "Performance Space", in_out='INPUT', socket_type='NodeSocketFloat',
         parent=bt_panel)
@@ -317,6 +360,30 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     s.default_value = 0.48
     s.min_value = 0.1
     s.max_value = 1.2
+
+    # Chain sim params — 7 of HAIRSIDE preset's 9. Defaults match
+    # physics_presets.CHAIN_PRESETS["HAIRSIDE"] (the role-mapped preset
+    # for fingers). Two preset-only knobs sit out: Root Falloff and
+    # Stiff End Fac are baked into per-segment Root Falloff Factor and
+    # End Factor Scale at Create-Marionette time (hands.py reads the
+    # preset directly), so a runtime slider would be inert. The 7 here
+    # ARE runtime-tunable — every chain segment instance reads them via
+    # group_in.outputs[name]. Tooltips draw from GOO_PHYSICS_RESEARCH.md
+    # parameter decoder (see ui/panels.py if/when sliders surface).
+    for sock_name, default, smin, smax in (
+            ("Chain Velocity",  1.0,  0.0, 2.0),
+            ("Chain Dampening", 0.1,  0.0, 1.0),
+            ("Chain Gravity",   0.02, 0.0, 0.2),
+            ("Chain Stiffness", 0.41, 0.0, 1.0),
+            ("Stiff Vel Fac",   0.2,  0.0, 1.0),
+            ("Stiff Vel Min",   0.1,  0.0, 1.0),
+            ("Stiff Vel Max",   1.0,  0.0, 5.0)):
+        s = tree.interface.new_socket(
+            sock_name, in_out='INPUT', socket_type='NodeSocketFloat',
+            parent=ph_panel)
+        s.default_value = default
+        s.min_value = smin
+        s.max_value = smax
 
     # ------------------------------------------------------------------
     # CUSTOMIZATION — "Make It Yours" sliders for body shape + colors
@@ -1097,8 +1164,6 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     parts_geo = body['parts_geo']
     _idx_chest = body['_idx_chest']
     _idx_pelvis = body['_idx_pelvis']
-    _idx_hand_l = body['_idx_hand_l']
-    _idx_hand_r = body['_idx_hand_r']
     _idx_foot_l = body['_idx_foot_l']
     _idx_foot_r = body['_idx_foot_r']
     hand_l_pos = body['hand_l_pos']
@@ -1111,12 +1176,40 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
     # SECTION 9.5 — Hand geometry (Phase 2, step 7/14)
     # ------------------------------------------------------------------
     # Palm plate + 4 corner beads + 4 finger chains per side. Built
-    # at rest pose — no physics yet; finger chains land on sim zone
-    # state items in step 10, palm corner jiggle in step 11.
+    # at rest pose for untracked bones; thumb tip (fingerA) and
+    # pointer tip (fingerB) follow tracked MediaPipe positions via
+    # bt_thumb_* and bt_index_* sockets. Remaining physics (palm
+    # corner jiggle, untracked finger flop) lands in step 11.
     # Lives in marionette/hands.py (owns its own 'body' frame).
+    #
+    # alpha.49: palm anchors on hand_l/r_pos — the post-lerp arm
+    # endpoint from body_parts. When Body Tracking is 0 (webcam
+    # off, slider muted) that socket equals the Verlet-blended arm
+    # endpoint, so the palm dangles at the arm tip. When Body
+    # Tracking ramps up, the same socket becomes shoulder +
+    # tracked_dir × arm_length, so the palm follows the performer.
+    # Either way it's never (0,0,0), which kills the pre-tracking
+    # teleport-to-origin we saw in alpha.47/48.
+    #
+    # alpha.54: hands.py now also runs INSIDE the sim zone (chain
+    # physics writes finger seg state to sim_out). Pass through:
+    #   sim_in            — for previous-frame state reads + Delta Time
+    #   shl/shr_visual    — to recompute the hand_<S>_pos blend in-zone
+    #   arm_l/r_factor    — same lerp factor body_parts uses post-zone
+    #   init/not_first    — first-frame init (snap to rest on frame 1)
+    # Live-gated tip pull replaces the old _with_fallback rest-snap;
+    # when MP drops a hand the receiver ramps Hand <S> Live → 0 and
+    # the chain dangles freely instead of jumping to a constant.
     hand_result = build_hands(
-        tree, group_in, sim_out, body_mats,
-        hand_l_pos=hand_l_pos, hand_r_pos=hand_r_pos,
+        tree, group_in, sim_in, sim_out, body_mats,
+        shl_visual, shr_visual,
+        arm_l_factor, arm_r_factor,
+        palm_l_pos=hand_l_pos,
+        palm_r_pos=hand_r_pos,
+        rest_hl=rest_hl,
+        rest_hr=rest_hr,
+        init_cmp_out=physics_result['init_cmp_out'],
+        not_first_out=physics_result['not_first_out'],
         snap_state=_s)
     parts_geo.extend(hand_result['parts_geo'])
     _s = hand_result['snap_state']
@@ -1133,62 +1226,13 @@ def build_marionette_tree(tree, body_mats, blob_mats, context):
         tree, group_in,
         parts_geo=parts_geo,
         chest_pos=chest_pos, pelvis_pos=pelvis_pos,
-        hand_l_pos=hand_l_pos, hand_r_pos=hand_r_pos,
         sim_out=sim_out,
         idx_chest=_idx_chest, idx_pelvis=_idx_pelvis,
-        idx_hand_l=_idx_hand_l, idx_hand_r=_idx_hand_r,
         idx_foot_l=_idx_foot_l, idx_foot_r=_idx_foot_r,
         snap_state=_s,
     )
     parts_geo = studio_result['parts_geo']
     _s = studio_result['snap_state']
-
-    # ------------------------------------------------------------------
-    # SECTION 10b — ALPHA.46 DEBUG: Hand endpoint spheres
-    # ------------------------------------------------------------------
-    # Six small spheres that track raw MediaPipe hand positions
-    # (wrist + thumb tip + index tip, per hand). Positions come in
-    # body-anchored world space via the bt_*_l/r sockets. Lets us see
-    # whether hand tracking data is arriving and landing where we
-    # expect before we wire it into the marionette rig proper.
-    x_hd = 3000
-    for i, (sock_name, radius, y_row) in enumerate([
-        ('bt_wrist_l', 0.05, -1400),
-        ('bt_thumb_l', 0.03, -1550),
-        ('bt_index_l', 0.03, -1700),
-        ('bt_wrist_r', 0.05, -1850),
-        ('bt_thumb_r', 0.03, -2000),
-        ('bt_index_r', 0.03, -2150),
-    ]):
-        sphere = add_node(tree, 'GeometryNodeMeshUVSphere',
-                          x_hd, y_row, f"HD {sock_name}")
-        sphere.inputs['Segments'].default_value = 10
-        sphere.inputs['Rings'].default_value = 6
-        sphere.inputs['Radius'].default_value = radius
-
-        tf = add_node(tree, 'GeometryNodeTransform',
-                      x_hd + 200, y_row, f"HD {sock_name} TF")
-        tree.links.new(sphere.outputs['Mesh'], tf.inputs['Geometry'])
-        tree.links.new(group_in.outputs[sock_name],
-                       tf.inputs['Translation'])
-
-        sm = add_node(tree, 'GeometryNodeSetShadeSmooth',
-                      x_hd + 400, y_row, f"HD {sock_name} Sm")
-        tree.links.new(tf.outputs['Geometry'], sm.inputs['Geometry'])
-
-        mt = add_node(tree, 'GeometryNodeSetMaterial',
-                      x_hd + 600, y_row, f"HD {sock_name} Mt")
-        tree.links.new(sm.outputs['Geometry'], mt.inputs['Geometry'])
-        tree.links.new(group_in.outputs['Joint Material'],
-                       mt.inputs['Material'])
-
-        parts_geo.append(mt.outputs['Geometry'])
-
-    _frame_section(tree,
-        "ALPHA.46 DEBUG — Hand endpoint spheres: 6 visual probes"
-        " tracking raw MediaPipe wrist + thumb + index tip positions",
-        'body', _new_nodes(tree, _s))
-    _s = _snap_nodes(tree)
 
     # ------------------------------------------------------------------
     # SECTION 11 — Join blob head + body → output

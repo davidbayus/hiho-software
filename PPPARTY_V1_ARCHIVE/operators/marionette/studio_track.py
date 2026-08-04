@@ -72,17 +72,24 @@ What this module exports
     build_studio_track(tree, group_in, *,
                        parts_geo,
                        chest_pos, pelvis_pos,
-                       hand_l_pos, hand_r_pos,
                        sim_out,
                        idx_chest, idx_pelvis,
-                       idx_hand_l, idx_hand_r,
                        idx_foot_l, idx_foot_r,
                        snap_state)
-        Mutates `parts_geo` in-place: each of the six entries named by the
-        idx_* arguments gets replaced with a Switch output that selects
-        between the original capsule and the student's custom mesh.
-        Returns a dict with the (same) `parts_geo` list and an updated
-        `snap_state` so the caller can keep framing downstream sections.
+        Mutates `parts_geo` in-place: each of the four entries named by
+        the idx_* arguments gets replaced with a Switch output that
+        selects between the original capsule and the student's custom
+        mesh. Returns a dict with the (same) `parts_geo` list and an
+        updated `snap_state` so the caller can keep framing downstream
+        sections.
+
+        alpha.48: Custom Hand override was retired when the cartoon
+        capsule hands were removed in favor of hands.py's articulated
+        palm + finger-chain system. The "Custom Hand" socket stays on
+        the modifier interface (kept hidden in assembly.py) so existing
+        .blend files don't lose the slot, but nothing is wired to it;
+        per-hand-part overrides (Custom Palm, Custom Thumb, Custom
+        Finger A/B/C) are a future pedagogy phase, not an alpha.48 job.
 """
 
 
@@ -93,24 +100,24 @@ def build_studio_track(
     tree, group_in, *,
     parts_geo,
     chest_pos, pelvis_pos,
-    hand_l_pos, hand_r_pos,
     sim_out,
     idx_chest, idx_pelvis,
-    idx_hand_l, idx_hand_r,
     idx_foot_l, idx_foot_r,
     snap_state,
 ):
-    """Wire the Custom Chest / Hips / Hand / Foot overrides into parts_geo.
+    """Wire the Custom Chest / Hips / Foot overrides into parts_geo.
 
-    For each of the six capsule slots (chest, hips, L+R hand, L+R foot),
-    build an Object Info → face-count check → Switch chain that replaces
-    the default capsule with the student's mesh when one is assigned.
-    Chest and Hips additionally pick up a dampened head-rotation vector
-    so non-spherical meshes twist with the torso.
+    For each of the four capsule slots (chest, hips, L+R foot), build
+    an Object Info → face-count check → Switch chain that replaces the
+    default capsule with the student's mesh when one is assigned. Chest
+    and Hips additionally pick up a dampened head-rotation vector so
+    non-spherical meshes twist with the torso.
 
     `parts_geo` is mutated in place — the same list the caller passed in
-    has six of its entries rebound to Switch outputs. The function
+    has four of its entries rebound to Switch outputs. The function
     returns the same list for symmetry with other build_* modules.
+
+    alpha.48: Hand override was retired with the cartoon capsule hand.
     """
     # ------------------------------------------------------------------
     # SECTION 10 — Studio Track: Custom body part overrides
@@ -239,13 +246,11 @@ def build_studio_track(
                           idx_pelvis, -300,
                           rot_socket=pelvis_rot_damp.outputs['Vector'])
 
-    # Custom Hand → replaces both hand capsules (R is mirrored)
-    _custom_object_switch("Hand L", "Custom Hand",
-                          hand_l_pos,
-                          idx_hand_l, -600)
-    _custom_object_switch("Hand R", "Custom Hand",
-                          hand_r_pos,
-                          idx_hand_r, -900, mirror_x=True)
+    # Custom Hand is retired (alpha.48) — the old cartoon capsule hand
+    # that this switched into was removed in favor of hands.py's
+    # articulated palm + finger-chain system. The "Custom Hand" socket
+    # stays declared on the interface (hidden) so existing .blend files
+    # keep their slot, but no Switch is wired here.
 
     # Custom Foot → replaces both foot capsules (R is mirrored)
     _custom_object_switch("Foot L", "Custom Foot",

@@ -30,6 +30,23 @@ MPPT_VERSION = 0x01
 MPPT_FLAG_FACE = 0x01
 MPPT_FLAG_BODY = 0x02
 MPPT_FLAG_HANDS = 0x04  # alpha.46: 3 endpoints per hand in body-anchored meters
+MPPT_FLAG_PALM_BASIS = 0x08  # alpha.56: palm_x + palm_y unit vectors per hand
+
+# Hand-tracking dropout / reacquisition timing (alpha.53 dropout delta).
+# Receiver-side only — the GN graph cannot reason about packet arrival
+# time, so the receiver computes a per-hand Live float each tick and
+# pushes it as a modifier socket. The chain physics in physics.py reads
+# this float and gates its tip-pull term, smoothly transitioning between
+# TRACKED (Live=1, full pull toward MP fingertip) and RELEASED (Live=0,
+# free Verlet dangle under gravity + goal pull). See
+# NATIVE_PHYSICS_DESIGN_DELTA_DROPOUT.md §Delta 1.
+_DROPOUT_HOLD_S = 0.20  # ignore dropouts shorter than this — swallows
+                        # single-frame MP misses
+_DROPOUT_TAU_S  = 0.20  # Live ramps 1→0 over this once hold expires
+_REACQ_TAU_S    = 0.08  # Live ramps 0→1 over this on recovery
+                        # (asymmetric: drop slow to cushion the user
+                        # against MP flicker, recover fast to snap the
+                        # tip back to where their finger actually is)
 
 # Hand endpoint socket names (6 Vector sockets on the GN modifier).
 # These are the 3 tracked endpoints per hand, body-anchored world space:
@@ -39,6 +56,17 @@ MPPT_FLAG_HANDS = 0x04  # alpha.46: 3 endpoints per hand in body-anchored meters
 HAND_ENDPOINT_NAMES = (
     'bt_wrist_l', 'bt_thumb_l', 'bt_index_l',
     'bt_wrist_r', 'bt_thumb_r', 'bt_index_r',
+)
+
+# Palm-basis socket names (alpha.56). 2 unit vectors per hand defining
+# the in-palm orientation. The third basis vector palm_z is reconstructed
+# GN-side via cross(palm_x, palm_y) — saves 2 sockets per hand on the
+# modifier interface and one round of orthogonalization. Receiver maps
+# performer-side L/R onto puppet-side R/L (same selfie-flip mirror as
+# the wrist/thumb/index unpacker — see decode_mediapipe).
+PALM_BASIS_NAMES = (
+    'palm_x_l', 'palm_y_l',
+    'palm_x_r', 'palm_y_r',
 )
 
 # MediaPipe blend shape names in alphabetical order (52 total).
@@ -217,6 +245,13 @@ def decode_mediapipe(raw_bytes):
     # pose_world_landmarks). Up to 2 hands, each with wrist + thumb_tip +
     # index_tip. Missing hands are omitted from the entries dict so the
     # push side can distinguish "not present" from "present at origin".
+    #
+    # alpha.55: mirror packet labels onto puppet sides — performer's
+    # anatomical-Left hand drives puppet R-side sockets, and vice versa.
+    # Matches the shoulder/hip delta swap below in `_compute_body_deltas`
+    # (see "Puppet right = MP left" comment around line ~1108). Without
+    # this swap, the puppet's tracked finger reaches on the OPPOSITE
+    # side from the performer.
     if flags & MPPT_FLAG_HANDS:
         if len(raw_bytes) < offset + 1:
             return None
@@ -232,11 +267,39 @@ def decode_mediapipe(raw_bytes):
             hd = struct.unpack('<9f',
                                raw_bytes[offset:offset + hand_size])
             offset += hand_size
-            entries[f'bt_wrist_{label}'] = (hd[0], hd[1], hd[2])
-            entries[f'bt_thumb_{label}'] = (hd[3], hd[4], hd[5])
-            entries[f'bt_index_{label}'] = (hd[6], hd[7], hd[8])
+            puppet_side = 'r' if label == 'l' else 'l'
+            entries[f'bt_wrist_{puppet_side}'] = (hd[0], hd[1], hd[2])
+            entries[f'bt_thumb_{puppet_side}'] = (hd[3], hd[4], hd[5])
+            entries[f'bt_index_{puppet_side}'] = (hd[6], hd[7], hd[8])
         if entries:
             result.append(('hand_endpoints', entries))
+
+    # Palm basis (alpha.56). Own flag bit + own presence byte —
+    # NOT a per-hand block size bump under FLAG_HAS_HANDS, because that
+    # would corrupt alpha.45–.55 receivers which expect 9 floats per
+    # hand. Old receivers ignore the unknown flag and the trailing
+    # bytes; alpha.56+ receivers decode 6 floats per hand here. Same
+    # selfie-flip L/R swap as the hand-endpoint unpacker above.
+    if flags & MPPT_FLAG_PALM_BASIS:
+        if len(raw_bytes) < offset + 1:
+            return None
+        p_presence = raw_bytes[offset]
+        offset += 1
+        palm_entries = {}
+        for label, bit in (('l', 0x01), ('r', 0x02)):
+            if not (p_presence & bit):
+                continue
+            section_size = 6 * 4
+            if len(raw_bytes) < offset + section_size:
+                return None
+            pd = struct.unpack('<6f',
+                               raw_bytes[offset:offset + section_size])
+            offset += section_size
+            puppet_side = 'r' if label == 'l' else 'l'
+            palm_entries[f'palm_x_{puppet_side}'] = (pd[0], pd[1], pd[2])
+            palm_entries[f'palm_y_{puppet_side}'] = (pd[3], pd[4], pd[5])
+        if palm_entries:
+            result.append(('palm_basis', palm_entries))
 
     return result if result else None
 
@@ -388,6 +451,33 @@ class TrackingReceiver:
         # the 30 FPS redraw tick — one graph invalidation per frame, not
         # one per write.
         self._dep_graph_dirty = False
+        # Per-hand presence tracking (alpha.53 dropout delta). Initialized
+        # to "live" so a freshly-started receiver before any packets arrive
+        # behaves identically to alpha.50 — Live = 1.0 means full tip pull,
+        # tracked-tip socket sees raw_mp value (which is (0,0,0) pre-
+        # tracking → falls through hands.py rest-pose fallback). Once
+        # packets start arriving, the timer drives the asymmetric ramp:
+        # last_seen → updated each batch, live → ramped toward 1.0/0.0,
+        # held_pos → captures last fully-tracked value as the lerp source
+        # during recovery. See NATIVE_PHYSICS_DESIGN_DELTA_DROPOUT.md.
+        self._hand_last_seen = {'l': time.monotonic(), 'r': time.monotonic()}
+        self._hand_live      = {'l': 1.0, 'r': 1.0}
+        # Per-socket last-tracked snapshot for the recovery lerp. Hand
+        # endpoints (alpha.53) + palm basis (alpha.56) share one dict
+        # because they share the per-hand Live ramp — when the hand is
+        # released, BOTH the tip positions AND the palm orientation
+        # freeze at their last-tracked values.
+        self._hand_held_pos  = {
+            'bt_thumb_l': None, 'bt_index_l': None,
+            'bt_thumb_r': None, 'bt_index_r': None,
+            'bt_wrist_l': None, 'bt_wrist_r': None,
+            'palm_x_l': None, 'palm_y_l': None,
+            'palm_x_r': None, 'palm_y_r': None,
+        }
+        self._live_socket_ids = None  # 'Hand L/R Live' → socket identifier
+        self._palm_socket_ids = None  # 'palm_x/y_l/r' → socket identifier
+        self._last_live_tick = 0.0    # monotonic clock of last tick — for
+                                      # asymmetric ramp dt computation
 
     @property
     def is_running(self):
@@ -480,6 +570,18 @@ class TrackingReceiver:
         self._ext_socket_ids = None
         self._last_written.clear()
         self._dep_graph_dirty = False
+        # Reset dropout-delta state so a subsequent start() is fresh
+        # (alpha.53). Discovery rebuilds _live_socket_ids and (alpha.56)
+        # _palm_socket_ids; the timer + Live + held_pos dicts are re-
+        # initialized to "live" defaults so the held-position lerp
+        # behaves as if the receiver had just booted.
+        self._live_socket_ids = None
+        self._palm_socket_ids = None
+        self._hand_last_seen = {'l': time.monotonic(), 'r': time.monotonic()}
+        self._hand_live      = {'l': 1.0, 'r': 1.0}
+        for k in self._hand_held_pos:
+            self._hand_held_pos[k] = None
+        self._last_live_tick = 0.0
 
         if bpy.app.timers.is_registered(self._apply_updates):
             bpy.app.timers.unregister(self._apply_updates)
@@ -516,6 +618,8 @@ class TrackingReceiver:
                                     self._pending['_body_center'] = entry[1]
                                 elif entry[0] == 'hand_endpoints':
                                     self._pending['_hand_endpoints'] = entry[1]
+                                elif entry[0] == 'palm_basis':
+                                    self._pending['_palm_basis'] = entry[1]
             except OSError:
                 break
 
@@ -538,8 +642,14 @@ class TrackingReceiver:
             updates = self._pending
             self._pending = {}
 
-        if not updates:
-            return 0.01
+        # Tick hand presence/Live every tick (alpha.53). Runs even when
+        # no packets arrived this batch, because the dropout transition
+        # is precisely "no packets for HOLD_S" → Live needs to ramp down
+        # whether or not we're seeing data. The early return that lived
+        # here pre-alpha.53 would have frozen Live at its last value
+        # whenever the sender went silent, defeating the whole point.
+        # Cost when truly idle: ~10µs of dict.get() + arithmetic.
+        self._tick_hand_state(updates)
 
         # Apply head rotation to armature bone
         head_euler = updates.get('_head_rotation')
@@ -596,6 +706,55 @@ class TrackingReceiver:
             return True
         return False
 
+    def _tick_hand_state(self, updates):
+        """Update per-hand presence timer + Live float every tick.
+
+        Alpha.53 dropout delta. Refreshes _hand_last_seen from any hand
+        packets in this batch, then ramps _hand_live toward 1.0 (recently
+        seen) or 0.0 (timed out) using asymmetric tau constants. Drives
+        the receiver-side lerp in _push_to_puppet AND the Live floats
+        the chain physics reads in PP_ChainVerletSegment.
+
+        Called every push tick from _apply_updates regardless of packet
+        arrival — the dropout transition fires precisely when packets
+        STOP arriving, so we can't gate this on "did we get data."
+
+        See NATIVE_PHYSICS_DESIGN_DELTA_DROPOUT.md §Delta 1.
+        """
+        now = time.monotonic()
+
+        # Refresh last-seen from any hand-endpoint packets in this batch.
+        # We update on any of the 6 hand sockets (wrist/thumb/index per
+        # side) — they're all sent together when MP detects the hand.
+        hand_ep = updates.get('_hand_endpoints') if updates else None
+        if hand_ep:
+            for name in hand_ep:
+                if name.endswith('_l'):
+                    self._hand_last_seen['l'] = now
+                elif name.endswith('_r'):
+                    self._hand_last_seen['r'] = now
+
+        # Ramp Live per side. Tick interval is variable (timer fires at
+        # ~100Hz but Blender doesn't guarantee jitter-free intervals); we
+        # measure the actual dt rather than assuming 0.01s.
+        if self._last_live_tick == 0.0:
+            dt_tick = 0.01  # bootstrap — assume one nominal tick
+        else:
+            dt_tick = now - self._last_live_tick
+        self._last_live_tick = now
+
+        for side in ('l', 'r'):
+            dt_since = now - self._hand_last_seen[side]
+            target = 1.0 if dt_since < _DROPOUT_HOLD_S else 0.0
+            cur = self._hand_live[side]
+            tau = _REACQ_TAU_S if target > cur else _DROPOUT_TAU_S
+            step = dt_tick / max(tau, 1e-6)
+            if target > cur:
+                cur = min(cur + step, target)
+            elif target < cur:
+                cur = max(cur - step, target)
+            self._hand_live[side] = cur
+
     def _push_to_puppet(self, updates):
         """Push tracking data directly to PPParty GN modifier inputs.
 
@@ -621,6 +780,8 @@ class TrackingReceiver:
             self._bt_factor_id = None
             self._vis_socket_ids = {}
             self._ext_socket_ids = {}
+            self._live_socket_ids = {}  # alpha.53 dropout delta
+            self._palm_socket_ids = {}  # alpha.56 palm basis
             self._iface_map = {}
 
             # Gather ALL known face tracking shape names (union of both pipelines)
@@ -644,6 +805,11 @@ class TrackingReceiver:
                     elif item.name == 'Body Tracking':
                         self._bt_factor_id = item.identifier
                         self._iface_map['Body Tracking'] = item
+                    elif item.name in ('Hand L Live', 'Hand R Live'):
+                        # alpha.53 dropout delta — receiver-driven Live
+                        # float per hand, gates tip-pull in chain physics.
+                        self._live_socket_ids[item.name] = item.identifier
+                        self._iface_map[item.name] = item
                     elif item.name.startswith('vis_'):
                         self._vis_socket_ids[item.name] = item.identifier
                         self._iface_map[item.name] = item
@@ -654,6 +820,11 @@ class TrackingReceiver:
                 elif item.socket_type == 'NodeSocketVector':
                     if item.name.startswith('bt_'):
                         self._bt_socket_ids[item.name] = item.identifier
+                        self._iface_map[item.name] = item
+                    elif item.name in PALM_BASIS_NAMES:
+                        # alpha.56 — explicit branch (small static set,
+                        # mirrors how 'Hand L/R Live' was added in alpha.53).
+                        self._palm_socket_ids[item.name] = item.identifier
                         self._iface_map[item.name] = item
 
             # --- Probe: discover correct access method ---
@@ -826,6 +997,13 @@ class TrackingReceiver:
         # transform used for body tracking — see _push_body_tracking for the
         # axis rationale. Applied to absolute positions here rather than
         # deltas because hand endpoints come pre-anchored to pose_world[15/16].
+        #
+        # Alpha.53 dropout delta: each tracked-tip write is now lerped via
+        # the receiver-side `_hand_held_pos` cache. Live = 1.0 → capture
+        # raw as held, write raw. Live < 1.0 → write lerp(held, raw, Live)
+        # so the chain physics sees a smoothly-drifting target during
+        # REACQUIRING instead of a snap from "frozen at last position" to
+        # "30 cm offset." See NATIVE_PHYSICS_DESIGN_DELTA_DROPOUT.md.
         hand_ep = updates.get('_hand_endpoints')
         if hand_ep and self._bt_socket_ids:
             for name, pos in hand_ep.items():
@@ -840,17 +1018,105 @@ class TrackingReceiver:
                     pos[2] * self._BT_SCALE,
                     -pos[1] * self._BT_SCALE,
                 ]
-                if not self._value_changed(name, puppet_pos):
+                # Receiver-side recovery lerp (alpha.53). When Live ≥ 1
+                # we pass through and capture; when ramping, lerp from
+                # last fully-tracked value toward raw.
+                side = 'l' if name.endswith('_l') else 'r'
+                live = self._hand_live[side]
+                held = self._hand_held_pos.get(name)
+                if live >= 0.999:
+                    self._hand_held_pos[name] = list(puppet_pos)
+                    out_pos = puppet_pos
+                elif held is None:
+                    # First-ever packet for this socket — nothing to
+                    # lerp from. Pass through and let the next tick
+                    # capture it once Live is fully back at 1.0.
+                    out_pos = puppet_pos
+                else:
+                    out_pos = [held[i] + (puppet_pos[i] - held[i]) * live
+                               for i in range(3)]
+                if not self._value_changed(name, out_pos):
                     continue
                 try:
                     if self._write_method == 'idprop':
-                        mod[sid] = puppet_pos
+                        mod[sid] = out_pos
                     elif self._write_method == 'default':
                         iface = self._iface_map.get(name)
                         if iface:
-                            iface.default_value = puppet_pos
+                            iface.default_value = out_pos
                     else:
-                        mod[sid] = puppet_pos
+                        mod[sid] = out_pos
+                    wrote_any = True
+                except Exception:
+                    pass
+
+        # Push palm basis (alpha.56). Same MP→puppet axis remap as
+        # bt_ vectors but WITHOUT _BT_SCALE — basis vectors define
+        # orientation, not displacement, so scaling them would distort
+        # the rotation. Re-uses the per-hand Live ramp from
+        # _tick_hand_state: when the hand drops, the palm orientation
+        # freezes at last-tracked (held cache); on reacquire it lerps
+        # smoothly back to fresh tracked over REACQ_TAU_S. Per-component
+        # lerp briefly produces a non-unit basis during reacquisition;
+        # invisible at the GN rotation step (alpha.57).
+        palm_ep = updates.get('_palm_basis')
+        if palm_ep and self._palm_socket_ids:
+            for name, vec in palm_ep.items():
+                if name not in PALM_BASIS_NAMES:
+                    continue
+                sid = self._palm_socket_ids.get(name)
+                if not sid:
+                    continue
+                # MP (x,y,z) → puppet (x, z, -y). No scale factor.
+                puppet_vec = [vec[0], vec[2], -vec[1]]
+                side = 'l' if name.endswith('_l') else 'r'
+                live = self._hand_live[side]
+                held = self._hand_held_pos.get(name)
+                if live >= 0.999:
+                    self._hand_held_pos[name] = list(puppet_vec)
+                    out_vec = puppet_vec
+                elif held is None:
+                    out_vec = puppet_vec
+                else:
+                    out_vec = [held[i] + (puppet_vec[i] - held[i]) * live
+                               for i in range(3)]
+                if not self._value_changed(name, out_vec):
+                    continue
+                try:
+                    if self._write_method == 'idprop':
+                        mod[sid] = out_vec
+                    elif self._write_method == 'default':
+                        iface = self._iface_map.get(name)
+                        if iface:
+                            iface.default_value = out_vec
+                    else:
+                        mod[sid] = out_vec
+                    wrote_any = True
+                except Exception:
+                    pass
+
+        # Push Live floats (alpha.53). Runs every tick; _value_changed
+        # skips redundant writes when Live is steady at 1.0 or 0.0.
+        # Sockets only exist on alpha.52+ marionettes; older builds
+        # have an empty _live_socket_ids dict and this loop is a no-op.
+        if self._live_socket_ids:
+            for side in ('l', 'r'):
+                name = f'Hand {side.upper()} Live'
+                sid = self._live_socket_ids.get(name)
+                if not sid:
+                    continue
+                live = self._hand_live[side]
+                if not self._value_changed(name, live, eps=1e-3):
+                    continue
+                try:
+                    if self._write_method == 'idprop':
+                        mod[sid] = live
+                    elif self._write_method == 'default':
+                        iface = self._iface_map.get(name)
+                        if iface:
+                            iface.default_value = live
+                    else:
+                        mod[sid] = live
                     wrote_any = True
                 except Exception:
                     pass

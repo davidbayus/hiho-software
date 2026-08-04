@@ -3,3 +3,21 @@ __pycache__/
 .DS_Store
 PPPARTY/models/
 PPPARTY/venv/
+
+# --- expanded 2026-08-04 (first HIHO_MOCAP commit): repo tracks source + docs ---
+.claude/
+*.blend1
+*.zip
+ARCHIVES/
+R&D/
+PUPPET_RIG_R&D/
+HIHO_MOCAP/vendor/
+HIHO_MOCAP/wheels/
+HIHO_MOCAP/mediapipe_models/
+HIHO_MOCAP/MOCAP_TAKES/
+HIHO_MOCAP/MOCAP_CALIBRATION_FILES/
+HIHO_MOCAP/HIHO_MOCAP_LIBRARY/
+green_room/assets/
+PPPARTY_V2/models/
+PPPARTY_V1_ARCHIVE/venv/
+PPPARTY_V1_ARCHIVE/models/
