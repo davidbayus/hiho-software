@@ -42,7 +42,7 @@ The working rules: no code before design. One change at a time, one versioned bu
 ## The story so far
 
 - **Spring 2026.** A phone-based live puppet experiment (PPParty V1) proves the appetite and hits the ceiling of one camera.
-- **Late spring 2026.** A single-camera recording tool (V2) gets hands working and shows why true 3D needs more views.
+
 - **Summer 2026.** The multi-camera system (HIHO MOCAP) becomes the canonical project: a six-webcam ring, printed-board calibration with honest quality scoring, FreeMoCap processing in an external environment, and a bake-first artist workflow in Blender.
 - **Fall 2026.** Students.
 
