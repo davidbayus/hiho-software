@@ -21,3 +21,6 @@ green_room/assets/
 PPPARTY_V2/models/
 PPPARTY_V1_ARCHIVE/venv/
 PPPARTY_V1_ARCHIVE/models/
+
+# Per-student guide, disk only — names stay out of git
+PaWrappa_Guide_for_*.pdf

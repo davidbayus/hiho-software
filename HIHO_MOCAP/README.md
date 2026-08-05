@@ -1,35 +1,38 @@
-# PPParty (multi-cam) — under construction
+# HIHO MOCAP
 
-Canonical PPParty as of 2026-05-06: a multi-camera markerless mocap addon for Blender, built on FreeMoCap + Skellycam. Project folder claimed 2026-05-06; architecture doc + code coming summer 2026.
+Multi-camera markerless motion capture for Blender. The canonical project of [HIHO Software](../README.md).
 
-**Goal:** open-source mocap students can use without a subscription or a mocap suit. First test site: BASEMENT studio (4 cams, ~2026-05-09). Second: SJSU CADRE Lab Art241 (5 cams, gated on the lab manager).
+A ring of ordinary webcams records a performer. FreeMoCap turns the videos into 3D motion in its own Python environment. This addon runs the whole path from inside Blender and delivers a baked animation on a rig, ready to retarget to a character. No suit, no markers, no subscription.
 
-**Predecessors (don't conflate):**
-- V1 archive: [`../PPPARTY_V1_ARCHIVE/`](../PPPARTY_V1_ARCHIVE) — live-puppet phone-era, retired Apr 2026, never delete.
-- V2 single-cam: [`../PPPARTY_V2/`](../PPPARTY_V2) — record + bake, parked at v2.0.4. NOT under active development.
+## The artist path
 
-**Reference codebases (cloned for study, NOT vendored):**
-- [`../R&D/freemocap-main/`](../R&D/freemocap-main) — FreeMoCap codebase (AGPL-3.0). Provides multi-cam pipeline: capture sync, ChArUco calibration, triangulation, post-processing.
-- [`../R&D/skellycam/`](../R&D/skellycam) — Skellycam codebase (cloned 2026-05-06). FreeMoCap's spun-out cross-platform multi-cam capture lib.
-- [`../R&D/snowmocap/`](../R&D/snowmocap) — SnowMocap (cloning 2026-05-06). MIT-license reference for Blender-side integration patterns.
+1. **Show Cameras**, pick your ring
+2. **Record Calibration** with the printed board, then **Solve** and **Check** (the quality badges tell the truth, and they name the take they describe)
+3. **Record** a take
+4. **Process Mocap** (runs in the external environment with a live log and an honest quality verdict)
+5. **Load Take**, walk it with **Play**, **Bake**, **Send to Character**, **Save Out**
 
-**Existing design + planning docs (don't duplicate):**
-- [`../R&D/MULTICAM_MOCAP_DESIGN.md`](../R&D/MULTICAM_MOCAP_DESIGN.md) — high-level architecture (2026-05-05, predates today's reframe; naming + phasing slightly stale, core architecture solid).
-- [`../R&D/MULTICAM_SHOPPING_LIST.md`](../R&D/MULTICAM_SHOPPING_LIST.md) — BASEMENT hardware + first-day-setup walkthrough.
+Students see the Studio panel: a few plain-language steps and nothing else. Operators turn on Science Mode to reveal the technical panel (capture, calibration, processing, output, face).
 
-**Architecture (in plain English):**
-- **Engine = Skellycam + FreeMoCap.** They handle webcam aggregation, calibration, triangulation. We don't reimplement.
-- **Our work = thin Blender bridge.** Blender addon launches the engine, receives 3D landmarks, drives bones, records, NLA-push. Plus the student-facing UX layer (calibration walkthrough, "record" / "process" / "import" / "apply" buttons).
-- **Patterns we cherry-pick from V2** (small, named list): Rigify hand rig, Slotted Actions fcurve handling, NLA-push pattern, operator scaffolding.
-- **What we deliberately don't port from V2:** hand calibration estimators (irrelevant with true 3D), Lever A side_ref math (probably irrelevant with true 3D), `mediapipe_sender.py` (replaced by Skellycam).
+## Design choices that matter
 
-**Pipeline (paraphrased from `MULTICAM_MOCAP_DESIGN.md`):**
-```
-N webcams → Skellycam (sync + calibration)
-         → MediaPipe per camera (2D landmarks)
-         → Triangulation (FreeMoCap core_processes) → 3D positions (numpy)
-         → Post-process (gap fill, smoothing, outliers)
-         → Blender bridge (this addon) → bones → NLA strip → student bakes / retargets to character
-```
+- The bake repairs its own rotation spelling, so smoothing a take is always safe
+- Every take is filtered at its real frame rate
+- Baking removes only this addon's constraints, so a character's own rigging survives
+- A blank camera list refuses to guess instead of silently recording the wrong cameras
+- Machine-level settings (the FreeMoCap environment, the HIHO data home folder) live in addon preferences and survive restarts
+- Crashes leave a readable note instead of a shrug
 
-Live Blender mirror = nice-to-have, not load-bearing — students consume the BAKE, per `project_ppparty_deliverable_is_baked_animation` memory.
+## Requirements
+
+- Blender 5.x (developed on 5.2 LTS)
+- A separate Python environment with FreeMoCap 1.8.2 or newer, set once in addon preferences
+- Webcams (the house ring is six Logitech C922x on a 270 degree, three-height mount)
+
+## Where the real documentation lives
+
+`STATUS.md` is the live state, updated every dev session. `HIHO_MOCAP_WRAPPER_ARCHITECTURE.md` is the architecture. The dated design, audit, diagnosis, and research docs in this folder are the development history in prose.
+
+## License
+
+AGPL-3.0, like the FreeMoCap engine it drives. Free and open source, forever.
