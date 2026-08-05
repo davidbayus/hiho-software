@@ -34,6 +34,20 @@ def get_env_python(context) -> str:
     return ""
 
 
+def get_data_home(context) -> str:
+    """The machine's HIHO data home, expanded to an absolute path.
+
+    HIHO_CAPTURES and HIHO_CALIBRATIONS live under it. Same machine-level
+    AddonPreferences home as the env python, for the same reason.
+    """
+    addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
+    if addon is not None and addon.preferences is not None:
+        home = norm_path(addon.preferences.data_home)
+        if home:
+            return home
+    return os.path.expanduser("~/Desktop")
+
+
 def norm_path(p: str) -> str:
     """Resolve a user-supplied path for os.path checks.
 
