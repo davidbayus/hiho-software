@@ -115,8 +115,8 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
 
     charuco_square_mm: bpy.props.FloatProperty(
         name="Square size (mm)",
-        description="Width of one black square on the printed Charuco board, measured with a ruler in millimeters. The house board is 200. A wrong value scales the whole capture uniformly (heights, distances) without changing the quality score.",
-        default=200.0,
+        description="Width of one black square on the printed Charuco board, measured with a ruler in millimeters. The house Skelly Shop board is 110. A wrong value scales the whole capture uniformly (heights, distances) without changing the quality score.",
+        default=110.0,
         min=10.0,
         max=500.0,
         precision=1,
@@ -218,7 +218,7 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
     )
     show_science_mode: bpy.props.BoolProperty(
         name="Show Science Mode",
-        description="Show the technical panel (Capture, Calibrate, Process, Output, Face). Leave off for the five Studio steps only",
+        description="Reveal ajc27's biomechanics panels (ROM, BOS, COM, joint angles)",
         default=False,
     )
 
@@ -244,18 +244,5 @@ class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
         subtype='FILE_PATH',
     )
 
-    data_home: bpy.props.StringProperty(
-        name="HIHO data home",
-        description=(
-            "Folder that holds HIHO_CAPTURES and HIHO_CALIBRATIONS. Every "
-            "recording and calibration saves under it. Default is the "
-            "Desktop; point it at your own working folder if you keep HIHO "
-            "material somewhere else. Set once per machine."
-        ),
-        default="~/Desktop",
-        subtype='DIR_PATH',
-    )
-
     def draw(self, context):
         self.layout.prop(self, "freemocap_env_python")
-        self.layout.prop(self, "data_home")

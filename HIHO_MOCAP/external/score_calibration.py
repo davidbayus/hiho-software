@@ -68,15 +68,9 @@ def _candidate_npys(toml_path: Path, recording: str) -> list:
         cands.append(Path(recording).expanduser() / "output_data" / "raw_data" / NPY_NAME)
     # The toml is also dumped into the recording folder, so its parent may be the take.
     cands.append(toml_path.parent / "output_data" / "raw_data" / NPY_NAME)
-    # HIHO MOCAP's calibrate flow records to <data home>/HIHO_CALIBRATIONS/<stamp>, and
+    # HIHO MOCAP's calibrate flow records to ~/Desktop/HIHO_CALIBRATIONS/<stamp>, and
     # <stamp> == the toml name prefix — so a fresh-solve toml is found even with no hint
-    # (e.g. after a Blender restart dropped the in-memory take path). The data home is
-    # the addon preference; HIHO_DATA_HOME carries it into shell launches, and the
-    # Desktop default stays as the last resort.
-    data_home = os.environ.get("HIHO_DATA_HOME")
-    if data_home:
-        cands.append(Path(data_home).expanduser()
-                     / "HIHO_CALIBRATIONS" / name / "output_data" / "raw_data" / NPY_NAME)
+    # (e.g. after a Blender restart dropped the in-memory take path).
     cands.append(Path(os.path.expanduser("~/Desktop/HIHO_CALIBRATIONS"))
                  / name / "output_data" / "raw_data" / NPY_NAME)
     # FreeMoCap's full-processing layout.

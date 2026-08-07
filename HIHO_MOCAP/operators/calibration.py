@@ -12,7 +12,7 @@ from os.path import expanduser
 
 import bpy
 
-from . import STATE, get_data_home, get_env_python, norm_path
+from . import STATE, get_env_python, norm_path
 from .external_capture import launch_capture
 from ..core.calibration_quality import run_score
 from ..core.external_runner import ExternalProcessRunner
@@ -112,7 +112,7 @@ class HIHO_MOCAP_OT_record_calibration(bpy.types.Operator):
     def execute(self, context):
         s = context.scene.hiho_mocap
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out = os.path.join(get_data_home(context), "HIHO_CALIBRATIONS", stamp)
+        out = os.path.expanduser(f"~/Desktop/HIHO_CALIBRATIONS/{stamp}")
         cams = (s.camera_ids or "").strip() or "0,1,2,3"
         args = [
             "--output", out, "--cameras", cams,

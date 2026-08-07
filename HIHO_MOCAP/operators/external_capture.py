@@ -18,7 +18,7 @@ from typing import Optional
 import bpy
 
 from ..core.external_runner import ExternalProcessRunner
-from . import STATE, get_data_home, get_env_python
+from . import STATE, get_env_python
 
 POLL_INTERVAL_SEC = 0.5
 
@@ -181,7 +181,7 @@ class HIHO_MOCAP_OT_record_external(bpy.types.Operator):
     def execute(self, context):
         s = context.scene.hiho_mocap
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out = os.path.join(get_data_home(context), "HIHO_CAPTURES", stamp)
+        out = os.path.expanduser(f"~/Desktop/HIHO_CAPTURES/{stamp}")
         # A blank box used to fall back to "0,1,2,3" (four-camera era) — on the
         # six-camera ring that silently records the wrong cameras and the take
         # looks normal until the solve comes back worse than it should.

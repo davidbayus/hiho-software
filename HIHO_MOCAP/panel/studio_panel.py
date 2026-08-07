@@ -1,17 +1,34 @@
-"""HIHO MOCAP Studio Panel — the artist-facing UI.
+"""HIHO MOCAP Studio Panel — the artist-facing 5-section UI.
 
-Section labels and order per HIHO_MOCAP_WRAPPER_ARCHITECTURE.md section 8,
-decision 1: Choose Take, Preview, Send to Character, Polish, Save Out.
-Plain language only. Glossary in the architecture doc maps these to the
-technical terms used in code.
+Section labels and order are locked per HIHO_MOCAP_WRAPPER_ARCHITECTURE.md
+section 8, decision 1: Choose Take, Preview, Send to Character, Polish,
+Save Out. Plain language only. Glossary in the architecture doc maps these
+to the technical terms used in code.
 
-Amendment 1.4.40 (blessed 2026-08-05, see STATUS.md "UI PRUNE/ADD QUEUE"):
-the Polish section is hidden until per-region smoothing ships for real
-(Track 3) — its three buttons were stubs and two had gone stale. Visible
-sections renumber 1-4. No other stub buttons remain in the student view.
+This is the v1.2 skeleton: layout + property wiring is real, but every
+operator points to HIHO_MOCAP_OT_studio_stub. Real operators land in
+tasks #4 through #6 (Bake Take, Polish, Save Out).
 """
 
 import bpy
+
+
+class HIHO_MOCAP_OT_studio_stub(bpy.types.Operator):
+    """Stub for v1.2 Studio Panel buttons. Reports the feature name and exits.
+
+    Once tasks #4 through #6 ship, the panel rebinds each button to a real
+    operator and this stub goes away.
+    """
+
+    bl_idname = "hiho_mocap.studio_stub"
+    bl_label = "HIHO MOCAP Studio (stub)"
+    bl_description = "Placeholder; not yet implemented"
+
+    feature: bpy.props.StringProperty()
+
+    def execute(self, context):
+        self.report({'INFO'}, f"Coming soon: {self.feature}")
+        return {'FINISHED'}
 
 
 class HIHO_MOCAP_PT_studio(bpy.types.Panel):
@@ -30,11 +47,14 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
         col = layout.column(align=True)
         col.operator("hiho_mocap.load_take", icon='FILE_FOLDER')
         col.prop(s, "last_processed_path", text="")
+        op = col.operator("hiho_mocap.studio_stub", text="Pick from library...", icon='ASSET_MANAGER')
+        op.feature = "Pick from library (v2.0)"
 
         # 2. PREVIEW
         layout.separator()
         layout.label(text="2. Preview", icon='HIDE_OFF')
-        layout.operator("screen.animation_play", text="Play", icon='PLAY')
+        op = layout.operator("hiho_mocap.studio_stub", text="Play", icon='PLAY')
+        op.feature = "Preview (empties-only load)"
 
         # 3. CHARACTER
         layout.separator()
@@ -57,13 +77,20 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
         layout.prop(s, "character_target", text="")
         layout.operator("hiho_mocap.send_to_character", icon='EXPORT')
 
-        # 4. POLISH — section hidden 1.4.40: all three buttons were stubs, and
-        # two went stale (wrist flips now self-repair inside Bake; per-region
-        # smoothing replaced the One Euro idea). Returns when Track 3 ships.
+        # 4. POLISH
+        layout.separator()
+        layout.label(text="4. Polish", icon='MODIFIER')
+        col = layout.column(align=True)
+        op = col.operator("hiho_mocap.studio_stub", text="Smooth hands", icon='SMOOTHCURVE')
+        op.feature = "Smooth hands (One Euro)"
+        op = col.operator("hiho_mocap.studio_stub", text="Fix wrist flips", icon='CONSTRAINT')
+        op.feature = "Fix wrist flips (LIMIT_ROTATION)"
+        op = col.operator("hiho_mocap.studio_stub", text="Trim frames", icon='ARROW_LEFTRIGHT')
+        op.feature = "Trim frames (scene range)"
 
         # 5. EXPORT
         layout.separator()
-        layout.label(text="4. Export", icon='EXPORT')
+        layout.label(text="5. Export", icon='EXPORT')
         layout.operator("hiho_mocap.bake_animation", icon='ACTION')
         layout.prop(s, "export_format", expand=True)
         layout.operator("hiho_mocap.save_out", icon='FILE_TICK')

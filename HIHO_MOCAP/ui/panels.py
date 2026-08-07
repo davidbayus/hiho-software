@@ -48,18 +48,9 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
     bl_category = "HIHO MOCAP"
     bl_label = "HIHO MOCAP"
 
-    @classmethod
-    def poll(cls, context):
-        # Science Mode is the teacher/operator view. Students get the Studio
-        # panel's five steps and nothing else.
-        return context.scene.hiho_mocap.show_science_mode
-
     def draw(self, context):
         layout = self.layout
         scene_settings = context.scene.hiho_mocap
-        # Machine-level settings — drawn from AddonPreferences so they survive
-        # new files and restarts (scene props reset per file; audit M18).
-        addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
 
         # --- Capture (launches your FreeMoCap env in a separate window) ----
         layout.label(text="Capture")
@@ -72,8 +63,6 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
         col.prop(scene_settings, "camera_ids")
         col.prop(scene_settings, "countdown_seconds")
         col.prop(scene_settings, "record_length_seconds")
-        if addon is not None and addon.preferences is not None:
-            layout.prop(addon.preferences, "data_home", text="Save to")
         row = layout.row(align=True)
         row.operator("hiho_mocap.record_external", icon='RADIOBUT_ON', text="Record")
         row.operator("hiho_mocap.stop_capture", icon='X', text="")
@@ -129,6 +118,9 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
         layout.label(text="Process")
         layout.prop(scene_settings, "last_take_path", text="Take")
         layout.prop(scene_settings, "calibration_toml_path", text="Calib")
+        # Machine-level setting — drawn from AddonPreferences so it survives
+        # new files and restarts (scene props reset per file; audit M18).
+        addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
         if addon is not None and addon.preferences is not None:
             layout.prop(addon.preferences, "freemocap_env_python", text="FreeMoCap")
         col = layout.column()
