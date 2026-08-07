@@ -48,12 +48,6 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
     bl_category = "HIHO MOCAP"
     bl_label = "HIHO MOCAP"
 
-    @classmethod
-    def poll(cls, context):
-        # Science Mode is the teacher/operator view. Students get the Studio
-        # panel's five steps and nothing else.
-        return context.scene.hiho_mocap.show_science_mode
-
     def draw(self, context):
         layout = self.layout
         scene_settings = context.scene.hiho_mocap

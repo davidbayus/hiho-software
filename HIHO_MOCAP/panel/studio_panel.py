@@ -67,7 +67,3 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
         layout.operator("hiho_mocap.bake_animation", icon='ACTION')
         layout.prop(s, "export_format", expand=True)
         layout.operator("hiho_mocap.save_out", icon='FILE_TICK')
-
-        # Science Mode toggle
-        layout.separator()
-        layout.prop(s, "show_science_mode", icon='LIGHT_DATA', text="Show Science Mode")

@@ -216,11 +216,6 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
         ],
         default='FBX',
     )
-    show_science_mode: bpy.props.BoolProperty(
-        name="Show Science Mode",
-        description="Show the technical panel (Capture, Calibrate, Process, Output, Face). Leave off for the five Studio steps only",
-        default=False,
-    )
 
 
 class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
