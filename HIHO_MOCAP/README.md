@@ -12,7 +12,7 @@ A ring of ordinary webcams records a performer. FreeMoCap turns the videos into 
 4. **Process Mocap** (runs in the external environment with a live log and an honest quality verdict)
 5. **Load Take**, walk it with **Play**, **Bake**, **Send to Character**, **Save Out**
 
-Students see the Studio panel: a few plain-language steps and nothing else. Operators turn on Science Mode to reveal the technical panel (capture, calibration, processing, output, face).
+The full workflow panel (capture, calibration, processing, output, face) is always visible. Recording and calibration are the first thing every session does, so nothing hides them. The Studio panel sits alongside it with a few plain-language steps for working with a finished take.
 
 ## Design choices that matter
 
