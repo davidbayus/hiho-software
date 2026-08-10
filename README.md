@@ -11,7 +11,7 @@ file on GitHub.com and drag MEDIA/06.mov (the six-camera grid reel) into this
 spot; GitHub uploads it and inserts an inline player automatically.
 -->
 
-Six scavenged webcams, one Blender addon, no subscriptions, no mocap suit: a school computer lab becomes a capture studio. This repository holds the software side of HIHO ("Human In, Human Out"), a program for time-based human work: storytelling, performance, animation, games, film, and sound. HIHO is a working name while the program chooses its permanent one.
+Six webcams, one Blender addon, no subscriptions, no mocap suit: a school computer lab becomes a capture studio. This repository holds the software side of HIHO ("Human In, Human Out"), a program for time-based human work: storytelling, performance, animation, games, film, and sound. HIHO is a working name while the program chooses its permanent one.
 
 This is a working repository, pre-1.0, developed in the open. First classroom testing is planned for Fall 2026 at SJSU. Expect honest rough edges.
 
@@ -29,49 +29,29 @@ Jump straight to a chapter:
 - [15:25 The workflow: calibrate, record, bake, clean](https://youtu.be/3x4TEfNW5bk?t=925)
 - [31:49 What is next and how to join](https://youtu.be/3x4TEfNW5bk?t=1909)
 
-## The process in pictures
+## Process pics
 
-A real person walks on a treadmill inside a ring of thrift-store webcams. FreeMoCap turns the videos into a moving skeleton. The skeleton drives a character. The character keeps every hesitation and shrug of the person who performed it. That is the whole idea.
-
-Numbered in the order the process happens. Click any moving picture to play its clip.
+Click any picture to play its clip.
 
 <img src="MEDIA/01.png" width="640">
 
-**1. The studio.** A basement workspace: six scavenged webcams on mic stands and clamps, printed calibration boards, a thrift store treadmill.
-
 [<img src="MEDIA/posters/poster_02.jpg" width="640">](MEDIA/02.mov)
-
-**2. A walk through the studio.** Two minutes handheld through the same room: cameras clamped to shelves and ceiling beams, the powered hub that feeds them, printed calibration boards, the face helmet, and the paintings on the wall.
 
 [<img src="MEDIA/posters/poster_03.jpg" width="640">](MEDIA/03.mov)
 
-**3. The capture.** MediaPipe finds the body and face in each camera view. The solved skeleton drives the character.
-
 [<img src="MEDIA/posters/poster_03_1.jpg" width="640">](MEDIA/03_1.mov)
-
-**3.1. The same take on the character, rendered.** The character keeps the walk.
 
 [<img src="MEDIA/posters/poster_04.jpg" width="300">](MEDIA/04.mov)
 
-**4. A two character scene**, performed one take at a time on the treadmill.
-
 [<img src="MEDIA/posters/poster_05.jpg" width="640">](MEDIA/05.mov)
-
-**5. Staging test.** A third character walks the scene while the pair keeps pulling.
 
 [<img src="MEDIA/posters/poster_06.jpg" width="640">](MEDIA/06.mov)
 
-**6. The six camera ring.** Every view at once, driving one performance.
-
 [<img src="MEDIA/posters/poster_07.jpg" width="640">](MEDIA/07.mov)
-
-**7. Face experiments.** A phone strapped to a bike helmet records the face while the webcams take the body.
 
 [<img src="MEDIA/posters/poster_08.jpg" width="640">](MEDIA/08.mov)
 
-**8. The face transfer up close.**
-
-More of the studio work these tools come from: [www.davidbayus.zone](https://www.davidbayus.zone)
+The animations above come from the studio practice of [David Bayus](https://www.davidbayus.zone), an artist working in San Francisco. His films and editions are held in collections including MoMA, the Whitney, and LACMA. More of the work: [www.davidbayus.zone](https://www.davidbayus.zone)
 
 ## Why build it
 
@@ -158,7 +138,7 @@ What we have learned while driving FreeMoCap in a classroom, written up for thei
 
 ## Who makes this
 
-HIHO software is built by [David Bayus](https://www.davidbayus.zone), an artist and Senior Lecturer in Digital Media Art at San Jose State University's CADRE Laboratory. His films and editions are held in collections including MoMA, the Whitney, and LACMA. The animations above are from his studio practice, where these tools get their field testing before they reach students.
+HIHO software is built by [David Bayus](https://www.davidbayus.zone), an artist and Senior Lecturer in Digital Media Art at San Jose State University's CADRE Laboratory. The tools get their field testing in his studio practice before they reach students.
 
 The studio runs open Fridays in San Francisco for students who want to record their own motion capture, two people per session. Ask first, through the Discord or an issue here.
 
