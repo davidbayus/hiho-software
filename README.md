@@ -51,7 +51,7 @@ Click any picture to play its clip.
 
 [<img src="MEDIA/posters/poster_08.jpg" width="640">](MEDIA/08.mov)
 
-The animations above come from the studio practice of [David Bayus](https://www.davidbayus.zone), an artist working in San Francisco. His films and editions are held in collections including MoMA, the Whitney, and LACMA. More of the work: [www.davidbayus.zone](https://www.davidbayus.zone)
+The animations above come from the studio practice of [David Bayus](https://www.davidbayus.zone), an artist working in San Francisco. He holds an MFA from the San Francisco Art Institute and is a Senior Lecturer in Digital Media Art at San Jose State University's CADRE Laboratory. His films and editions are held in collections including MoMA, the Whitney, and LACMA. Reach him at david.bayus@sjsu.edu. More of the work: [www.davidbayus.zone](https://www.davidbayus.zone)
 
 ## Why build it
 
