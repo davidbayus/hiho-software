@@ -15,6 +15,8 @@ Six webcams, one Blender addon, no subscriptions, no mocap suit: a school comput
 
 This is a working repository, pre-1.0, developed in the open. First classroom testing is planned for Fall 2026 at SJSU. Expect honest rough edges.
 
+**Students: if you find a bug, message me in the class Discord.**
+
 ## Watch the demo
 
 A full walkthrough of the system, recorded for students: what it is, why it exists, the kit, and the whole workflow from calibration to a cleaned up animation on a rig.
@@ -140,9 +142,9 @@ What we have learned while driving FreeMoCap in a classroom, written up for thei
 
 HIHO software is built by [David Bayus](https://www.davidbayus.zone), an artist and Senior Lecturer in Digital Media Art at San Jose State University's CADRE Laboratory. The tools get their field testing in his studio practice before they reach students.
 
-The studio runs open Fridays in San Francisco for students who want to record their own motion capture, two people per session. Ask first, through the Discord or an issue here.
+The studio runs open Fridays in San Francisco for students who want to record their own motion capture, two people per session. Students, ask first in the class Discord.
 
-Questions, ideas, or a classroom that wants in: open an issue right here.
+Questions, ideas, or a classroom that wants in: david.bayus@sjsu.edu
 
 ## License
 
