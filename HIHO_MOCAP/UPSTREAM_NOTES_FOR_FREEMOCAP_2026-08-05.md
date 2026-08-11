@@ -1,6 +1,6 @@
 # Notes for the FreeMoCap community, from a classroom
 
-**Status: internal draft, not yet shared.** This document collects what HIHO MOCAP has learned while driving FreeMoCap in a classroom setting, written for the FreeMoCap maintainers and community to go over when we share it. Nothing here has been posted or sent; sharing is a deliberate later step. Claims are tagged: **[VERIFIED 2026-08-05]** means checked against the installed freemocap 1.8.2 source or the public GitHub project that day; **[OUR DOCS]** means the evidence lives in this repository's dated docs (pointer given); anything less certain says so.
+**Status: shared with the FreeMoCap community on 2026-08-10**, linked from our comment on freemocap/freemocap#849 and our issue freemocap/freemocap#862. This document collects what HIHO MOCAP has learned while driving FreeMoCap in a classroom setting, written for the FreeMoCap maintainers and community. Claims are tagged: **[VERIFIED 2026-08-05]** means checked against the installed freemocap 1.8.2 source or the public GitHub project that day; **[OUR DOCS]** means the evidence lives in this repository's dated docs (pointer given); anything less certain says so.
 
 ## 1. Why we built on FreeMoCap instead of building an engine
 
@@ -27,9 +27,9 @@ Six webcams record through our own direct-to-disk recorder (written because the 
 
 **What it costs, measured on our rig:** at 60 fps the intended 7 Hz cutoff becomes an effective ~14 Hz, and every take arrives half filtered. Re-processing the same videos with the same calibration and only the clock corrected cut above-8 Hz noise by roughly 90 percent at every landmark group (wrists 5.40 to 0.50 mm RMS, ankles 4.51 to 0.39, shoulders 1.05 to 0.10, hips 1.02 to 0.10) while the 0 to 6 Hz real-motion band changed by about 0.01 percent. (`SESSION_HANDOFF_2026-08-04_DESKTOP_BUILD.md`; fix shipped in our 1.4.34, `external/process_take.py:165-176`, which sets `framerate` and `butterworth_filter_parameters.sampling_rate` from the take's recorded fps sidecar.)
 
-**Upstream status [VERIFIED 2026-08-05]:** open issue freemocap/freemocap#849, "[BUG] Post-processing Butterworth filter uses a hardcoded 30 fps regardless of recording rate," filed 2026-08-05 by an independent user against the V2 code, zero comments at time of writing. Our contribution when shared: the 1.x code path references above, the A/B measurements, and the sidecar-driven fix pattern.
+**Upstream status [VERIFIED 2026-08-05]:** open issue freemocap/freemocap#849, "[BUG] Post-processing Butterworth filter uses a hardcoded 30 fps regardless of recording rate," filed 2026-08-05 by an independent user against the V2 code, zero comments at time of writing. Our contribution when shared: the 1.x code path references above, the A/B measurements, and the sidecar-driven fix pattern. **[UPDATE 2026-08-10]** Their PR freemocap/freemocap#850 merged, fixing the V2 side by deriving the clock from the multiframe timestamps, the same conclusion our sidecar reached independently. The 1.x line (v1.8.2, still the latest stable release) is unchanged. Our measurements and the 1.x workaround were posted as a comment on #849 the same day.
 
-### 3.2 The ground-plane flip (not reported anywhere upstream that we can find)
+### 3.2 The ground-plane flip (now filed by us as freemocap/freemocap#862)
 
 When calibrating from a ChArUco board, a mostly planar view of the board has two mathematically valid poses (the OpenCV planar ambiguity). FreeMoCap's ground-plane alignment can pick the wrong one: the world comes out mirrored below the floor, every camera lands underground, and the reprojection error still reads excellent because reprojection cannot see orientation. **[VERIFIED 2026-08-05]** there is no ambiguity handling anywhere in the installed calibration path, and the only failure behavior is a silent revert to camera-0 origin with a log line (`anipose_camera_calibrator.py:240,247`). **[VERIFIED 2026-08-05]** no upstream issue describes this (the three "ground plane" issues are unrelated).
 
@@ -75,4 +75,4 @@ Every claim above has a dated document in this repository: the audits (`AUDIT_20
 
 ## 7. Sharing posture
 
-Nothing in this document has been sent anywhere. When we share, the likely order is: measurements and code references added to open issue #849; the ground-plane report filed with its reproduction case; the outlier data added to RFC #782; the one-line corner-count patch offered as a PR; and this document linked for the rest. Timing matters and favors soon: V2 is being rearchitected right now, including calibration. But the decision and the words belong to the human whose program this is.
+**[UPDATED 2026-08-10]** The first two items are now shared: our measurements and the 1.x workaround are a comment on issue #849, and the ground-plane report is filed as issue #862, both linking this document. Still to come, in the original order: the outlier field data added to RFC #782, and the one-line corner-count patch offered as a PR. The decision and the words belong to the human whose program this is.
