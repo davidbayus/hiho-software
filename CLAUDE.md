@@ -36,7 +36,7 @@ Active code workspace. Canonical project = **HIHO MOCAP**. Smaller HIHO tools (P
 - Extensions packaging: `project_ppparty_extensions_migration.md`
 
 ## Git
-Live on GitHub since 2026-08-05: **github.com/davidbayus/hiho-software (PRIVATE)**. Laptop pushes at the end of dev sessions (gh CLI, laptop only); desktop never pushes. History was cleaned pre-publish (third-party media + all personal names stripped via filter-repo — snapshot in `ARCHIVES/GIT_BACKUP_PRE_FILTER_2026-08-05/`). GOTCHA: filter-repo hard-resets tracked files; commit or stash before any rewrite. Public flip = David's call after his README pass (`STATUS.md` GitHub bullet has the state).
+Live on GitHub since 2026-08-05: **github.com/davidbayus/hiho-software — PUBLIC since 2026-08-10** (viewable-but-closed: Issues off, contact = email). **Repo boundary rule (2026-08-11): only HIHO-dev-specific material is tracked — code plus design/research/status/audit docs. Dialogue-class artifacts (session handoffs, debriefs, session notes) and anything personal stay OUT; .gitignore carries the patterns.** Laptop pushes at the end of dev sessions (gh CLI, laptop only); desktop never pushes. History was cleaned pre-publish (third-party media + all personal names stripped via filter-repo — snapshot in `ARCHIVES/GIT_BACKUP_PRE_FILTER_2026-08-05/`). GOTCHA: filter-repo hard-resets tracked files; commit or stash before any rewrite. Public flip = David's call after his README pass (`STATUS.md` GitHub bullet has the state).
 
 ## Communication & Code Style
 - Plain language, artist not engineer. Show what changed, not how it works internally.
