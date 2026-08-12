@@ -68,3 +68,50 @@ panel).
   lane.
 - Side note: his open-tooling/AI-cost politics rhyme with David's open-source
   AI pipeline position — kindred-spirit ground for the relationship.
+
+---
+
+# UPDATE 2026-08-11 — the alphas are real: v2.0.0-alpha.18 → alpha.21 reviewed (laptop)
+
+Five weeks after the stream, V2 went from "no releases" to four shipped alphas.
+Read from the GitHub release notes + the Discord announcement, 08-11:
+
+- **alpha.18 (07-28):** first general-user alpha of the ground-up rewrite (camera
+  capture, tracking, desktop UI all redesigned).
+- **alpha.19 + .20 (08-05):** skeleton refitting (aaroncherian) and proper
+  filtering/triangulation options finally exposed in the UI. **SkellyCam overhaul:
+  synchronized recording with equal frame counts across all cameras and per-frame
+  `perf_counter_ns` timestamps** — the Tier 1 item from `HIHO_ADOPTABLE_INNOVATIONS`
+  is now REAL upstream, and their equal-frame-count guarantee matches our early-stop
+  equalize-upward rule. SkellyTracker rewrite runs MediaPipe AND RTMPose with GPU
+  acceleration (CUDA on Windows/Linux, **CoreML on Apple Silicon**). New
+  React/Electron UI; standalone installers including a macOS .dmg.
+- **alpha.21 (08-11):** framerate is now derived from the recorded videos and fed to
+  the Butterworth filter (**PR #861 — this CLOSED #849, the bug we measured**;
+  imported pre-recorded video still needs manual fps). Synchronized-video import
+  added. Single-camera-needs-calibration bug fixed. UI now explicit that only
+  MediaPipe recordings export to Blender (RTMPose export planned).
+
+**HIHO verdict: NOTHING TO IMPLEMENT.** The two behavior fixes alpha.21 ships are
+things HIHO already ships on the 1.x line: the fps→filter clock (our 1.4.34 sidecar
+fix, measured ~90% noise reduction) and outlier rejection default ON (ours since
+July; theirs via #838). Upstream independently landed on both answers, which is
+validation, not work.
+
+**2.0-only bugs that confirm the semester freeze:** #820 (calibration/data scaling
+"slightly off," ~10%, filed by aaroncherian, explicitly against 2.0 — our 1.8.2
+volume/scale numbers are NOT implicated) and #863 (2.0 records ALL connected cameras
+regardless of selection — our own recorder with preview-as-picker is immune, and
+this is the second time upstream recorder trouble has justified it, after #650).
+2.0 remains not classroom-ready; frozen-backend doctrine unchanged.
+
+**Watch-list changes for the pre-Spring-2027 re-evaluation:**
+1. Per-frame timestamps + equal frame counts shipped (alpha.20) — when 2.x
+   stabilizes, this is the headline adoption reason.
+2. RTMPose with CoreML on Apple Silicon — potential accuracy jump, biggest where our
+   noise gradient is worst (hands). Blender export for RTMPose recordings does not
+   exist yet; watch that specifically.
+3. Standalone installers (.dmg) — matters for a future students-at-home story.
+4. aaroncherian says (on our #862, 08-11) calibration work is coming "in the near
+   future" with the ambiguity issue in mind — watch #862/#820 for the ground-plane
+   fix taking shape.
