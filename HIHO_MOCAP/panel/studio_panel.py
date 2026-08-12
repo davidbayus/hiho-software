@@ -34,7 +34,11 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
         # 2. PREVIEW
         layout.separator()
         layout.label(text="2. Preview", icon='HIDE_OFF')
-        layout.operator("screen.animation_play", text="Play", icon='PLAY')
+        col = layout.column(align=True)
+        col.operator("screen.animation_play", text="Play", icon='PLAY')
+        # Rung 0 of MOCAP_CORRECTION_RESEARCH_2026-08-11: edits the tracking
+        # empties, so it must run before Bake. Details in the redo panel.
+        col.operator("hiho_mocap.lock_feet", icon='SNAP_ON')
 
         # 3. CHARACTER
         layout.separator()
