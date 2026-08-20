@@ -12,6 +12,7 @@ See QUADRE_NOFREEZE_DESIGN_2026-07-06.md.
 
 import os
 import math
+import re
 import threading
 import time
 
@@ -372,7 +373,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             return None
 
         except Exception as e:
-            self.report({'ERROR'}, f"Cleanup failed — try applying all modifiers first, then retry. ({e})")
+            self.report({'ERROR'}, f"Cleanup failed — this shape confused the engine. Try Blender's Voxel Remesh first, or check your shape for holes. ({e})")
             return None
 
         finally:
@@ -397,7 +398,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             if job.error is not None or not job.finished_ok:
                 self.report(
                     {'ERROR'},
-                    f"Cleanup failed — try applying all modifiers first, then retry. ({job.error})",
+                    f"Cleanup failed — this shape confused the engine. Try Blender's Voxel Remesh first, or check your shape for holes. ({job.error})",
                 )
                 return {'CANCELLED'}
 
@@ -405,7 +406,11 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
 
             # Import the result
             final_mesh = importer.import_mesh(job.qw.output_smoothed_path)
-            final_obj = bpy.data.objects.new(f"{job.obj_name}_clean", final_mesh)
+            # Re-cleaning a result should yield X_clean.001 (Blender's own
+            # numbering), never X_clean_clean
+            m = re.match(r"^(.*_clean)(\.\d+)?$", job.obj_name)
+            result_name = m.group(1) if m else f"{job.obj_name}_clean"
+            final_obj = bpy.data.objects.new(result_name, final_mesh)
             context.collection.objects.link(final_obj)
             context.view_layer.objects.active = final_obj
             final_obj.select_set(True)
@@ -434,7 +439,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             return {'FINISHED'}
 
         except Exception as e:
-            self.report({'ERROR'}, f"Cleanup failed — try applying all modifiers first, then retry. ({e})")
+            self.report({'ERROR'}, f"Cleanup failed — this shape confused the engine. Try Blender's Voxel Remesh first, or check your shape for holes. ({e})")
             return {'CANCELLED'}
 
         finally:
