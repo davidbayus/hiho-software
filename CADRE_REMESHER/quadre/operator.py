@@ -309,6 +309,17 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             sym_y = props.symmetry_y
             if sym_x or sym_y:
                 bisect.bisect_on_axes(bm, sym_x, sym_y, False)
+                # A shape sitting entirely to one side of its center loses
+                # everything here — exporting an empty mesh sends the native
+                # engine down its hard-crash road
+                if len(bm.faces) == 0:
+                    self.report(
+                        {'ERROR'},
+                        "Symmetry removed everything — your shape sits to one "
+                        "side of its center. Turn off Symmetry, or use Object "
+                        "→ Set Origin → Origin to Geometry, then try again",
+                    )
+                    return None
 
             # Mark sharp edges from angle threshold, seams, material boundaries
             face_set_layer = bm.faces.layers.int.get('.sculpt_face_set')
