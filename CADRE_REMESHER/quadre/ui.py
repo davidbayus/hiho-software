@@ -4,6 +4,7 @@ QUADRE — UI Panel.
 Minimal by design. One button, a detail slider, symmetry toggles.
 """
 
+import bpy
 from bpy.types import Panel
 from .operator import QUADRE_OT_cleanup
 
@@ -34,6 +35,10 @@ class QUADRE_PT_main(Panel):
             box = layout.box()
             box.label(text=job.status_line(), icon="TIME")
             box.label(text="Blender stays usable — Esc to cancel")
+        elif bpy.data.is_dirty:
+            # A rare engine crash takes unsaved work with it — say so
+            # BEFORE the press (a report at press only shows afterwards)
+            layout.label(text="Tip: save your file first — just in case", icon="INFO")
 
         layout.separator()
 

@@ -245,6 +245,11 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
         props = context.scene.kb_quadre
         obj = context.active_object
 
+        # Honest interim answer to the native-crash risk: a rare engine
+        # crash takes unsaved work with it, so nudge — never block
+        if bpy.data.is_dirty:
+            self.report({'INFO'}, "Tip: save your file first — just in case")
+
         if len(obj.data.polygons) == 0:
             self.report({'ERROR'}, "This shape has no faces — nothing to clean up")
             return None
