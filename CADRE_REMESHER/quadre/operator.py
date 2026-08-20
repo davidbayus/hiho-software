@@ -19,7 +19,10 @@ import bpy
 import bmesh
 import mathutils
 
-from .lib import Quadwild, QuadreException, flow_config_files, satsuma_config_files
+from .lib import (
+    Quadwild, QuadreException, EngineLoadError,
+    flow_config_files, satsuma_config_files,
+)
 from .lib.data import create_default_QRParameters
 from .util import bisect, exporter, importer
 
@@ -244,12 +247,16 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
         mesh_filename = "".join(c if c not in "\\/:*?<>|" else "_" for c in obj.name).strip()
         mesh_filepath = os.path.join(bpy.app.tempdir, f"{mesh_filename}.obj")
 
-        qw = Quadwild(mesh_filepath)
         bm = None
         evaluated_obj = None
         temp_obj = None
 
         try:
+            # Loads the native engine — on a fresh Mac install this is where
+            # Gatekeeper says no, so it must fail with a friendly message
+            # before any heavy mesh work starts
+            qw = Quadwild(mesh_filepath)
+
             # Evaluate mesh with modifiers applied
             depsgraph = bpy.context.evaluated_depsgraph_get()
             evaluated_obj = obj.evaluated_get(depsgraph)
@@ -335,6 +342,10 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                 sym_y=sym_y,
                 n_parts=n_parts,
             )
+
+        except EngineLoadError as e:
+            self.report({'ERROR'}, str(e))
+            return None
 
         except QuadreException as e:
             self.report({'ERROR'}, f"Cleanup failed — try applying all modifiers first, then retry. ({e})")

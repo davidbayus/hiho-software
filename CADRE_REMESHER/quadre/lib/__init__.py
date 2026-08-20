@@ -30,6 +30,15 @@ class QuadreException(Exception):
     pass
 
 
+class EngineLoadError(QuadreException):
+    """The native engine libraries could not be loaded at all.
+
+    Callers show str(error) to the student verbatim — the message must be
+    a complete plain-English sentence, not a code detail.
+    """
+    pass
+
+
 class Quadwild():
     def __init__(self, mesh_path: str) -> None:
         if mesh_path is None or len(mesh_path) == 0:
@@ -49,8 +58,26 @@ class Quadwild():
         quadwild_lib_path = path.join(path.dirname(path.abspath(__file__)), quadwild_lib_filename)
         quadpatches_lib_path = path.join(path.dirname(path.abspath(__file__)), quadpatches_lib_filename)
 
-        self.quadwild = cdll.LoadLibrary(quadwild_lib_path)
-        self.quadpatches = cdll.LoadLibrary(quadpatches_lib_path)
+        if not path.exists(quadwild_lib_path) or not path.exists(quadpatches_lib_path):
+            raise EngineLoadError(
+                "QUADRE's engine isn't included for this computer's operating "
+                "system yet — sorry! Use Blender's built-in Remesh → Quad for now"
+            )
+
+        try:
+            self.quadwild = cdll.LoadLibrary(quadwild_lib_path)
+            self.quadpatches = cdll.LoadLibrary(quadpatches_lib_path)
+        except OSError as e:
+            if system == "Darwin":
+                raise EngineLoadError(
+                    "QUADRE's engine was blocked by macOS — follow the 30-second "
+                    "fix in the Mac Setup Guide (QUADRE_SETUP_MAC.md), then "
+                    "restart Blender"
+                ) from e
+            raise EngineLoadError(
+                "QUADRE's engine could not start — try reinstalling QUADRE "
+                "from the zip, then restart Blender"
+            ) from e
 
         self.quadwild.remeshAndField2.argtypes = [POINTER(Parameters), c_char_p, c_char_p, c_char_p]
         self.quadwild.remeshAndField2.restype = None
