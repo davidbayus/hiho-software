@@ -488,6 +488,27 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
         # square of surface, so: voxel = sqrt(area * 2 / target_tris)
         voxel = math.sqrt(area * 2.0 / DECIMATE_TARGET_TRIS) if area > 0 else 0.02
 
+        # Thin-wall check (THIN_WALL_RESEARCH_2026-07-06): a voxel bigger
+        # than half the wall can't see the cavity between two walls and
+        # silently fuses them (measured 34% volume loss). Characteristic
+        # wall ≈ 2·volume/area — only meaningful on a closed mesh
+        if area > 0:
+            bm_check = bmesh.new()
+            bm_check.from_mesh(temp_mesh)
+            is_closed = all(not e.is_boundary for e in bm_check.edges)
+            if is_closed:
+                thickness = 2.0 * abs(bm_check.calc_volume(signed=True)) / area
+                if voxel > thickness / 2.0:
+                    self.report(
+                        {'WARNING'},
+                        "Your shape is very dense and has thin walls — the "
+                        "automatic simplify step may crush the thin parts. If "
+                        "the result looks melted or solid where it should be "
+                        "hollow, simplify your sculpt yourself first (Remesh "
+                        "at a small voxel size), then run Quadre again",
+                    )
+            bm_check.free()
+
         prev_active = bpy.context.view_layer.objects.active
         bpy.context.view_layer.objects.active = temp_obj
         try:
