@@ -112,7 +112,9 @@ class _Job:
                 return
 
             self._enter_stage(2)
-            self.qw.trace()
+            if not self.qw.trace():
+                self.error = "the engine could not trace quad flow on this shape"
+                return
             if self.cancel_requested:
                 self.cancelled = True
                 return
@@ -132,6 +134,12 @@ class _Job:
             density = min(max(density, 0.4), 12.0)
 
             self.qw.quadrangulate(qr_params, density, 0, True)
+
+            # The native call can fail without raising — ground truth is
+            # whether the result file actually appeared
+            if not os.path.exists(self.qw.output_smoothed_path):
+                self.error = "the engine finished without producing a result"
+                return
             self.finished_ok = True
 
         except Exception as e:
@@ -347,7 +355,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             self.report({'ERROR'}, str(e))
             return None
 
-        except QuadreException as e:
+        except Exception as e:
             self.report({'ERROR'}, f"Cleanup failed — try applying all modifiers first, then retry. ({e})")
             return None
 
@@ -409,7 +417,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                 self.report({'INFO'}, f"Done! Clean shape has {face_count:,} faces")
             return {'FINISHED'}
 
-        except QuadreException as e:
+        except Exception as e:
             self.report({'ERROR'}, f"Cleanup failed — try applying all modifiers first, then retry. ({e})")
             return {'CANCELLED'}
 
