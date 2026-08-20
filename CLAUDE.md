@@ -14,7 +14,7 @@ Active code workspace. Canonical project = **HIHO MOCAP**. Smaller HIHO tools (P
 - **PPPARTY_V1_ARCHIVE/** — V1 phone-era puppet show. Retired (tagged `v0.9.6-phone-era-final`). Read-only.
 - **PPPARTY_V2/** — V2 single-cam puppet show. Parked at v2.0.4. Inert escape valve.
 - **UV_UNWRAPER/** — PaWrappa, auto-UV for Studio Track. v0.3.5, Extensions-packaged, student-testing ready.
-- **CADRE_REMESHER/** — Quadre quad remesher (alt to Exoside). v0.3.0 — no-freeze worker thread; design + research docs live in this dir.
+- **CADRE_REMESHER/** — Quadre quad remesher (alt to Exoside). v0.3.7 (2026-08-20, seven audit fixes: platform truth, friendly errors, symmetry guard, thin-wall warning, save nudge, UI batch); design + research docs live in this dir. Students on v0.3.0 until David live-checks v0.3.7.
 - **green_room/** — Procedural character design. Recently reactivated as standalone HIHO software.
 - **R&D/** — Research docs + upstream reference codebases (freemocap, skellycam, freemocap_blender_addon, faceit, foscap, snowmocap).
 - **PUPPET_RIG_R&D/**, **ARCHIVES/**, **FOR_PROFITS_TESTCASES/** — reference material.
