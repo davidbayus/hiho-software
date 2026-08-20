@@ -128,7 +128,7 @@ The project is part of a broader initiative to build **local software** — tool
 ## Technical Details
 
 - **Blender version:** 4.2+
-- **Platforms:** macOS (ARM), Windows (x64), Linux (x64)
+- **Platforms:** macOS (Apple Silicon + Intel), Windows (x64). Linux: not yet — the remeshing engine hasn't been built for Linux; use Blender's built-in Remesh → Quad for now
 - **License:** GPL-3.0-or-later
 - **Size:** ~5.5 MB (includes pre-compiled QuadWild binaries)
 - **Dependencies:** None beyond Blender itself

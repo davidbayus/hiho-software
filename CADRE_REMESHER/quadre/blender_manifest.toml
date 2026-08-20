@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "quadre"
-version = "0.3.0"
+version = "0.3.1"
 name = "QUADRE"
 tagline = "One-button quad remesher for character work"
 maintainer = "Prof. David Bayus, CADRE Lab (SJSU)"
@@ -17,7 +17,10 @@ license = [
   "SPDX:GPL-3.0-or-later",
 ]
 
-platforms = ["windows-x64", "macos-arm64", "linux-x64"]
+# The mac dylibs are universal x86_64+arm64 (verified 2026-08-20), so both
+# mac platforms are true. No Linux engine binary exists — advertising
+# linux-x64 guaranteed a traceback on first press.
+platforms = ["windows-x64", "macos-arm64", "macos-x64"]
 
 [permissions]
 files = "Import/export temporary OBJ files for quad remeshing"
