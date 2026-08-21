@@ -1,5 +1,7 @@
 """Scene-level properties for HIHO MOCAP — the settings the student adjusts."""
 
+import os
+
 import bpy
 
 
@@ -218,6 +220,15 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
     )
 
 
+def _data_home_update(self, context):
+    """Rewrite "Save to" in place when the picker landed inside HIHO_CAPTURES /
+    HIHO_CALIBRATIONS, so the field shows the folder takes will really use."""
+    from .operators import climb_to_data_home, norm_path
+    fixed = climb_to_data_home(norm_path(self.data_home))
+    if fixed and os.path.normpath(norm_path(self.data_home)) != fixed:
+        self.data_home = fixed
+
+
 class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
     """Machine-level settings. Scene properties reset to defaults in every new
     .blend, which silently re-pointed the env path on student machines (audit
@@ -249,6 +260,7 @@ class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
         ),
         default="~/Desktop",
         subtype='DIR_PATH',
+        update=_data_home_update,
     )
 
     def draw(self, context):

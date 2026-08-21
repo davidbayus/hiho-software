@@ -42,10 +42,40 @@ def get_data_home(context) -> str:
     """
     addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
     if addon is not None and addon.preferences is not None:
-        home = norm_path(addon.preferences.data_home)
+        home = climb_to_data_home(norm_path(addon.preferences.data_home))
         if home:
             return home
     return os.path.expanduser("~/Desktop")
+
+
+# Folders the addon itself creates under the data home. "Save to" must never
+# point INSIDE one of these.
+DATA_HOME_SUBFOLDERS = ("HIHO_CAPTURES", "HIHO_CALIBRATIONS")
+
+
+def climb_to_data_home(path: str) -> str:
+    """Return the real data home even when "Save to" was picked one level deep.
+
+    Blender's folder picker accepts whichever folder you are standing IN, so
+    browsing into HIHO_ALL/HIHO_CAPTURES and clicking Accept stores that
+    subfolder as the home — and every later take lands at
+    HIHO_CAPTURES/HIHO_CAPTURES/<stamp> (seen live 2026-08-17, both kinds).
+    If the chosen path is, or sits anywhere below, one of the addon's own
+    subfolders, climb to the parent of the OUTERMOST such folder (an already
+    doubled HIHO_CAPTURES/HIHO_CAPTURES pick must not stop one level short).
+    Anything else passes through.
+    """
+    if not path:
+        return ""
+    cur = os.path.normpath(path)
+    home = cur
+    while True:
+        head, tail = os.path.split(cur)
+        if not tail or head == cur:
+            return home
+        if tail in DATA_HOME_SUBFOLDERS:
+            home = head
+        cur = head
 
 
 def norm_path(p: str) -> str:
