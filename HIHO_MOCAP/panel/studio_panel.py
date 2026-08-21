@@ -11,7 +11,11 @@ the Polish section is hidden until per-region smoothing ships for real
 sections renumber 1-4. No other stub buttons remain in the student view.
 """
 
+import os
+
 import bpy
+
+from ..operators import STATE, norm_path
 
 
 class HIHO_MOCAP_PT_studio(bpy.types.Panel):
@@ -38,7 +42,18 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
         col.operator("screen.animation_play", text="Play", icon='PLAY')
         # Rung 0 of MOCAP_CORRECTION_RESEARCH_2026-08-11: edits the tracking
         # empties, so it must run before Bake. Details in the redo panel.
-        col.operator("hiho_mocap.lock_feet", icon='SNAP_ON')
+        # One slot, two states (UNLOCK_TOGGLE_DESIGN_2026-08-12): while the
+        # current take is locked the slot shows Unlock for A/B comparison.
+        stash = STATE.get("lock_feet_stash")
+        locked_here = False
+        if stash and stash["locked"] and s.last_processed_path:
+            folder = os.path.basename(os.path.dirname(os.path.dirname(
+                norm_path(s.last_processed_path))))
+            locked_here = stash["take"] == f"HIHO_MOCAP_Skelly_{folder}"
+        if locked_here:
+            col.operator("hiho_mocap.unlock_feet", icon='SNAP_OFF')
+        else:
+            col.operator("hiho_mocap.lock_feet", icon='SNAP_ON')
 
         # 3. CHARACTER
         layout.separator()

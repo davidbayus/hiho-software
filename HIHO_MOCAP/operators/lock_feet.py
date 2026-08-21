@@ -44,6 +44,53 @@ def _read_curve(fc):
     return buf[0::2].copy(), buf[1::2].copy()
 
 
+def _gather_markers(root):
+    """name → {fcurves, frames, array} for every animated hiho_* empty."""
+    gathered = {}
+    for child in root.children_recursive:
+        if child.type != 'EMPTY':
+            continue
+        name = strip_dup_suffix(child.name)
+        if not name.startswith("hiho_"):
+            continue
+        fcs = _location_fcurves(child)
+        if fcs is None:
+            continue
+        counts = {len(fc.keyframe_points) for fc in fcs}
+        if len(counts) != 1 or 0 in counts:
+            continue
+        frames, values = zip(*(_read_curve(fc) for fc in fcs))
+        gathered[name[len("hiho_"):]] = {
+            "fcurves": fcs,
+            "frames": frames,
+            "array": np.stack(values, axis=0),
+        }
+    return gathered
+
+
+def _write_marker(g):
+    for axis in range(3):
+        fc = g["fcurves"][axis]
+        buf = np.empty(2 * len(g["frames"][axis]))
+        buf[0::2] = g["frames"][axis]
+        buf[1::2] = g["array"][axis]
+        fc.keyframe_points.foreach_set("co", buf)
+        fc.update()
+
+
+def _restore_stash(gathered, stash):
+    """Write the stashed raw curves back — numpy arrays AND fcurves."""
+    restored = 0
+    for name, arr in stash["arrays"].items():
+        g = gathered.get(name)
+        if g is None or g["array"].shape != arr.shape:
+            continue
+        np.copyto(g["array"], arr)
+        _write_marker(g)
+        restored += 1
+    return restored
+
+
 def _find_skelly_root(context):
     path = norm_path(context.scene.hiho_mocap.last_processed_path)
     if path:
@@ -118,25 +165,7 @@ class HIHO_MOCAP_OT_lock_feet(bpy.types.Operator):
                         "empties, before Bake.")
             return {'CANCELLED'}
 
-        gathered = {}
-        for child in root.children_recursive:
-            if child.type != 'EMPTY':
-                continue
-            name = strip_dup_suffix(child.name)
-            if not name.startswith("hiho_"):
-                continue
-            fcs = _location_fcurves(child)
-            if fcs is None:
-                continue
-            counts = {len(fc.keyframe_points) for fc in fcs}
-            if len(counts) != 1 or 0 in counts:
-                continue
-            frames, values = zip(*(_read_curve(fc) for fc in fcs))
-            gathered[name[len("hiho_"):]] = {
-                "fcurves": fcs,
-                "frames": frames,
-                "array": np.stack(values, axis=0),
-            }
+        gathered = _gather_markers(root)
 
         sides = {'BOTH': ("left", "right"),
                  'LEFT': ("left",),
@@ -166,6 +195,22 @@ class HIHO_MOCAP_OT_lock_feet(bpy.types.Operator):
         markers = {name: g["array"] for name, g in gathered.items()
                    if g["array"].shape[1] == n_ref}
 
+        # A/B stash (UNLOCK_TOGGLE_DESIGN_2026-08-12): the first lock of a
+        # take snapshots the raw curves; a re-lock (dial tweak, double click)
+        # restores them first so locking never compounds.
+        stash = STATE.get("lock_feet_stash")
+        if (stash and stash["take"] == root.name
+                and set(stash["arrays"]) == set(markers)):
+            if stash["locked"]:
+                _restore_stash(gathered, stash)
+        else:
+            stash = {
+                "take": root.name,
+                "arrays": {name: arr.copy() for name, arr in markers.items()},
+                "locked": False,
+            }
+            STATE["lock_feet_stash"] = stash
+
         # Frame-count parameters follow the take's real clock (the 30-vs-60
         # lesson of 1.4.34): minimum hold 1/3 s, ease in/out 1/6 s each.
         fps = context.scene.render.fps
@@ -182,14 +227,7 @@ class HIHO_MOCAP_OT_lock_feet(bpy.types.Operator):
         )
 
         for name in stats["modified_markers"]:
-            g = gathered[name]
-            for axis in range(3):
-                fc = g["fcurves"][axis]
-                buf = np.empty(2 * len(g["frames"][axis]))
-                buf[0::2] = g["frames"][axis]
-                buf[1::2] = markers[name][axis]
-                fc.keyframe_points.foreach_set("co", buf)
-                fc.update()
+            _write_marker(gathered[name])
 
         total_windows = sum(stats["windows"].values())
         if not total_windows and not stats["clamped_frames"]:
@@ -198,6 +236,8 @@ class HIHO_MOCAP_OT_lock_feet(bpy.types.Operator):
                         "— is the floor at height 0 in this take? Try raising "
                         "Contact height.")
             return {'FINISHED'}
+
+        stash["locked"] = True
 
         per_side = ", ".join(f"{stats['windows'].get(s, 0)} {s}"
                              for s in usable_sides)
@@ -212,7 +252,49 @@ class HIHO_MOCAP_OT_lock_feet(bpy.types.Operator):
                     "BEFORE Bake to see it on the rig.")
             self.report({'WARNING'}, msg)
         else:
-            msg += " Play to check; Bake writes it onto the rig."
+            msg += (" Play to check — Unlock Feet flips back for comparison; "
+                    "Bake writes it onto the rig.")
+            self.report({'INFO'}, msg)
+        STATE["status_text"] = msg
+        return {'FINISHED'}
+
+
+class HIHO_MOCAP_OT_unlock_feet(bpy.types.Operator):
+    """Put the feet back exactly as the cameras saw them, so you can compare.
+    Lock Feet flips it back on. The take on disk is never touched."""
+    bl_idname = "hiho_mocap.unlock_feet"
+    bl_label = "Unlock Feet"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        root = _find_skelly_root(context)
+        if root is None:
+            self.report({'ERROR'}, "Load a take first.")
+            return {'CANCELLED'}
+
+        stash = STATE.get("lock_feet_stash")
+        if not stash or stash["take"] != root.name or not stash["locked"]:
+            self.report({'ERROR'},
+                        "Nothing to unlock — Lock Feet hasn't run on this take "
+                        "since Blender opened. (Load Take always brings the "
+                        "raw take back.)")
+            return {'CANCELLED'}
+
+        restored = _restore_stash(_gather_markers(root), stash)
+        if not restored:
+            self.report({'ERROR'},
+                        "Couldn't restore — the take's curves changed shape "
+                        "since locking. Load Take again for the raw take.")
+            return {'CANCELLED'}
+
+        stash["locked"] = False
+        msg = (f"Feet unlocked — this is the raw take ({restored} markers "
+               "restored). Lock Feet flips it back.")
+        if _rig_is_baked(root):
+            msg += (" This take is already baked — the rig keeps the baked "
+                    "motion; only the tracking empties changed.")
+            self.report({'WARNING'}, msg)
+        else:
             self.report({'INFO'}, msg)
         STATE["status_text"] = msg
         return {'FINISHED'}

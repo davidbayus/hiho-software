@@ -11,7 +11,7 @@ See HIHO_MOCAP_WRAPPER_ARCHITECTURE.md + AUDIT_2026-06-09.md.
 bl_info = {
     "name": "HIHO MOCAP",
     "author": "David Bayus + HIHO 4D ART CLUB",
-    "version": (1, 4, 44),
+    "version": (1, 4, 45),
     "blender": (5, 0, 0),
     "location": "View3D > N-panel > HIHO MOCAP",
     "description": "Multi-camera mocap: record, process via an external FreeMoCap env, spawn an animated rig.",
@@ -46,7 +46,10 @@ from .operators.face_sync import (
 )
 from .operators.load_face_take import HIHO_MOCAP_OT_load_face_take
 from .operators.load_take import HIHO_MOCAP_OT_load_take
-from .operators.lock_feet import HIHO_MOCAP_OT_lock_feet
+from .operators.lock_feet import (
+    HIHO_MOCAP_OT_lock_feet,
+    HIHO_MOCAP_OT_unlock_feet,
+)
 from .operators.output import HIHO_MOCAP_OT_spawn_output_rig
 from .operators.save_out import HIHO_MOCAP_OT_save_out
 from .operators.send_to_character import HIHO_MOCAP_OT_send_to_character
@@ -83,6 +86,7 @@ _classes = (
     HIHO_MOCAP_OT_load_face_take,
     HIHO_MOCAP_OT_load_take,
     HIHO_MOCAP_OT_lock_feet,
+    HIHO_MOCAP_OT_unlock_feet,
     HIHO_MOCAP_OT_send_to_character,
     HIHO_MOCAP_OT_save_out,
     HIHO_MOCAP_OT_spawn_output_rig,
