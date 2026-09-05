@@ -113,7 +113,15 @@ class HIHO_MOCAP_OT_record_calibration(bpy.types.Operator):
         s = context.scene.hiho_mocap
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         out = os.path.join(get_data_home(context), "HIHO_CALIBRATIONS", stamp)
-        cams = (s.camera_ids or "").strip() or "0,1,2,3"
+        # Same refusal Record got in 1.4.35. A blank box used to fall back to
+        # "0,1,2,3" here too; on the six-camera ring that records a four-camera
+        # board take that looks normal and solves "workable" (bitten 2026-08-21).
+        cams = (s.camera_ids or "").strip()
+        if not cams:
+            self.report({'ERROR'}, "The Cameras box is blank. Click Show Cameras "
+                                   "and pick your ring first - camera numbers "
+                                   "shuffle, so calibration never guesses.")
+            return {'CANCELLED'}
         args = [
             "--output", out, "--cameras", cams,
             "--countdown", str(s.countdown_seconds),
