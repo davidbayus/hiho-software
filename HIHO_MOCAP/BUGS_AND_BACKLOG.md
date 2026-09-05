@@ -305,3 +305,17 @@ findings + ranked fix list), **Z_JITTER_DIAGNOSIS_2026-08-04.md**,
 3. **Audit net result:** golden path is clean (06-09 fixes all confirmed; 5.2 API
    compliant; no data-loss paths on disk) — remaining items + ranked easy wins live in
    AUDIT_2026-08-04.md. Next-session build order approved by David 08-04 (see STATUS.md).
+
+## 2026-09-05 — BASEMENT test day (laptop): five builds, one day
+1. **Recorder ran 51 s past its 60 s length** (Camera_0 at ~28 fps; probe later showed all six at 59.5 fps alone
+   and together → situational, probe does not encode). BUILT as 1.4.48 (Build A + C from 08-01): stop at length +
+   2 s, RECORDING_REPORT.txt, plain-words laggard error, Q = ESC. Live-verified on the next calibration.
+2. **End-of-take countdown** (David: "so the student knows when the recording is about to end") → 1.4.49, live-verified.
+3. **Live board-read badge per tile** (David: "so we can confirm each cam can see the board") → 1.4.50; full-res
+   detection matches the solver 41/42; live-verified.
+4. **Solo performer cannot see the badge** → 1.4.51 speaks the count of cameras reading; live-verified ("6... 4... 3... 5... 6").
+5. Cosmetic: in the picker window the last-row tile's badge overlaps the bottom help line (cam 6 "board 0/8" over
+   "Left-click: rotate"). Move the help line below the grid or skip the badge on excluded tiles. One-liner, queued.
+6. Calibration: the Dance v3 (no chair) scored 2.90 px vs 3.67 for the hand sweep; far cameras fixed (E, F 0.3 / 0.2),
+   close cameras B/C/D bad (4-10 px) with the most face-on views → solver design next: per-camera fixed intrinsics
+   from each camera's own bow, then anipose for extrinsics only. Letters: tape runs clockwise (dance map default flipped).

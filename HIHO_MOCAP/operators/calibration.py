@@ -126,7 +126,7 @@ class HIHO_MOCAP_OT_record_calibration(bpy.types.Operator):
             "--output", out, "--cameras", cams,
             "--countdown", str(s.countdown_seconds),
             "--duration", str(s.record_length_seconds),
-            "--show",
+            "--show", "--board-overlay",
         ]
         # Board-take path fills in on completion (watched launch) — Solve's
         # poll unlocks exactly when there is a finished take to solve.

@@ -41,6 +41,12 @@ CAMERAS = "HIHO_CAMERAS::"
 ROTATIONS_FILE = Path.home() / ".hiho_mocap" / "camera_rotations.json"
 TILE = 240   # preview tile size; square so portrait + landscape both fit cleanly
 COLS = 3     # cameras per preview row
+# 1.4.48: the writers are frame-count bounded (FreeMoCap needs equal counts), but a camera
+# delivering slow frames must never hold the take open (2026-08-01 5 fps, 08-22 25 fps,
+# 09-05 28 fps: each ran the recording past its length). Stop at the clock too.
+STOP_GRACE_SEC = 2.0            # past the set length: normal one-frame stagger + equalize
+STOP_KEYS = (27, ord("q"), ord("Q"))   # ESC or Q closes the recording window
+END_COUNTDOWN_SEC = 5   # 1.4.49: "ENDING IN 5..1", on screen and aloud, so the performer knows
 
 
 def _emit(prefix: str, msg: str) -> None:
@@ -73,6 +79,141 @@ def _say(text: str) -> None:
         subprocess.Popen(["say", text])
     except Exception:
         pass
+
+
+def _write_recording_report(out_dir, counts, expected, elapsed, fps, stopped_by, board_reads=None):
+    """RECORDING_REPORT.txt in the take folder: what every camera actually delivered, in
+    plain words. Returns (verdict, slow_text); slow_text names the laggards for the panel."""
+    top = max(counts.values()) if counts else 0
+    how = {"target": "every camera reached its frame target",
+           "clock": "the clock (a camera fell behind)",
+           "key": "ESC/Q"}.get(stopped_by, stopped_by)
+    lines = [f"HIHO recording report  {time.strftime('%Y-%m-%d %H:%M:%S')}",
+             f"take: {out_dir}",
+             f"length set: {expected / fps:.0f} s at {fps} fps = {expected} frames per camera",
+             f"elapsed: {elapsed:.1f} s   stopped by: {how}"]
+    slow = []
+    for cid in sorted(counts):
+        n = counts[cid]
+        rate = n / elapsed if elapsed > 0 else 0.0
+        if n < top:
+            slow.append(f"Camera {cid} delivered {n} of {expected} frames (~{rate:.0f} fps)")
+            lines.append(f"  Camera {cid}: {n:5d} / {expected} frames  ~{rate:.0f} fps   SLOW")
+        else:
+            lines.append(f"  Camera {cid}: {n:5d} / {expected} frames  on time")
+    if slow:
+        slow_text = "; ".join(slow) + ": check its light, cable, or hub."
+        verdict = "MISMATCH, this take will not process. " + slow_text
+    elif top < expected:
+        slow_text = ""
+        verdict = f"short take: every camera stopped at {top} of {expected} frames ({how})"
+    else:
+        slow_text = ""
+        verdict = "ok: every camera delivered its frames"
+    lines.append(f"verdict: {verdict}")
+    if board_reads:
+        lines.append("board read while recording (share of samples this camera read the board at 6+ corners):")
+        for cid, pct in board_reads:
+            lines.append(f"  Camera {cid}: {pct:3d}%" + ("   LOW, give this camera more board time" if pct < 25 else ""))
+    try:
+        with open(Path(out_dir) / "RECORDING_REPORT.txt", "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError as exc:
+        _emit(INFO, f"could not write RECORDING_REPORT.txt: {exc}")
+    return verdict, slow_text
+
+
+class _BoardReader:
+    """Live 'can this camera READ the board' badge (1.4.50). Same board and detector calls as
+    the solver (freemocap charuco_5x3 + aniposelib detect_image), so the corner count is the
+    solver's count. Samples every camera at most RATE_HZ times a second on a downscaled frame."""
+    RATE_HZ = 3
+    KEEP = 6           # aniposelib keeps a frame at 6+ corners (our 7 -> 6 patch)
+    LONG_SIDE = 1280   # full 720p60 frames: a 640 px downscale lost corners on the far cameras,
+                       # which are exactly the ones the badge exists for (tested 09-05, frame 180)
+
+    def __init__(self):
+        import cv2
+        self.cv2 = cv2
+        self.aruco = cv2.aruco
+        self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
+        self.board = cv2.aruco.CharucoBoard(size=[5, 3], squareLength=1, markerLength=0.8,
+                                            dictionary=self.dictionary)
+        self.total = (5 - 1) * (3 - 1)
+        self.params = cv2.aruco.DetectorParameters()
+        self.last = {}          # cid -> corners read at the last sample
+        self.samples = {}       # cid -> [kept, taken] since counting began
+        self._next = 0.0
+        # 1.4.51: a solo performer cannot see the laptop, so the number of cameras
+        # currently reading the board is spoken when it changes ("four cameras").
+        self.speak = _say
+        self._said = None
+        self._say_after = 0.0
+        self.SAY_GAP = 2.0
+
+    def announce(self, total):
+        """Speak the count of cameras reading the board (6+ corners) when it changes,
+        at most every SAY_GAP seconds. Returns the count."""
+        green = sum(1 for n in self.last.values() if n >= self.KEEP)
+        now = time.monotonic()
+        if green != self._said and now >= self._say_after:
+            self._said = green
+            self._say_after = now + self.SAY_GAP
+            if green == 0:
+                self.speak("no cameras")
+            elif green == total:
+                self.speak(f"all {total}")
+            else:
+                self.speak(f"{green} camera" + ("s" if green != 1 else ""))
+        return green
+
+    def summary(self):
+        """[(cid, kept %)] since counting began, for the recording report."""
+        return [(cid, 100 * k // n if n else 0) for cid, (k, n) in sorted(self.samples.items())]
+
+    def count(self, frame):
+        cv2, aruco = self.cv2, self.aruco
+        h, w = frame.shape[:2]
+        s = self.LONG_SIDE / max(h, w)
+        if s < 1.0:
+            frame = cv2.resize(frame, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        corners, ids, _ = aruco.detectMarkers(gray, self.dictionary, parameters=self.params)
+        if ids is None or len(ids) == 0:
+            return 0
+        n, _, _ = aruco.interpolateCornersCharuco(corners, ids, gray, self.board)
+        return int(n or 0)
+
+    def update(self, frames_by_id, counting=False):
+        now = time.monotonic()
+        if now < self._next:
+            return self.last
+        self._next = now + 1.0 / self.RATE_HZ
+        for cid, f in frames_by_id.items():
+            if f is None:
+                continue
+            try:
+                n = self.count(f)
+            except Exception:
+                n = -1
+            self.last[cid] = n
+            if counting and n >= 0:
+                kept, taken = self.samples.get(cid, [0, 0])
+                self.samples[cid] = [kept + (1 if n >= self.KEEP else 0), taken + 1]
+        return self.last
+
+    def label(self, cid):
+        n = self.last.get(cid)
+        if n is None:
+            return None, None
+        if n < 0:
+            return "board ?", (0, 200, 255)
+        color = (0, 220, 0) if n >= self.KEEP else ((0, 200, 255) if n > 0 else (0, 0, 255))
+        text = f"board {n}/{self.total}"
+        kept, taken = self.samples.get(cid, [0, 0])
+        if taken:
+            text += f"   read {100 * kept // taken}%"
+        return text, color
 
 
 def _load_camera_manager():
@@ -119,7 +260,7 @@ def _fit_tile(frame, size=TILE):
     return canvas
 
 
-def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None):
+def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None, reader=None):
     """Tile each camera's latest frame into one labeled image.
 
     rotations ({cam_id: degrees}) is applied for DISPLAY only — use it in the
@@ -148,6 +289,11 @@ def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None):
             tile = (tile * 0.35).astype(np.uint8)
         label = f"cam {cid}" + (f"  {rot} deg" if rot else "")
         cv2.putText(tile, label, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        if reader is not None:
+            text, color = reader.label(cid)
+            if text:
+                cv2.rectangle(tile, (0, TILE - 30), (TILE, TILE), (0, 0, 0), -1)
+                cv2.putText(tile, text, (8, TILE - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         if cid in excluded:
             cv2.putText(tile, "EXCLUDED", (8, TILE // 2), cv2.FONT_HERSHEY_SIMPLEX,
                         0.8, (0, 0, 255), 2)
@@ -164,7 +310,7 @@ def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None):
     return grid
 
 
-def _preview(CameraManager, cam_ids, selected_raw="") -> int:
+def _preview(CameraManager, cam_ids, selected_raw="", reader=None) -> int:
     import cv2
     rotations = _load_rotations()
     selected = _parse_selected(selected_raw, cam_ids)
@@ -204,8 +350,12 @@ def _preview(CameraManager, cam_ids, selected_raw="") -> int:
     _title()
     try:
         while True:
-            grid = _grid(mgr.get_latest_frames(), cam_ids, rotations=rotations,
-                         excluded=set(cam_ids) - selected)
+            frames = mgr.get_latest_frames()
+            if reader is not None:
+                reader.update(frames)
+                reader.announce(len(cam_ids))
+            grid = _grid(frames, cam_ids, rotations=rotations,
+                         excluded=set(cam_ids) - selected, reader=reader)
             cv2.putText(grid,
                         "Left-click: rotate 90 deg   Right-click: include/exclude   Q = done",
                         (12, grid.shape[0] - 14),
@@ -240,6 +390,8 @@ def main() -> int:
                          "blank = all detected")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--board-overlay", action="store_true",
+                    help="live 'board n/8' badge per camera (calibration recordings and Show Cameras)")
     # Keep in sync with core/camera_manager.py DEFAULT_RESOLUTION / DEFAULT_FPS —
     # the panel launches with no flags, so THESE are the values students get.
     ap.add_argument("--width", type=int, default=1280)
@@ -277,7 +429,8 @@ def main() -> int:
         if not cam_ids:
             _emit(ERROR, "no cameras detected")
             return 2
-        return _preview(CameraManager, cam_ids, selected_raw=args.selected)
+        return _preview(CameraManager, cam_ids, selected_raw=args.selected,
+                        reader=_BoardReader() if args.board_overlay else None)
 
     # --- recording ---
     if not args.output:
@@ -300,6 +453,12 @@ def main() -> int:
 
     show = args.show or args.countdown > 0
     win = "HIHO Recording  (ESC stops early)"
+    reader = None
+    if args.board_overlay and show:
+        try:
+            reader = _BoardReader()
+        except Exception as exc:
+            _emit(INFO, f"board badge unavailable: {type(exc).__name__}: {exc}")
 
     if args.countdown > 0:
         import cv2
@@ -314,9 +473,13 @@ def main() -> int:
             if n != last:
                 last = n
                 _say(str(n))
-            cv2.imshow(win, _grid(mgr.get_latest_frames(), cam_ids, overlay=f"REC IN {n}"))
-            if (cv2.waitKey(30) & 0xFF) == 27:
-                # ESC during the countdown: abort before anything is written.
+            frames = mgr.get_latest_frames()
+            if reader is not None:
+                reader.update(frames)
+                reader.announce(len(cam_ids))
+            cv2.imshow(win, _grid(frames, cam_ids, overlay=f"REC IN {n}", reader=reader))
+            if (cv2.waitKey(30) & 0xFF) in STOP_KEYS:
+                # ESC/Q during the countdown: abort before anything is written.
                 mgr.stop()
                 cv2.destroyAllWindows()
                 _emit(INFO, "cancelled during countdown - nothing recorded")
@@ -327,28 +490,66 @@ def main() -> int:
     _emit(INFO, f"recording {args.duration}s from cameras {cam_ids} "
                 f"at {args.width}x{args.height}@{args.fps}fps rotations={rotations}")
     mgr.start_recording(args.output, duration_sec=args.duration)
+    deadline = args.duration + STOP_GRACE_SEC
+    stopped_by = "target"
+    ending_last = [None]
+
+    def _ending(elapsed):
+        """Last-seconds countdown (1.4.49). Returns the overlay text, or None outside it."""
+        import math
+        remaining = args.duration - elapsed
+        if 0 < remaining <= END_COUNTDOWN_SEC:
+            n = math.ceil(remaining)
+            if n != ending_last[0]:
+                ending_last[0] = n
+                _say(str(n))
+            return f"ENDING IN {n}"
+        return None
+
     if show:
         import cv2
         while mgr.is_recording:
-            cv2.imshow(win, _grid(mgr.get_latest_frames(), cam_ids,
-                                  overlay=f"REC {int(mgr.recording_elapsed_sec)}s / {args.duration}s"))
-            if (cv2.waitKey(30) & 0xFF) == 27:
-                mgr.stop_recording()
+            elapsed = mgr.recording_elapsed_sec
+            if elapsed >= deadline:
+                stopped_by = "clock"
+                break
+            overlay = _ending(elapsed) or f"REC {int(elapsed)}s / {args.duration}s"
+            frames = mgr.get_latest_frames()
+            if reader is not None:
+                reader.update(frames, counting=True)
+                if not _ending(elapsed):      # the end countdown owns the voice in the last 5 s
+                    reader.announce(len(cam_ids))
+            cv2.imshow(win, _grid(frames, cam_ids, overlay=overlay, reader=reader))
+            if (cv2.waitKey(30) & 0xFF) in STOP_KEYS:
+                stopped_by = "key"
                 break
         cv2.destroyAllWindows()
     else:
         while mgr.is_recording:
+            elapsed = mgr.recording_elapsed_sec
+            if elapsed >= deadline:
+                stopped_by = "clock"
+                break
+            _ending(elapsed)
             time.sleep(0.2)
+    if stopped_by != "target":
+        # Healthy cameras already closed at their target; a laggard is cut where it
+        # is so the mismatch is exposed below, not hidden.
+        mgr.stop_recording()
 
+    elapsed = mgr.recording_elapsed_sec
     counts = mgr.frame_counts
     mgr.stop()
     _say("done")
-    _emit(INFO, f"frame counts: {counts}")
+    expected = args.duration * args.fps
+    verdict, slow_text = _write_recording_report(args.output, counts, expected, elapsed,
+                                                 args.fps, stopped_by,
+                                                 board_reads=reader.summary() if reader else None)
+    _emit(INFO, f"frame counts: {counts} ({verdict})")
     if len(set(counts.values())) > 1:
-        # Equalization timed out (a camera likely died mid-take). FreeMoCap
-        # hard-rejects mismatched takes, so fail loudly now, not at Process.
-        _emit(ERROR, f"cameras ended with mismatched frame counts {counts} - "
-                     "a camera may have died mid-take; this take will not process")
+        # A camera fell behind or died. FreeMoCap hard-rejects mismatched takes, so
+        # fail loudly now, in plain words, not at Process.
+        _emit(ERROR, f"{slow_text} Stopped at {elapsed:.0f} s. This take will not process.")
         return 1
     # Sidecar so Load Take can set the scene clock to match the take
     # (LOAD_TAKE_FPS_DESIGN_2026-07-02). Also the future landing spot for

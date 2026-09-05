@@ -153,7 +153,7 @@ class HIHO_MOCAP_OT_preview_cameras(bpy.types.Operator):
         # camera has to stay visible to be re-includable. The panel's list rides
         # along as --selected (those tiles start included); right-clicks in the
         # window edit it, and the result comes back via the HIHO_CAMERAS marker.
-        args = ["--preview"]
+        args = ["--preview", "--board-overlay"]
         cams = (context.scene.hiho_mocap.camera_ids or "").strip()
         if cams:
             args += ["--selected", cams]
