@@ -1,7 +1,7 @@
 """
 QUADRE — UI Panel.
 
-Minimal by design. One button, a detail slider, symmetry toggles.
+Minimal by design. One button, a quad count, symmetry toggles.
 """
 
 import bpy
@@ -50,13 +50,9 @@ class QUADRE_PT_main(Panel):
 
         layout.separator()
 
-        # Detail slider — left is low poly, right is high detail
-        col = layout.column()
-        col.label(text="Detail:")
-        row = col.row(align=True)
-        row.label(text="Low")
-        row.prop(props, "detail", text="", slider=True)
-        row.label(text="High")
+        # Quad Count — the number students already know from the demos:
+        # type how many quads you want, exactly like the paid tool
+        layout.prop(props, "quad_count")
 
         layout.separator()
 

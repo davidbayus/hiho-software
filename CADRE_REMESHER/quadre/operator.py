@@ -34,19 +34,21 @@ from .util import bisect, exporter, importer
 # body part transitions (arm meets torso, neck meets head)
 SHARP_ANGLE = 35.0
 
-# Detail slider maps 0.0–1.0 to a TARGET face count (log scale).
-# QuadWild's density knob is relative to the input mesh's resolution,
-# so the same slider position used to give wildly different results on
-# different meshes (bug report: bucket ballooned 43K → 160K faces).
-# Instead we aim for an absolute count and solve for the density.
-TARGET_FACES_MIN = 1_000    # slider at 0.0
-TARGET_FACES_MAX = 25_000   # slider at 1.0
+# The Quad Count field is an absolute TARGET face count. QuadWild's own
+# density knob is relative to the input mesh's resolution, so a fixed
+# setting used to give wildly different results on different meshes
+# (bug report: bucket ballooned 43K → 160K faces). Instead we take the
+# count the student typed and solve for the density that should hit it.
 
-# Empirical (measured 2026-07-06 on sphere/torus/Suzanne):
-#   output faces ≈ K × remeshed_tris / density²  with K ≈ 0.42.
-# Sharp features set a floor, so results can land above target —
-# never far below.
-QUADWILD_K = 0.42
+# Empirical: output faces ≈ K × remeshed_tris / density².
+#   2026-07-06 (Blender 5.1.2, sphere/torus): K ≈ 0.42.
+#   2026-09-16 (Blender 5.2.0 LTS, Suzanne at two densities + the
+#   bug-report bucket, counts 1K–25K): K measured 0.45–0.53, so the
+#   old value delivered ~20% more faces than the typed Quad Count.
+#   Recalibrated to 0.50 (results now land within ~±10% of the ask).
+# Sharp features set a floor (~650 faces on Suzanne, ~1,450 on a
+# voxel-remeshed sculpt), so very low counts land above the ask.
+QUADWILD_K = 0.50
 
 # Max input triangles before we auto-decimate.
 # QRemeshify recommends < 100K. We enforce it so students
@@ -73,10 +75,11 @@ class _Job:
     (finish) this job runs.
     """
 
-    def __init__(self, qw, target_faces, obj_name, original_location,
-                 sym_x, sym_y, n_parts):
+    def __init__(self, qw, target_faces, quad_count, obj_name,
+                 original_location, sym_x, sym_y, n_parts):
         self.qw = qw
-        self.target_faces = target_faces
+        self.target_faces = target_faces   # what the engine aims for
+        self.quad_count = quad_count       # what the student typed
         self.obj_name = obj_name
         self.original_location = original_location
         self.sym_x = sym_x
@@ -108,12 +111,19 @@ class _Job:
             self.qw.remeshAndField(
                 remesh=True, enableSharp=True, sharpAngle=SHARP_ANGLE
             )
+            # The native stages can report success without writing their
+            # result (seen upstream: xtrytofindme/QRemeshify a9afdf1,
+            # 2026-08-11). Handing the next stage a missing file is a
+            # hard-crash road, so check on disk between stages
+            if not os.path.exists(self.qw.remeshed_path):
+                self.error = "the engine could not rebuild the surface of this shape"
+                return
             if self.cancel_requested:
                 self.cancelled = True
                 return
 
             self._enter_stage(2)
-            if not self.qw.trace():
+            if not self.qw.trace() or not os.path.exists(self.qw.traced_path):
                 self.error = "the engine could not trace quad flow on this shape"
                 return
             if self.cancel_requested:
@@ -352,15 +362,19 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             exporter.export_mesh(bm, mesh_filepath)
             exporter.export_sharp_features(bm, qw.sharp_path, SHARP_ANGLE)
 
-            # Map detail slider (0.0–1.0) to a target face count; the
-            # worker solves for density once the remeshed tri count exists
-            target_faces = TARGET_FACES_MIN * (
-                (TARGET_FACES_MAX / TARGET_FACES_MIN) ** props.detail
-            )
+            # The typed Quad Count is for the WHOLE shape. With symmetry on
+            # the engine only ever sees one half (or quarter) and the mirror
+            # step doubles the result afterwards, so the half must aim for
+            # half the count (measured 2026-09-16: without this, X symmetry
+            # delivered ~2.7× the typed number). The worker solves for the
+            # density once the remeshed tri count exists
+            sym_divisor = (2 if sym_x else 1) * (2 if sym_y else 1)
+            target_faces = max(props.quad_count // sym_divisor, 1)
 
             return _Job(
                 qw=qw,
                 target_faces=target_faces,
+                quad_count=props.quad_count,
                 obj_name=obj.name,
                 original_location=original_location,
                 sym_x=sym_x,
@@ -426,16 +440,23 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                 obj.hide_set(True)
                 obj.select_set(False)
 
+            # The count is now a promise the student typed, so say how
+            # close the engine landed — it aims for the number, never hits
+            # it exactly, and sharp features can hold it above the target
             face_count = len(final_obj.data.polygons)
+            summary = (
+                f"Done! Clean shape has {face_count:,} faces "
+                f"(you asked for {job.quad_count:,})"
+            )
             if job.n_parts > 1:
                 self.report(
                     {'WARNING'},
-                    f"Done! Clean shape has {face_count:,} faces. Heads up: your shape "
-                    f"was {job.n_parts} separate pieces — Quadre works best on one connected "
-                    f"piece, so check the result where pieces meet",
+                    f"{summary}. Heads up: your shape was {job.n_parts} separate "
+                    f"pieces — Quadre works best on one connected piece, so check "
+                    f"the result where pieces meet",
                 )
             else:
-                self.report({'INFO'}, f"Done! Clean shape has {face_count:,} faces")
+                self.report({'INFO'}, summary)
             return {'FINISHED'}
 
         except Exception as e:

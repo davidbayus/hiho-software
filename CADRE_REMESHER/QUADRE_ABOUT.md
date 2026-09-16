@@ -64,12 +64,12 @@ The "BiMDF" part refers to a specific math solver (Bi-directional Minimum Deviat
 QuadWild is a powerful engine, but it exposes 30+ parameters that require deep technical knowledge to tune. QUADRE wraps it with:
 
 - **One button.** "Clean Up My Shape" — that's it.
-- **One slider.** Detail level, from low poly to high detail.
+- **One number.** Quad Count — type how many quads you want (500–5,000 is the sweet spot for characters), the same field the paid tool has.
 - **Smart defaults.** Sharp feature detection, smoothing, and density tuned for character meshes.
 - **Auto-decimation.** If your mesh is too dense (over 100K triangles), QUADRE simplifies it first so you're not waiting forever.
 - **Symmetry support.** Toggle X or Y axis symmetry for characters.
 
-A student doesn't need to know what a cross field is. They press the button, move the slider, and get clean quads.
+A student doesn't need to know what a cross field is. They press the button, type a quad count, and get clean quads.
 
 ## Copyleft and Why It Matters
 

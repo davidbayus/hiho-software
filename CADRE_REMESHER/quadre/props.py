@@ -6,7 +6,7 @@ Everything else is hard-coded to character-friendly defaults.
 """
 
 import bpy
-from bpy.props import BoolProperty, FloatProperty
+from bpy.props import BoolProperty, IntProperty
 from bpy.types import PropertyGroup
 
 
@@ -25,14 +25,20 @@ class QuadreProperties(PropertyGroup):
         default=False,
     )
 
-    detail: FloatProperty(
-        name="Detail",
+    # Speaks the same language as the paid remesher the class demos use:
+    # an absolute number of quads, typed straight in. Replaced the 0–1
+    # "Low ↔ High" Detail slider on 2026-09-16 — students follow the
+    # recorded demos, and the demos say "set the quad count to 500"
+    quad_count: IntProperty(
+        name="Quad Count",
         description=(
-            "Slide right for more detail (more faces), left for less. "
-            "Middle aims for about 5,000 faces no matter how dense your sculpt is"
+            "How many quads you want in the clean shape. "
+            "500–5,000 is the sweet spot for characters: lower is easier "
+            "to rig and paint, higher keeps more detail. The finish message "
+            "says how close the engine landed"
         ),
-        min=0.0,
-        max=1.0,
-        default=0.5,
-        subtype="FACTOR",
+        min=100,
+        soft_max=25_000,
+        max=50_000,      # engine tops out near 38K faces (see v0.3.8 notes)
+        default=5000,
     )
