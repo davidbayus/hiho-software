@@ -33,3 +33,13 @@ So the dance becomes guided: hold until the far cameras go green, move on when t
 Headless, against today's saved calibration frames: frame 180 of camera A must read 8/8 and of
 camera E 6/8, matching the solver's own 2D detections for that frame. Then live on the 120 s
 calibration: David watches E and F turn green when the board is tilted toward them.
+
+## 1.4.52 (evening, David: "lets add the dots as 1.4.52") — the corners themselves, plus the overlap fix
+FreeMoCap's own overlay idea, folded in: the corners the detector actually read are drawn on the tile as
+dots (green when the frame counts, amber when partial), so a partial read shows WHY: board edge out of frame,
+glare, blur. Frame pixels map to tile pixels through the letterbox transform (`_tile_transform`), and the
+picker now rotates each frame once before both the detector and the tile see it, so dots and picture agree.
+Also fixed: the big REC / ENDING overlay and the picker's help line now sit on their own black strip below
+the tiles instead of covering the last row's badges (spotted in David's 15:2x screenshot).
+Test: today's frame 180, camera A reads 8 corners and the first dot lands on a green pixel in the tile;
+overlay strip adds 60 px; prerotated picker path builds. Cost: nothing new, the corners were already computed.

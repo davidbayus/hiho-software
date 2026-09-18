@@ -142,6 +142,7 @@ class _BoardReader:
         self.total = (5 - 1) * (3 - 1)
         self.params = cv2.aruco.DetectorParameters()
         self.last = {}          # cid -> corners read at the last sample
+        self.last_pts = {}      # cid -> (n, 2) corner positions in frame pixels (1.4.52: drawn on the tile)
         self.samples = {}       # cid -> [kept, taken] since counting began
         self._next = 0.0
         # 1.4.51: a solo performer cannot see the laptop, so the number of cameras
@@ -171,18 +172,27 @@ class _BoardReader:
         """[(cid, kept %)] since counting began, for the recording report."""
         return [(cid, 100 * k // n if n else 0) for cid, (k, n) in sorted(self.samples.items())]
 
-    def count(self, frame):
+    def detect(self, frame):
+        """(corners read, their positions in frame pixels or None)."""
         cv2, aruco = self.cv2, self.aruco
         h, w = frame.shape[:2]
         s = self.LONG_SIDE / max(h, w)
         if s < 1.0:
             frame = cv2.resize(frame, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+        else:
+            s = 1.0
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
         corners, ids, _ = aruco.detectMarkers(gray, self.dictionary, parameters=self.params)
         if ids is None or len(ids) == 0:
-            return 0
-        n, _, _ = aruco.interpolateCornersCharuco(corners, ids, gray, self.board)
-        return int(n or 0)
+            return 0, None
+        n, ch_corners, _ = aruco.interpolateCornersCharuco(corners, ids, gray, self.board)
+        n = int(n or 0)
+        if n == 0 or ch_corners is None:
+            return 0, None
+        return n, ch_corners.reshape(-1, 2) / s
+
+    def count(self, frame):
+        return self.detect(frame)[0]
 
     def update(self, frames_by_id, counting=False):
         now = time.monotonic()
@@ -193,10 +203,11 @@ class _BoardReader:
             if f is None:
                 continue
             try:
-                n = self.count(f)
+                n, pts = self.detect(f)
             except Exception:
-                n = -1
+                n, pts = -1, None
             self.last[cid] = n
+            self.last_pts[cid] = pts
             if counting and n >= 0:
                 kept, taken = self.samples.get(cid, [0, 0])
                 self.samples[cid] = [kept + (1 if n >= self.KEEP else 0), taken + 1]
@@ -246,21 +257,29 @@ def _selection_csv(selected):
     return ",".join(str(c) for c in sorted(selected))
 
 
+def _tile_transform(frame, size=TILE):
+    """(scale, x0, y0): frame pixel -> tile pixel is x * scale + x0, y * scale + y0."""
+    h, w = frame.shape[:2]
+    scale = min(size / w, size / h)
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+    return scale, (size - nw) // 2, (size - nh) // 2
+
+
 def _fit_tile(frame, size=TILE):
     """Letterbox a frame into a square tile, preserving aspect — so a rotated
     (portrait) camera shows upright and un-squished next to landscape ones."""
     import cv2
     import numpy as np
     h, w = frame.shape[:2]
-    scale = min(size / w, size / h)
+    scale, x0, y0 = _tile_transform(frame, size)
     nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
     canvas = np.zeros((size, size, 3), dtype=np.uint8)
-    y0, x0 = (size - nh) // 2, (size - nw) // 2
     canvas[y0:y0 + nh, x0:x0 + nw] = cv2.resize(frame, (nw, nh))
     return canvas
 
 
-def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None, reader=None):
+def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None, reader=None,
+          prerotated=False):
     """Tile each camera's latest frame into one labeled image.
 
     rotations ({cam_id: degrees}) is applied for DISPLAY only — use it in the
@@ -282,9 +301,19 @@ def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None, re
             tiles.append(np.zeros((TILE, TILE, 3), dtype=np.uint8))
             continue
         rot = int(rotations.get(cid, 0))
-        if rot:
+        if rot and not prerotated:
             f = camera_manager.rotate_frame(f, rot)
         tile = _fit_tile(f)
+        if reader is not None and reader.last_pts.get(cid) is not None:
+            # 1.4.52: the corners the detector actually read, where it read them
+            # (FreeMoCap's overlay idea). Shows WHY a read is partial: edge of frame,
+            # glare, blur. Frame pixels -> tile pixels via the letterbox transform.
+            scale, x0, y0 = _tile_transform(f)
+            n = reader.last.get(cid, 0)
+            dot = (0, 220, 0) if n >= reader.KEEP else (0, 200, 255)
+            for x, y in reader.last_pts[cid]:
+                cv2.circle(tile, (int(x0 + x * scale), int(y0 + y * scale)), 4, dot, -1)
+                cv2.circle(tile, (int(x0 + x * scale), int(y0 + y * scale)), 5, (0, 0, 0), 1)
         if cid in excluded:
             tile = (tile * 0.35).astype(np.uint8)
         label = f"cam {cid}" + (f"  {rot} deg" if rot else "")
@@ -305,13 +334,17 @@ def _grid(frames_by_id, cam_ids, rotations=None, overlay=None, excluded=None, re
     rows = [np.hstack(tiles[i:i + COLS]) for i in range(0, len(tiles), COLS)]
     grid = np.vstack(rows)
     if overlay:
-        cv2.putText(grid, overlay, (20, grid.shape[0] - 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 4)
+        # 1.4.52: on its own strip below the tiles, so it never covers a badge.
+        strip = np.zeros((60, grid.shape[1], 3), dtype=np.uint8)
+        cv2.putText(strip, overlay, (20, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 255), 4)
+        grid = np.vstack([grid, strip])
     return grid
 
 
 def _preview(CameraManager, cam_ids, selected_raw="", reader=None) -> int:
     import cv2
+    import numpy as np
+    import camera_manager  # core/ is on sys.path (see _load_camera_manager)
     rotations = _load_rotations()
     selected = _parse_selected(selected_raw, cam_ids)
     mgr = CameraManager(cam_ids)  # raw frames; rotate for display + persist for record
@@ -351,15 +384,20 @@ def _preview(CameraManager, cam_ids, selected_raw="", reader=None) -> int:
     try:
         while True:
             frames = mgr.get_latest_frames()
+            # Rotate once here so the badge's corner dots and the tile agree (1.4.52).
+            frames = {cid: (camera_manager.rotate_frame(f, int(rotations.get(cid, 0)))
+                            if f is not None and int(rotations.get(cid, 0)) else f)
+                      for cid, f in frames.items()}
             if reader is not None:
                 reader.update(frames)
                 reader.announce(len(cam_ids))
             grid = _grid(frames, cam_ids, rotations=rotations,
-                         excluded=set(cam_ids) - selected, reader=reader)
-            cv2.putText(grid,
+                         excluded=set(cam_ids) - selected, reader=reader, prerotated=True)
+            strip = np.zeros((34, grid.shape[1], 3), dtype=np.uint8)
+            cv2.putText(strip,
                         "Left-click: rotate 90 deg   Right-click: include/exclude   Q = done",
-                        (12, grid.shape[0] - 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                        (12, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            grid = np.vstack([grid, strip])
             cv2.imshow(win, grid)
             key = cv2.waitKey(30) & 0xFF
             if key in (ord('q'), 27):
