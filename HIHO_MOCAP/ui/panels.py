@@ -68,6 +68,8 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
         # The set-once computer paths (Save to, the two tracker envs) are NOT
         # drawn here any more: they live in Edit > Preferences > Add-ons >
         # HIHO MOCAP, so the panel holds only the steps of a session.
+        addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
+        prefs = addon.preferences if addon is not None else None
 
         # One status line, always in the same place, whichever step is talking.
         # It used to sit under Record even when the news was about processing.
@@ -174,15 +176,6 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
             row = box.row()
             row.alert = "BAD" in quality
             row.label(text=quality, icon=icon)
-        layout.operator("hiho_mocap.volume_map", icon='SHADING_RENDERED',
-                        text="Map the Volume")
-        if scene_settings.volume_verdict:
-            box = layout.box()
-            box.label(text=scene_settings.volume_verdict, icon='WORLD')
-            map_path = norm_path(scene_settings.volume_map_path)
-            if map_path and os.path.isfile(map_path):
-                op = box.operator("wm.path_open", icon='IMAGE_DATA', text="Open Map")
-                op.filepath = map_path
 
         # --- 5. Rig (works on disk paths) ------------------------------------
         layout.separator()
@@ -191,42 +184,76 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
         layout.operator("hiho_mocap.spawn_rig", icon='ARMATURE_DATA', text="Spawn Rig")
         layout.operator("hiho_mocap.add_camera_videos", icon='IMAGE_DATA',
                         text="Add Camera Videos")
-        col = layout.column()
-        col.scale_y = 0.7
-        col.label(text="Empties only (debug):")
-        layout.operator("hiho_mocap.spawn_output_rig", icon='EMPTY_AXIS', text="Spawn Empties")
 
-        # --- Face (iPhone / Live Link Face interim path) -------------------
+        # --- Cleanup (opt-in; Lock Feet is its first tenant) ------------------
+        # Only when its checkbox at the bottom is ticked. It edits the tracking
+        # empties, so it has to sit BEFORE Bake. One slot, two states
+        # (UNLOCK_TOGGLE_DESIGN_2026-08-12): while the current take is locked
+        # the slot shows Unlock, for before/after comparison.
+        if prefs is not None and prefs.show_lock_feet:
+            layout.separator()
+            layout.label(text="Cleanup (optional)", icon='BRUSH_DATA')
+            stash = STATE.get("lock_feet_stash")
+            locked_here = False
+            if stash and stash["locked"] and scene_settings.last_processed_path:
+                folder = os.path.basename(os.path.dirname(os.path.dirname(
+                    norm_path(scene_settings.last_processed_path))))
+                locked_here = stash["take"] == f"HIHO_MOCAP_Skelly_{folder}"
+            if locked_here:
+                layout.operator("hiho_mocap.unlock_feet", icon='SNAP_OFF')
+            else:
+                layout.operator("hiho_mocap.lock_feet", icon='SNAP_ON')
+
+        # --- 6. Bake + Export (moved up from the Studio panel) -----------------
+        # Both work on the selected rig, and Spawn Rig selects the rig it just
+        # built, so Bake is live the moment step 5 finishes.
         layout.separator()
-        layout.label(text="Face")
-        layout.operator("hiho_mocap.spawn_test_face", icon='USER',
-                        text="Spawn Test Face")
-        layout.prop(scene_settings, "face_take_csv", text="Face take")
-        layout.operator("hiho_mocap.load_face_take", icon='IMPORT',
-                        text="Load Face Take")
-        col = layout.column()
-        col.scale_y = 0.7
-        col.label(text="Pick the take's _cal.csv (AirDropped from the phone)")
-        layout.operator("hiho_mocap.add_face_video", icon='IMAGE_DATA',
-                        text="Add Face Video")
-        row = layout.row(align=True)
-        row.operator("hiho_mocap.mark_flash_body", icon='MARKER',
-                     text="Flash (Body)")
-        row.operator("hiho_mocap.mark_flash_face", icon='MARKER_HLT',
-                     text="Flash (Face)")
-        marks = []
-        if scene_settings.flash_body_frame >= 0.0:
-            marks.append(f"body {scene_settings.flash_body_frame:.0f}")
-        if scene_settings.flash_face_frame >= 0.0:
-            marks.append(f"face {scene_settings.flash_face_frame:.0f}")
-        if marks:
-            col = layout.column()
+        layout.label(text="6. Bake + Export", icon='EXPORT')
+        layout.operator("hiho_mocap.bake_animation", icon='ACTION')
+        layout.prop(scene_settings, "export_format", expand=True)
+        layout.operator("hiho_mocap.save_out", icon='FILE_TICK')
+
+        # --- Face Sync: last, and folded shut by default ----------------------
+        # (The face workflow is still being learned, so it stays out of the way.)
+        layout.separator()
+        header, face = layout.panel("HIHO_MOCAP_face_sync", default_closed=True)
+        header.label(text="Face Sync", icon='USER')
+        if face is not None:
+            face.operator("hiho_mocap.spawn_test_face", icon='USER',
+                            text="Spawn Test Face")
+            face.prop(scene_settings, "face_take_csv", text="Face take")
+            face.operator("hiho_mocap.load_face_take", icon='IMPORT',
+                            text="Load Face Take")
+            col = face.column()
             col.scale_y = 0.7
-            col.label(text="Flash marked: " + ", ".join(marks))
-        layout.operator("hiho_mocap.line_up_face", icon='SORTTIME',
-                        text="Line Up Face")
-        if scene_settings.face_applied_offset:
-            box = layout.box()
-            box.label(text=f"Face lined up: moved "
-                           f"{scene_settings.face_applied_offset:+.0f} frames",
-                      icon='CHECKMARK')
+            col.label(text="Pick the take's _cal.csv (AirDropped from the phone)")
+            face.operator("hiho_mocap.add_face_video", icon='IMAGE_DATA',
+                            text="Add Face Video")
+            row = face.row(align=True)
+            row.operator("hiho_mocap.mark_flash_body", icon='MARKER',
+                         text="Flash (Body)")
+            row.operator("hiho_mocap.mark_flash_face", icon='MARKER_HLT',
+                         text="Flash (Face)")
+            marks = []
+            if scene_settings.flash_body_frame >= 0.0:
+                marks.append(f"body {scene_settings.flash_body_frame:.0f}")
+            if scene_settings.flash_face_frame >= 0.0:
+                marks.append(f"face {scene_settings.flash_face_frame:.0f}")
+            if marks:
+                col = face.column()
+                col.scale_y = 0.7
+                col.label(text="Flash marked: " + ", ".join(marks))
+            face.operator("hiho_mocap.line_up_face", icon='SORTTIME',
+                            text="Line Up Face")
+            if scene_settings.face_applied_offset:
+                box = face.box()
+                box.label(text=f"Face lined up: moved "
+                               f"{scene_settings.face_applied_offset:+.0f} frames",
+                          icon='CHECKMARK')
+
+        # --- Opt-in extras, remembered per computer ---------------------------
+        # Never the steps of a session: only unfinished tools ADDED on top.
+        if prefs is not None:
+            layout.separator()
+            layout.prop(prefs, "show_lock_feet")
+            layout.prop(prefs, "show_studio_tools")

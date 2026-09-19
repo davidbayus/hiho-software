@@ -1,21 +1,29 @@
-"""HIHO MOCAP Studio Panel — the artist-facing UI.
+"""HIHO MOCAP Studio Panel — the tools that are not ready for a student build yet.
 
-Section labels and order per HIHO_MOCAP_WRAPPER_ARCHITECTURE.md section 8,
-decision 1: Choose Take, Preview, Send to Character, Polish, Save Out.
-Plain language only. Glossary in the architecture doc maps these to the
-technical terms used in code.
+Shown ONLY when "Studio tools" is ticked at the bottom of the main panel
+(PANEL_REDESIGN_DESIGN_2026-09-19, section 9). These tools are not gone: they
+need more design and testing before a public build. Off by default, remembered
+per computer.
 
-Amendment 1.4.40 (blessed 2026-08-05, see STATUS.md "UI PRUNE/ADD QUEUE"):
-the Polish section is hidden until per-region smoothing ships for real
-(Track 3) — its three buttons were stubs and two had gone stale. Visible
-sections renumber 1-4. No other stub buttons remain in the student view.
+What lives here: Choose Take, Preview, the Character pipeline, and the
+diagnostics (Map the Volume, Spawn Empties). What LEFT in 1.5.3: Bake + Export
+is step 6 of the main panel now, and Lock Feet has its own checkbox as the
+first tenant of Cleanup, so nothing is drawn twice.
+
+Section labels per HIHO_MOCAP_WRAPPER_ARCHITECTURE.md section 8, decision 1.
+Plain language only.
 """
 
 import os
 
 import bpy
 
-from ..operators import STATE, norm_path
+from ..operators import norm_path
+
+
+def _prefs(context):
+    addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
+    return addon.preferences if addon is not None else None
 
 
 class HIHO_MOCAP_PT_studio(bpy.types.Panel):
@@ -23,7 +31,12 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "HIHO MOCAP"
     bl_label = "Studio"
-    bl_order = 0
+    bl_order = 1
+
+    @classmethod
+    def poll(cls, context):
+        prefs = _prefs(context)
+        return bool(prefs is not None and prefs.show_studio_tools)
 
     def draw(self, context):
         layout = self.layout
@@ -38,22 +51,7 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
         # 2. PREVIEW
         layout.separator()
         layout.label(text="2. Preview", icon='HIDE_OFF')
-        col = layout.column(align=True)
-        col.operator("screen.animation_play", text="Play", icon='PLAY')
-        # Rung 0 of MOCAP_CORRECTION_RESEARCH_2026-08-11: edits the tracking
-        # empties, so it must run before Bake. Details in the redo panel.
-        # One slot, two states (UNLOCK_TOGGLE_DESIGN_2026-08-12): while the
-        # current take is locked the slot shows Unlock for A/B comparison.
-        stash = STATE.get("lock_feet_stash")
-        locked_here = False
-        if stash and stash["locked"] and s.last_processed_path:
-            folder = os.path.basename(os.path.dirname(os.path.dirname(
-                norm_path(s.last_processed_path))))
-            locked_here = stash["take"] == f"HIHO_MOCAP_Skelly_{folder}"
-        if locked_here:
-            col.operator("hiho_mocap.unlock_feet", icon='SNAP_OFF')
-        else:
-            col.operator("hiho_mocap.lock_feet", icon='SNAP_ON')
+        layout.operator("screen.animation_play", text="Play", icon='PLAY')
 
         # 3. CHARACTER
         layout.separator()
@@ -76,13 +74,18 @@ class HIHO_MOCAP_PT_studio(bpy.types.Panel):
         layout.prop(s, "character_target", text="")
         layout.operator("hiho_mocap.send_to_character", icon='EXPORT')
 
-        # 4. POLISH — section hidden 1.4.40: all three buttons were stubs, and
-        # two went stale (wrist flips now self-repair inside Bake; per-region
-        # smoothing replaced the One Euro idea). Returns when Track 3 ships.
-
-        # 5. EXPORT
+        # DIAGNOSTICS — moved here from the main panel in 1.5.3: they inspect a
+        # capture, they are not a step of making one.
         layout.separator()
-        layout.label(text="4. Export", icon='EXPORT')
-        layout.operator("hiho_mocap.bake_animation", icon='ACTION')
-        layout.prop(s, "export_format", expand=True)
-        layout.operator("hiho_mocap.save_out", icon='FILE_TICK')
+        layout.label(text="Diagnostics", icon='VIEWZOOM')
+        layout.operator("hiho_mocap.volume_map", icon='SHADING_RENDERED',
+                        text="Map the Volume")
+        if s.volume_verdict:
+            box = layout.box()
+            box.label(text=s.volume_verdict, icon='WORLD')
+            map_path = norm_path(s.volume_map_path)
+            if map_path and os.path.isfile(map_path):
+                op = box.operator("wm.path_open", icon='IMAGE_DATA', text="Open Map")
+                op.filepath = map_path
+        layout.operator("hiho_mocap.spawn_output_rig", icon='EMPTY_AXIS',
+                        text="Spawn Empties (debug)")

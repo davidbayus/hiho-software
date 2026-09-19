@@ -306,7 +306,33 @@ class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
         update=_data_home_update,
     )
 
+    # The two opt-in checkboxes at the bottom of the panel
+    # (PANEL_REDESIGN_DESIGN_2026-09-19, section 9). Per COMPUTER on purpose:
+    # ticked once on the studio laptop they survive every new file, while a
+    # student machine starts clean. The six steps of a session are never
+    # behind either box; these only ADD unfinished tools on top.
+    show_lock_feet: bpy.props.BoolProperty(
+        name="Lock Feet (cleanup)",
+        description=(
+            "Show the Lock Feet button between Rig and Bake. It holds each "
+            "foot to the floor while it is planted. Still being tested, so it "
+            "starts switched off"
+        ),
+        default=False,
+    )
+    show_studio_tools: bpy.props.BoolProperty(
+        name="Studio tools",
+        description=(
+            "Open the Studio panel: load a take, put the motion on your own "
+            "character, and the diagnostic tools. Not finished yet, so it "
+            "starts switched off"
+        ),
+        default=False,
+    )
+
     def draw(self, context):
         self.layout.prop(self, "freemocap_env_python")
         self.layout.prop(self, "fmc2_env_python")
         self.layout.prop(self, "data_home")
+        self.layout.prop(self, "show_lock_feet")
+        self.layout.prop(self, "show_studio_tools")
