@@ -10,6 +10,7 @@ Every other plane is turned 180° (David's arrangement, 2026-06-06): the cameras
 alternate front/back around the performer, so flipping the odd ones makes the
 four read as a ring around the subject rather than a flat filmstrip.
 """
+import json
 import math
 import os
 
@@ -22,12 +23,46 @@ FACE_VIDEO_EXTS = (".mov", ".mp4", ".m4v")
 
 
 def _video_dir(take_dir):
-    """annotated_videos preferred (MediaPipe overlay); synchronized_videos fallback."""
+    """annotated_videos preferred (the tracker's overlay); synchronized_videos fallback."""
     for sub in ("annotated_videos", "synchronized_videos"):
         d = os.path.join(take_dir, sub)
         if os.path.isdir(d) and any(f.endswith(".mp4") for f in os.listdir(d)):
             return d
     return None
+
+
+# Each pipeline names its overlay videos its own way, and a take processed by
+# both trackers keeps BOTH sets in annotated_videos/ (nothing is ever deleted).
+_OVERLAY_SUFFIX = {"rtmpose": "_annotated.mp4", "mediapipe": "_mediapipe.mp4"}
+
+
+def _videos_for_current_result(take_dir, vdir):
+    """The one set of videos that belongs to the take's CURRENT result.
+
+    Loading every .mp4 would hand a twice-processed take twelve planes instead
+    of six and scramble the front/back flip pattern. The tracker stamp says
+    which set is current; an unstamped take with both sets gets the newer one
+    (the current result is always the last one written)."""
+    vids = sorted(f for f in os.listdir(vdir)
+                  if f.endswith(".mp4") and not f.endswith(".prev.mp4"))
+    sets = {name: [f for f in vids if f.endswith(suffix)]
+            for name, suffix in _OVERLAY_SUFFIX.items()}
+    present = {name: files for name, files in sets.items() if files}
+    if len(present) < 2:
+        return vids
+
+    tracker = ""
+    try:
+        with open(os.path.join(take_dir, "output_data", "HIHO_TRACKER.json"),
+                  encoding="utf-8") as fh:
+            tracker = str(json.load(fh).get("tracker", "")).lower()
+    except (OSError, ValueError, AttributeError):
+        pass
+    if tracker in present:
+        return present[tracker]
+    newest = max(present, key=lambda name: max(
+        os.path.getmtime(os.path.join(vdir, f)) for f in present[name]))
+    return present[newest]
 
 
 def _video_collection():
@@ -47,7 +82,7 @@ def load_camera_video_planes(take_dir, video_scale=3.0, spacing=4.0):
     vdir = _video_dir(take_dir)
     if vdir is None:
         return [], None
-    vids = sorted(f for f in os.listdir(vdir) if f.endswith(".mp4"))
+    vids = _videos_for_current_result(take_dir, vdir)
 
     coll = _video_collection()
     created = []

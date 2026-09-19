@@ -19,13 +19,24 @@ the solve. Used to fast-validate the wiring without waiting for a full process.
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 DONE = "HIHO_DONE::"
 ERROR = "HIHO_ERROR::"
 INFO = "HIHO_INFO::"
+
+# Which tracker this script is, and the stamp every result carries so it can
+# always be traced to the pipeline that made it. The stamp lives INSIDE
+# output_data/ so it travels with the results when another tracker's run moves
+# them aside. Twin of the same code in process_take_fmc2.py (the two scripts
+# run in different envs, so they cannot share a module).
+TRACKER = "mediapipe"
+TRACKER_FILE = "HIHO_TRACKER.json"
 
 # On-disk sentinels written into the recording folder. FreeMoCap spawns child
 # processes that inherit our stdout and outlive us, so the pipe never reaches
@@ -41,13 +52,59 @@ def _emit(prefix: str, msg: str) -> None:
 
 
 def _clear_sentinels(recording: Path) -> None:
-    """Remove sentinels from any prior run, so their presence always means THIS
-    run finished (otherwise a stale file would report a false instant-done)."""
-    for name in (DONE_FILE, ERROR_FILE, QUALITY_FILE):
+    """Remove the done/error sentinels from any prior run, so their presence
+    always means THIS run finished (otherwise a stale file would report a false
+    instant-done). The quality file is cleared later, just before the solve:
+    if it describes another tracker's result it must first move aside WITH it."""
+    for name in (DONE_FILE, ERROR_FILE):
         try:
             (recording / name).unlink()
         except OSError:
             pass
+
+
+def _existing_tracker(recording: Path) -> Optional[str]:
+    """Which tracker made the results already in output_data/, or None when
+    there are none. The stamp is the truth when present; older results are
+    recognised by the files each pipeline leaves."""
+    out = recording / "output_data"
+    if not out.is_dir():
+        return None
+    try:
+        with open(out / TRACKER_FILE, encoding="utf-8") as fh:
+            name = str(json.load(fh).get("tracker", "")).strip().lower()
+        if name:
+            return re.sub(r"[^a-z0-9]+", "-", name).strip("-") or "unknown"
+    except (OSError, ValueError, AttributeError):
+        pass
+    if (out / "rtmpose_body_3d_xyz.npy").is_file():
+        return "rtmpose"
+    if (out / "mediapipe_body_3d_xyz.npy").is_file():
+        return "mediapipe"
+    return "unknown" if any(out.iterdir()) else None
+
+
+def _move_results_aside(recording: Path, tracker: str) -> Path:
+    """Another tracker's results get MOVED to output_data_<tracker>_<when they
+    were made>/, never deleted and never overwritten: both pipelines use the
+    same four loader file names. The old quality line goes along, because it
+    describes those results, not the new ones."""
+    out = recording / "output_data"
+    try:
+        made = datetime.fromtimestamp((out / "mediapipe_body_3d_xyz.npy").stat().st_mtime)
+    except OSError:
+        made = datetime.now()
+    base = f"output_data_{tracker}_{made:%Y-%m-%d_%H-%M-%S}"
+    aside = recording / base
+    n = 2
+    while aside.exists():
+        aside = recording / f"{base}_{n}"
+        n += 1
+    out.rename(aside)
+    quality = recording / QUALITY_FILE
+    if quality.is_file():
+        quality.rename(aside / QUALITY_FILE)
+    return aside
 
 
 def _write_sentinel(recording: Path, name: str, content: str) -> None:
@@ -130,7 +187,11 @@ def main() -> int:
     # sentinel. Clear any from a prior run first.
     _clear_sentinels(recording)
 
+    aside: Optional[Path] = None
+
     def _fail(msg: str, code: int) -> int:
+        if aside is not None:
+            msg += f" (The earlier results are safe in {aside.name}.)"
         _emit(ERROR, msg)
         _write_sentinel(recording, ERROR_FILE, msg)
         return code
@@ -179,6 +240,21 @@ def main() -> int:
         _emit(DONE, "check: imports + params OK")
         return 0
 
+    # Mirror of the guard in process_take_fmc2.py: a take already processed by
+    # the OTHER tracker keeps that result, moved aside, never overwritten.
+    previous = _existing_tracker(recording)
+    if previous is not None and previous != TRACKER:
+        try:
+            aside = _move_results_aside(recording, previous)
+        except OSError as exc:
+            return _fail(f"could not move the earlier {previous} results aside, so nothing "
+                         f"was processed and nothing was overwritten: {exc}", 6)
+        _emit(INFO, f"earlier {previous} results moved aside to {aside.name} (nothing deleted)")
+    try:
+        (recording / QUALITY_FILE).unlink()
+    except OSError:
+        pass
+
     _emit(INFO, "processing")
     try:
         process_recording_folder(
@@ -209,6 +285,21 @@ def main() -> int:
     quality = _score_quality(required["reprojection error"])
     _write_sentinel(recording, QUALITY_FILE, quality)
     _emit(INFO, quality.splitlines()[0])
+
+    try:
+        import freemocap
+        backend = f"freemocap {getattr(freemocap, '__version__', '?')}"
+    except Exception:
+        backend = "freemocap ?"
+    stamp = {
+        "tracker": TRACKER,
+        "backend": backend,
+        "video_fps": fps,
+        "outlier_rejection": args.outlier_rejection,
+        "processed": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "script": os.path.basename(__file__),
+    }
+    _write_sentinel(out, TRACKER_FILE, json.dumps(stamp, indent=2))
 
     body = required["body"]
     _write_sentinel(recording, DONE_FILE, str(body))

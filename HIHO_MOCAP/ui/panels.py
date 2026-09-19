@@ -125,22 +125,33 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
         layout.prop(scene_settings, "calibration_toml_path", text="Calib")
         if addon is not None and addon.preferences is not None:
             layout.prop(addon.preferences, "freemocap_env_python", text="FreeMoCap")
+            # Not "FreeMoCap 2.0": at the panel's usual width both labels cut
+            # off to "FreeMoC..." and the two fields look identical.
+            layout.prop(addon.preferences, "fmc2_env_python", text="RTMPose")
         col = layout.column()
         col.scale_y = 0.7
         col.label(text="Calib blank = use last_successful_calibration.toml")
+        # Always visible, so which tracker is about to run is never a surprise.
+        layout.prop(scene_settings, "tracker", text="Tracker")
         row = layout.row(align=True)
         row.operator("hiho_mocap.process_mocap", icon='PLAY', text="Process Mocap")
         row.operator("hiho_mocap.cancel_process", icon='X', text="")
         quality = scene_settings.process_verdict
         if quality:
+            # "not measured" = the RTMPose path, which has no quality number
+            # yet: a neutral icon, never the error one on a good run.
             icon = 'CHECKMARK' if "GOOD" in quality else (
-                'INFO' if "CHECK" in quality else 'ERROR')
+                'INFO' if ("CHECK" in quality or "not measured" in quality) else 'ERROR')
             take = _badge_take(scene_settings.process_badge_take)
-            suffix = f" - {take}" if take else ""
+            made_by = scene_settings.process_badge_tracker
             box = layout.box()
+            if made_by or take:
+                head = box.row()
+                head.scale_y = 0.8
+                head.label(text=" - ".join(part for part in (made_by, take) if part))
             row = box.row()
             row.alert = "BAD" in quality
-            row.label(text=f"{quality}{suffix}", icon=icon)
+            row.label(text=quality, icon=icon)
         layout.operator("hiho_mocap.volume_map", icon='SHADING_RENDERED',
                         text="Map the Volume")
         if scene_settings.volume_verdict:

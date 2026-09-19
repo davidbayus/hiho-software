@@ -15,6 +15,7 @@ STATE = {
     "recording_modal_active": False,    # True while the Record modal operator is live
     "recording_stop_requested": False,  # Set by the Stop button; record modal honors it
     "processor": None,                  # FreeMocapRunner instance, or None
+    "processor_tracker": "",            # menu label of the tracker that run is using
     "capture": None,                    # ExternalProcessRunner watching record_take.py, or None
     "capture_kind": "",                 # "preview" | "record" | "calibration"
     "capture_take_attr": "",            # scene prop to fill with the take path on success
@@ -31,6 +32,14 @@ def get_env_python(context) -> str:
     addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
     if addon is not None and addon.preferences is not None:
         return norm_path(addon.preferences.freemocap_env_python)
+    return ""
+
+
+def get_fmc2_env_python(context) -> str:
+    """The configured FreeMoCap 2.0 env python (the RTMPose tracker), normalized."""
+    addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
+    if addon is not None and addon.preferences is not None:
+        return norm_path(addon.preferences.fmc2_env_python)
     return ""
 
 
@@ -105,6 +114,7 @@ def shutdown():
     if STATE["processor"] is not None:
         STATE["processor"].stop()
         STATE["processor"] = None
+    STATE["processor_tracker"] = ""
     if STATE["capture"] is not None:
         STATE["capture"].stop()
         STATE["capture"] = None

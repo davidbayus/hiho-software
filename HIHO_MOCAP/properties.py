@@ -26,6 +26,21 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
         min=1,
         max=600,
     )
+    # Per FILE on purpose (V2_CHANGEOVER_DESIGN_2026-09-18, Q2): every new
+    # .blend starts on RTMPose, so a forgotten switch to the slow tracker can
+    # never follow the next student.
+    tracker: bpy.props.EnumProperty(
+        name="Tracker",
+        description="Which tracker Process Mocap runs. Every new file starts on RTMPose",
+        items=[
+            ('RTMPOSE', "RTMPose (fast)",
+             "Looks at every camera at the same time. About 3 minutes for a 30 second take"),
+            ('MEDIAPIPE', "MediaPipe (classic, slow)",
+             "Looks at one camera at a time. About 13 minutes for a 30 second take. "
+             "The known-good fallback"),
+        ],
+        default='RTMPOSE',
+    )
     last_take_path: bpy.props.StringProperty(
         name="Take folder",
         description="Folder containing the Camera_*.mp4 files to process. Record sets this automatically; you can also pick an older take.",
@@ -175,6 +190,11 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
         description="Which take the Process quality badge describes (folder name).",
         default="",
     )
+    process_badge_tracker: bpy.props.StringProperty(
+        name="Process badge tracker",
+        description="Which tracker made the result the Process quality badge describes.",
+        default="",
+    )
 
     # --- Studio Panel (v1.4 character pipeline) ---
     character_collection: bpy.props.StringProperty(
@@ -250,6 +270,19 @@ class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
         subtype='FILE_PATH',
     )
 
+    fmc2_env_python: bpy.props.StringProperty(
+        name="FreeMoCap 2.0 env",
+        description=(
+            "Python of the FreeMoCap 2.0 environment that runs the RTMPose "
+            "tracker. Recording and calibration keep using the FreeMoCap env "
+            "above. Set once per machine."
+        ),
+        # TODO (1.5.3): HIHO Setup installs 2.0 into a fixed home and this
+        # default points there. Until then it is the eval kit's env.
+        default="~/Desktop/HIHO_ALL/RTMPOSE_EVAL/LOCAL.nosync/freemocap-2.0a23/.venv/bin/python",
+        subtype='FILE_PATH',
+    )
+
     data_home: bpy.props.StringProperty(
         name="HIHO data home",
         description=(
@@ -265,4 +298,5 @@ class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
         self.layout.prop(self, "freemocap_env_python")
+        self.layout.prop(self, "fmc2_env_python")
         self.layout.prop(self, "data_home")
