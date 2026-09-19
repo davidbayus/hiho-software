@@ -5,6 +5,24 @@ answered: the menu remembers PER FILE). Q1, Q3, Q4 stand at the recommended defa
 *BUILD ON HOLD the same afternoon, David's call ("lets hold off on the build, im heading home soon. lets debrief
 and plan"). The blessing stands; no code was written. 1.5.0 starts at the next laptop dev session.*
 
+***1.5.0 BUILT AND TERMINAL-TESTED 2026-09-19 (laptop), hold lifted by David ("lets build it so its ready to deploy").**
+Both tests in section 6 pass: the 09-18 student take in 2 min 55 s (MediaPipe: 13 min), numbers level with or calmer
+than the MediaPipe ceiling result; the 09-11 120 s take in 9 min 26 s, past the 300 s mark, loader files identical to
+the eval kit's (0.0000 mm). David's eye on the two rigs side by side, same day, his words: "visual check confirmed.
+RTMpose mocap looks great out of the box". **1.5.0's acceptance test is COMPLETE.** Details in STATUS.md. What the build
+settled, for 1.5.1 and later:*
+- *2.0 does NOT clear `output_data/` (section 5's open question). The move-aside guard is therefore essential, and it
+  lives in the new script. It also moves the old PROCESS_QUALITY.txt into the aside folder.*
+- *The tracker stamp lives at `output_data/HIHO_TRACKER.json` (inside the folder, so it travels with the results it
+  describes). 1.5.1's badge reads it from there. The new script already writes it; the old script's stamp is 1.5.1.*
+- *2.0 reports a failed camera worker only as a progress message (the pipeline stops being alive, exit 0). The script
+  accepts a result only if 2.0 wrote it during this run. 1.5.2's progress reader could surface the FAILED phase too.*
+- *No ffmpeg needed: both tests ran with a bare PATH. 1.5.3's installer does not have to ship one.*
+- *2.0 warns "No timestamps CSV found ... cannot determine framerate" and then keeps the fps we pass. Harmless.*
+- *The script passes 2.0's per-camera progress lines through one per line (`Camera_3:  42%|...`), ready for 1.5.2.*
+- *A rerun with the same tracker makes 2.0 draw its new overlay on top of its previous annotated video (cosmetic).*
+- *Pace measured through the new script: 175 s for a 30 s take, 566 s for a 120 s take.*
+
 *Build notes gathered before the hold (for whoever starts 1.5.0):*
 - *2.0 names its overlays `annotated_videos/Camera_N_annotated.mp4`; 1.8.2 names them `Camera_N_mediapipe.mp4`. Both
   sets can sit in one folder, so check what `core/video_planes.py` picks up when both exist (1.5.1).*
