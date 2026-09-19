@@ -632,7 +632,8 @@ def main() -> int:
     elapsed = time.perf_counter() - started
     try:
         frames, share = _tracked_share(required["body"])
-        tracked = f"Body tracked in {share:.1f}% of frames."
+        shown = "100" if share >= 99.95 else f"{share:.1f}"
+        tracked = f"Body tracked in {shown}% of frames."
         detail = (f"tracker rtmpose ({args.model})  frames {frames}  body tracked {share:.2f}% "
                   f"(shoulders and hips all found)  processed in {elapsed:.0f} s\n")
     except Exception as exc:  # noqa: BLE001
@@ -641,7 +642,7 @@ def main() -> int:
     # The panel picks its badge icon from three verdict words. None of them may
     # appear here: this path has no real quality number yet (2.0 alpha.23 saves
     # an empty reprojection column), so it must never borrow a verdict.
-    quality = f"Quality: not measured on the RTMPose path yet. {tracked}\n{detail}"
+    quality = f"Quality: not measured yet. {tracked}\n{detail}"
     # Quality and stamp go on disk BEFORE the done file, so a watcher can read
     # both the moment it sees HIHO_DONE.txt.
     _write_sentinel(recording, QUALITY_FILE, quality)

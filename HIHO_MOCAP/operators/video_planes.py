@@ -14,6 +14,7 @@ from ..core.video_planes import load_camera_video_planes
 class HIHO_MOCAP_OT_add_camera_videos(bpy.types.Operator):
     """Load this take's camera videos (the MediaPipe-overlay clips) into the
     scene as animated planes, like the FreeMoCap reference. No cameras needed."""
+    bl_description = "Optional. Puts the camera videos in the scene so you can check the motion against them"
     bl_idname = "hiho_mocap.add_camera_videos"
     bl_label = "Add Camera Videos"
     bl_options = {'REGISTER', 'UNDO'}

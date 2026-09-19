@@ -25,7 +25,7 @@ POLL_INTERVAL_SEC = 0.5
 _SUCCESS_HINTS = {
     "preview": "Camera preview closed.",
     "record": "Take recorded. Click Process Mocap.",
-    "calibration": "Calibration recorded. Click Solve Calibration.",
+    "calibration": "Calibration recorded. Click Solve.",
 }
 
 
@@ -107,7 +107,7 @@ def launch_capture(operator, context, kind: str, script_args: list,
     """Start record_take.py under a watched runner. False on launch failure."""
     if STATE.get("capture") is not None:
         operator.report({'ERROR'}, "A camera window is already open. "
-                                   "Close it (or click the X next to Record) first.")
+                                   "Close it (or click the X next to Record Mocap) first.")
         return False
     env = _env_python_ok(operator, context)
     if env is None:
@@ -140,6 +140,7 @@ class HIHO_MOCAP_OT_preview_cameras(bpy.types.Operator):
     """Open a live view of every camera in a separate window. Right-click a camera
     to include/exclude it from recording, left-click to rotate it. Closing the
     window (Q) fills the Cameras list below with what you picked."""
+    bl_description = "Step 1. Opens a window that shows every camera. Right-click a camera to use it or skip it, left-click to turn its picture, press Q when you are done"
     bl_idname = "hiho_mocap.preview_cameras"
     bl_label = "Show Cameras"
     bl_options = {'REGISTER'}
@@ -170,6 +171,7 @@ class HIHO_MOCAP_OT_preview_cameras(bpy.types.Operator):
 class HIHO_MOCAP_OT_record_external(bpy.types.Operator):
     """Record the rig cameras via the external env. A separate window shows an
     audible countdown, then records for the set length."""
+    bl_description = "Step 3. Records the performance. A countdown plays out loud first"
     bl_idname = "hiho_mocap.record_external"
     bl_label = "Record Mocap"
     bl_options = {'REGISTER'}
@@ -212,6 +214,7 @@ class HIHO_MOCAP_OT_record_external(bpy.types.Operator):
 
 class HIHO_MOCAP_OT_stop_capture(bpy.types.Operator):
     """Close the external camera window (preview or recording)."""
+    bl_description = "Closes the camera window"
     bl_idname = "hiho_mocap.stop_capture"
     bl_label = "Stop Capture"
     bl_options = {'REGISTER'}

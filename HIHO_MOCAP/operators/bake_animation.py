@@ -92,6 +92,7 @@ class HIHO_MOCAP_OT_bake_animation(bpy.types.Operator):
     """Write one keyframe per frame onto the selected rig's bones over the
     scene frame range, then remove the live tracking constraints and hide the
     tracking empties. Load Take + Spawn Rig rebuilds the live rig anytime."""
+    bl_description = "Step 6. Turns the motion into real keyframes on the rig, so you can edit it or export it. Click the rig first"
     bl_idname = "hiho_mocap.bake_animation"
     bl_label = "Bake Animation"
     bl_options = {'REGISTER', 'UNDO'}

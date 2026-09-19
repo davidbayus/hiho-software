@@ -24,6 +24,7 @@ from . import STATE, norm_path
 
 class HIHO_MOCAP_OT_spawn_rig(bpy.types.Operator):
     """Build the freemocap-style armature for the most recently processed take."""
+    bl_description = "Step 5. Builds the skeleton and plays your motion on it. Press Space to watch"
     bl_idname = "hiho_mocap.spawn_rig"
     bl_label = "Spawn Rig"
     bl_options = {'REGISTER', 'UNDO'}

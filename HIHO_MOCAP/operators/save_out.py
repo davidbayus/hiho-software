@@ -19,6 +19,7 @@ _EXTENSIONS = {'FBX': ".fbx", 'GLB': ".glb", 'BLEND': ".blend"}
 class HIHO_MOCAP_OT_save_out(bpy.types.Operator):
     """Save the selected baked rig (and its character meshes) as a file you
     can hand to a game engine, web viewer, or another Blender"""
+    bl_description = "Saves the baked rig as a file you can take to another program. Bake first"
     bl_idname = "hiho_mocap.save_out"
     bl_label = "Save Out"
 

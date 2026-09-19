@@ -56,6 +56,15 @@ def _wrap(text: str, width: int = 40, max_rows: int = 4) -> list:
     return rows
 
 
+def _rows(text: str, width: int = 38) -> list:
+    """A badge line as panel rows: split into sentences first, so a row break
+    lands where a reader would pause, then wrap what is still too long."""
+    rows = []
+    for sentence in text.replace(". ", ".\n").split("\n"):
+        rows.extend(_wrap(sentence, width=width, max_rows=3))
+    return rows[:5]
+
+
 class HIHO_MOCAP_PT_main(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -84,10 +93,6 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
         # --- 1. Cameras ------------------------------------------------------
         layout.label(text="1. Cameras", icon='OUTLINER_OB_CAMERA')
         layout.operator("hiho_mocap.preview_cameras", icon='OUTLINER_OB_CAMERA', text="Show Cameras")
-        hint = layout.column(align=True)
-        hint.scale_y = 0.7
-        hint.label(text="Right-click a camera there to include/exclude it,")
-        hint.label(text="left-click to rotate. Picks fill the list below.")
         layout.prop(scene_settings, "camera_ids")
 
         # --- 2. Calibrate (start of every session) ---------------------------
@@ -152,9 +157,6 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
         layout.label(text="4. Process", icon='PLAY')
         layout.prop(scene_settings, "last_take_path", text="Take")
         layout.prop(scene_settings, "calibration_toml_path", text="Calib")
-        col = layout.column()
-        col.scale_y = 0.7
-        col.label(text="Calib blank = use last_successful_calibration.toml")
         # Always visible, so which tracker is about to run is never a surprise.
         layout.prop(scene_settings, "tracker", text="Tracker")
         row = layout.row(align=True)
@@ -173,9 +175,12 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
                 head = box.row()
                 head.scale_y = 0.8
                 head.label(text=" - ".join(part for part in (made_by, take) if part))
-            row = box.row()
-            row.alert = "BAD" in quality
-            row.label(text=quality, icon=icon)
+            # One sentence per row, wrapped to the panel: a Blender label never
+            # wraps, and every one of these lines used to run off the edge.
+            col = box.column(align=True)
+            col.alert = "BAD" in quality
+            for i, line in enumerate(_rows(quality)):
+                col.label(text=line, icon=icon if i == 0 else 'BLANK1')
 
         # --- 5. Rig (works on disk paths) ------------------------------------
         layout.separator()

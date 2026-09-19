@@ -14,14 +14,14 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
 
     countdown_seconds: bpy.props.IntProperty(
         name="Countdown",
-        description="Seconds to count down before recording starts",
+        description="Seconds before a recording starts, so you can walk to your spot. Both Record buttons use this number",
         default=15,
         min=0,
         max=60,
     )
     record_length_seconds: bpy.props.IntProperty(
         name="Length",
-        description="Recording length in seconds",
+        description="How long the performance recording runs, in seconds",
         default=60,
         min=1,
         max=600,
@@ -31,7 +31,7 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
     # before the performance. Every calibration take on disk was set to 120.
     calibration_length_seconds: bpy.props.IntProperty(
         name="Length",
-        description="Calibration recording length in seconds. The calibration dance needs 120",
+        description="How long the calibration recording runs, in seconds. The calibration dance needs 120",
         default=120,
         min=1,
         max=600,
@@ -53,17 +53,13 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
     )
     last_take_path: bpy.props.StringProperty(
         name="Take folder",
-        description="Folder containing the Camera_*.mp4 files to process. Record sets this automatically; you can also pick an older take.",
+        description="The recording to process. It fills in by itself after Record Mocap. Change it only to process an older take",
         default="",
         subtype='DIR_PATH',
     )
     last_processed_path: bpy.props.StringProperty(
         name="Processed take",
-        description=(
-            "The 3D landmarks .npy that Spawn Rig builds from. Process Mocap "
-            "sets this automatically; you can also pick the .npy of an older "
-            "processed take (inside its output_data folder)."
-        ),
+        description="The processed take the rig is built from. It fills in by itself after Process Mocap. Change it only to load an older take",
         default="",
         subtype='FILE_PATH',
     )
@@ -104,10 +100,7 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
     )
     calibration_toml_path: bpy.props.StringProperty(
         name="Calibration",
-        description=(
-            "Optional override for the FreeMoCap calibration TOML. "
-            "Leave blank to auto-use last_successful_calibration.toml."
-        ),
+        description="The calibration to use. Leave it blank to use the one you just solved",
         default="",
         subtype='FILE_PATH',
     )
@@ -123,26 +116,20 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
     )
     camera_ids: bpy.props.StringProperty(
         name="Cameras",
-        description=(
-            "Which camera indices to record, comma-separated. Easiest way to set "
-            "it: click Show Cameras and right-click the cameras you want in or "
-            "out — this box fills in when you close that window. Camera numbers "
-            "can shuffle after a reboot or replug, so confirm before recording. "
-            "Left blank, Record refuses and sends you to Show Cameras."
-        ),
+        description="The cameras that will record. It fills in by itself when you close the Show Cameras window",
         default="",
     )
 
     calibration_take_path: bpy.props.StringProperty(
         name="Calibration take",
-        description="Folder of recorded Charuco-board videos to solve into a calibration. Record Calibration sets this; you can also pick an older board take.",
+        description="The calibration recording to solve. It fills in by itself after Record Calibration. Change it only to solve an older one again",
         default="",
         subtype='DIR_PATH',
     )
 
     charuco_square_mm: bpy.props.FloatProperty(
         name="Square size (mm)",
-        description="Width of one black square on the printed Charuco board, measured with a ruler in millimeters. The house board is 200. A wrong value scales the whole capture uniformly (heights, distances) without changing the quality score.",
+        description="Width of one black square on the board, in millimeters. The house board is 200. Leave it alone unless you use a different board",
         default=200.0,
         min=10.0,
         max=500.0,
@@ -240,7 +227,7 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
     )
     export_format: bpy.props.EnumProperty(
         name="Format",
-        description="File format for Save Out",
+        description="The file type Save Out writes. FBX for game engines, GLB for the web, .blend for Blender",
         items=[
             ('FBX', "FBX", "Game-engine-friendly animation file"),
             ('GLB', "GLB", "Lightweight web/game animation file"),

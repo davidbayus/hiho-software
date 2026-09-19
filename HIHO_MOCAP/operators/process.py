@@ -77,8 +77,10 @@ def _poll_processor() -> Optional[float]:
             scene.process_badge_take = os.path.basename(
                 os.path.normpath(runner.recording_dir))
             scene.process_badge_tracker = tracker
-            done = f"Processing complete. {tracker}." if tracker else "Processing complete."
-            STATE["status_text"] = f"{done} {verdict}" if verdict else done
+            # Short on purpose: the badge right under the button carries the
+            # quality, and this line has to fit the top of the panel.
+            STATE["status_text"] = (f"Processing complete ({tracker})." if tracker
+                                    else "Processing complete.")
         STATE["processor"] = None
         STATE["processor_tracker"] = ""
         _redraw_panels()
@@ -99,6 +101,7 @@ def _poll_processor() -> Optional[float]:
 class HIHO_MOCAP_OT_process_mocap(bpy.types.Operator):
     """Turn the recorded take into 3D motion, using the tracker picked in the
     Tracker menu. Progress shows in the panel."""
+    bl_description = "Step 4. Turns the recording into 3D motion. About 3 minutes for a 30 second take"
     bl_idname = "hiho_mocap.process_mocap"
     bl_label = "Process Mocap"
     bl_options = {'REGISTER'}
@@ -128,9 +131,8 @@ class HIHO_MOCAP_OT_process_mocap(bpy.types.Operator):
         calib = norm_path(scene.calibration_toml_path) or DEFAULT_CALIBRATION_TOML
         if not os.path.isfile(calib):
             return self._refuse(
-                f"No calibration file at {calib}. "
-                "Run FreeMoCap's calibration recorder first, "
-                "or set a path in the panel.")
+                f"No calibration file at {calib}. Do step 2 (Calibrate) "
+                "first, or pick a calibration in the Calib box.")
 
         external = os.path.join(os.path.dirname(os.path.dirname(__file__)), "external")
         label = TRACKER_LABELS.get(scene.tracker, scene.tracker)
@@ -184,6 +186,7 @@ class HIHO_MOCAP_OT_process_mocap(bpy.types.Operator):
 
 class HIHO_MOCAP_OT_cancel_process(bpy.types.Operator):
     """Cancel an in-progress mocap run."""
+    bl_description = "Stops processing"
     bl_idname = "hiho_mocap.cancel_process"
     bl_label = "Cancel"
     bl_options = {'REGISTER'}

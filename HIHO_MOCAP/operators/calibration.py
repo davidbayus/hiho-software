@@ -46,6 +46,7 @@ def _score_script():
 class HIHO_MOCAP_OT_check_calibration(bpy.types.Operator):
     """Score the current calibration's accuracy and show a quality badge.
     Works on a calibration already on disk, so no cameras are needed."""
+    bl_description = "Scores the calibration. Green is good. Red means record the calibration again"
     bl_idname = "hiho_mocap.check_calibration"
     bl_label = "Check Calibration"
     bl_options = {'REGISTER'}
@@ -61,8 +62,8 @@ class HIHO_MOCAP_OT_check_calibration(bpy.types.Operator):
 
         toml = norm_path(s.calibration_toml_path) or DEFAULT_CALIBRATION_TOML
         if not os.path.isfile(toml):
-            self.report({'ERROR'}, f"No calibration file at {toml}. "
-                                   "Calibrate first, or set a path in the panel.")
+            self.report({'ERROR'}, f"No calibration file at {toml}. Do step 2 "
+                                   "(Calibrate) first, or pick one in the Calib box.")
             return {'CANCELLED'}
 
         result = run_score(env, _score_script(), toml,
@@ -101,6 +102,7 @@ def _calibrate_script():
 class HIHO_MOCAP_OT_record_calibration(bpy.types.Operator):
     """Record the cameras while you move the Charuco board through the capture
     volume, to capture a calibration take. Opens a separate window; needs cameras."""
+    bl_description = "Step 2. Do this at the start of every session. Records you doing the calibration dance with the board"
     bl_idname = "hiho_mocap.record_calibration"
     bl_label = "Record Calibration"
     bl_options = {'REGISTER'}
@@ -188,6 +190,7 @@ def _poll_calibration():
 class HIHO_MOCAP_OT_solve_calibration(bpy.types.Operator):
     """Turn a recorded Charuco-board take into a camera calibration. Runs on disk
     in the FreeMoCap env, so no cameras are needed."""
+    bl_description = "Works out where every camera is, from the calibration recording. Takes a few minutes"
     bl_idname = "hiho_mocap.solve_calibration"
     bl_label = "Solve Calibration"
     bl_options = {'REGISTER'}
