@@ -11,7 +11,7 @@ See HIHO_MOCAP_WRAPPER_ARCHITECTURE.md + AUDIT_2026-06-09.md.
 bl_info = {
     "name": "HIHO MOCAP",
     "author": "David Bayus + HIHO 4D ART CLUB",
-    "version": (1, 5, 4),
+    "version": (1, 5, 5),
     "blender": (5, 0, 0),
     "location": "View3D > N-panel > HIHO MOCAP",
     "description": "Multi-camera mocap: record, process via an external FreeMoCap env, spawn an animated rig.",

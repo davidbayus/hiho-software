@@ -71,14 +71,91 @@ def _save_rotations(rotations: dict) -> None:
         pass
 
 
+GET_READY_SEC = 0.9     # "get ready" owns its moment: a number due inside it stays silent
+COUNT_GAP_SEC = 2.0     # at least this long between two spoken camera counts
+
+
+class _Voice:
+    """One voice at a time, and the countdown is in charge (1.5.5).
+
+    Every phrase used to be its own fire-and-forget `say` process, so nothing
+    waited for anything: "get ready" and the first number collided (macOS can
+    restart the phrase that got interrupted, which is the repeating "get
+    ready"), and the camera count talked over the countdown numbers.
+    PANEL_REDESIGN_DESIGN_2026-09-19, section 5. The rules:
+
+    - CLOCK phrases ("get ready", the numbers, "recording", "done") are tied to a
+      moment. They speak NOW, and cut off whatever is still speaking.
+    - COUNT phrases (the camera count) never interrupt. The caller offers the
+      CURRENT count on every frame; it is spoken only when the voice is free,
+      the gap has passed, and it is news. So a stale count can never be spoken:
+      there is no queue, only the present.
+    - While a countdown runs (start or end) the count is silent. The first
+      count is spoken right after "recording".
+
+    `launch` and `clock` are injectable so this is testable with no sound.
+    Best-effort everywhere: a voice problem must never touch a recording."""
+
+    def __init__(self, launch=None, clock=time.monotonic):
+        self._launch = launch or self._launch_say
+        self._clock = clock
+        self._proc = None
+        self._last_count = None
+        self._count_after = 0.0
+        self.in_countdown = False
+
+    @staticmethod
+    def _launch_say(text):
+        import subprocess
+        return subprocess.Popen(["say", text])
+
+    def busy(self) -> bool:
+        try:
+            return self._proc is not None and self._proc.poll() is None
+        except Exception:
+            return False
+
+    def _speak(self, text) -> None:
+        try:
+            self._proc = self._launch(text)
+        except Exception:
+            self._proc = None
+
+    def clock(self, text) -> None:
+        if self.busy():
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+        self._speak(text)
+
+    def count(self, text) -> None:
+        if self.in_countdown or text == self._last_count or self.busy():
+            return
+        now = self._clock()
+        if now < self._count_after:
+            return
+        self._last_count = text
+        self._count_after = now + COUNT_GAP_SEC
+        self._speak(text)
+
+
+VOICE = _Voice()
+
+
 def _say(text: str) -> None:
-    """Audible cue via macOS `say`, so a performer away from the screen hears the
-    countdown. Best-effort; never blocks or raises."""
-    import subprocess
-    try:
-        subprocess.Popen(["say", text])
-    except Exception:
-        pass
+    """A CLOCK phrase through the one voice, so a performer away from the screen
+    hears it. Best-effort; never blocks or raises."""
+    VOICE.clock(text)
+
+
+def _countdown_word(n: int, seconds_in: float):
+    """What the start countdown SAYS at number n, or None for a silent second.
+    The window shows every number; the ear gets fewer words and more air:
+    "get ready" ... "10" ... "5, 4, 3, 2, 1" (and every ten on a long countdown)."""
+    if seconds_in < GET_READY_SEC:
+        return None
+    return str(n) if (n <= 5 or n % 10 == 0) else None
 
 
 def _write_recording_report(out_dir, counts, expected, elapsed, fps, stopped_by, board_reads=None):
@@ -147,25 +224,24 @@ class _BoardReader:
         self._next = 0.0
         # 1.4.51: a solo performer cannot see the laptop, so the number of cameras
         # currently reading the board is spoken when it changes ("four cameras").
-        self.speak = _say
-        self._said = None
-        self._say_after = 0.0
-        self.SAY_GAP = 2.0
+        # 1.5.5: through the one voice, which decides WHEN (never over a countdown).
+        self.voice = VOICE
 
-    def announce(self, total):
-        """Speak the count of cameras reading the board (6+ corners) when it changes,
-        at most every SAY_GAP seconds. Returns the count."""
-        green = sum(1 for n in self.last.values() if n >= self.KEEP)
-        now = time.monotonic()
-        if green != self._said and now >= self._say_after:
-            self._said = green
-            self._say_after = now + self.SAY_GAP
+    def announce(self, total, only=None):
+        """Offer the count of cameras reading the board (6+ corners) to the voice.
+        `only` limits the count to those camera ids: Show Cameras passes the
+        switched-ON cameras, because it opens every camera the Mac can find and
+        "all 6" was unreachable with an excluded camera in the count. Returns
+        the count."""
+        green = sum(1 for cid, n in self.last.items()
+                    if n >= self.KEEP and (only is None or cid in only))
+        if total > 0:
             if green == 0:
-                self.speak("no cameras")
+                self.voice.count("no cameras")
             elif green == total:
-                self.speak(f"all {total}")
+                self.voice.count(f"all {total}")
             else:
-                self.speak(f"{green} camera" + ("s" if green != 1 else ""))
+                self.voice.count(f"{green} camera" + ("s" if green != 1 else ""))
         return green
 
     def summary(self):
@@ -390,7 +466,7 @@ def _preview(CameraManager, cam_ids, selected_raw="", reader=None) -> int:
                       for cid, f in frames.items()}
             if reader is not None:
                 reader.update(frames)
-                reader.announce(len(cam_ids))
+                reader.announce(len(selected), only=selected)
             grid = _grid(frames, cam_ids, rotations=rotations,
                          excluded=set(cam_ids) - selected, reader=reader, prerotated=True)
             strip = np.zeros((34, grid.shape[1], 3), dtype=np.uint8)
@@ -500,6 +576,7 @@ def main() -> int:
 
     if args.countdown > 0:
         import cv2
+        VOICE.in_countdown = True       # the camera count waits until "recording"
         _say("get ready")
         start = time.monotonic()
         last = None
@@ -510,7 +587,9 @@ def main() -> int:
             n = int(remaining) + 1
             if n != last:
                 last = n
-                _say(str(n))
+                word = _countdown_word(n, time.monotonic() - start)
+                if word:
+                    _say(word)
             frames = mgr.get_latest_frames()
             if reader is not None:
                 reader.update(frames)
@@ -524,6 +603,7 @@ def main() -> int:
                 _emit(DONE, "cancelled")
                 return 0
         _say("recording")
+        VOICE.in_countdown = False
 
     _emit(INFO, f"recording {args.duration}s from cameras {cam_ids} "
                 f"at {args.width}x{args.height}@{args.fps}fps rotations={rotations}")
@@ -537,6 +617,7 @@ def main() -> int:
         import math
         remaining = args.duration - elapsed
         if 0 < remaining <= END_COUNTDOWN_SEC:
+            VOICE.in_countdown = True
             n = math.ceil(remaining)
             if n != ending_last[0]:
                 ending_last[0] = n
