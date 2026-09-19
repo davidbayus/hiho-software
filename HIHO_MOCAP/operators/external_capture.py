@@ -42,7 +42,7 @@ def _env_python_ok(self, context):
     env = get_env_python(context)
     if not env or not os.path.exists(env):
         self.report({'ERROR'}, f"FreeMoCap env Python not found: {env or '(blank)'}. "
-                               "Set it in the panel (saved in Preferences).")
+                               "Set it in Edit > Preferences > Add-ons > HIHO MOCAP.")
         return None
     return env
 
@@ -171,7 +171,7 @@ class HIHO_MOCAP_OT_record_external(bpy.types.Operator):
     """Record the rig cameras via the external env. A separate window shows an
     audible countdown, then records for the set length."""
     bl_idname = "hiho_mocap.record_external"
-    bl_label = "Record"
+    bl_label = "Record Mocap"
     bl_options = {'REGISTER'}
 
     @classmethod

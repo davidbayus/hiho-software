@@ -1,17 +1,12 @@
-"""HIHO MOCAP N-panel — the only UI the student sees.
+"""HIHO MOCAP N-panel — the steps a student follows, in the order of a session.
 
-Sections always visible:
-- Cameras
-- Process (works on disk paths — doesn't need cameras live)
-- Output (works on disk paths)
+1. Cameras, 2. Calibrate, 3. Record, 4. Process, 5. Rig, then Face.
+Order and names follow the work (David, 2026-08-07: capture and calibration
+are step one of every session, never an "advanced" view). Design:
+PANEL_REDESIGN_DESIGN_2026-09-19.md.
 
-Sections gated by cameras live (need a CameraManager + frames coming in):
-- Live indicator + Open Camera Views
-- Record
-
-This split exists because Process and Output are pure post-capture work —
-a student processing yesterday's take or rebuilding a rig shouldn't need
-to bring cameras up first.
+Nothing here needs live cameras to draw: Process and Rig work on disk paths,
+so a student processing yesterday's take never has to bring cameras up first.
 """
 
 import os
@@ -42,6 +37,25 @@ def _board_take_unsolved(take_path: str) -> bool:
     return not os.path.isfile(os.path.join(folder, f"{take}_camera_calibration.toml"))
 
 
+def _wrap(text: str, width: int = 40, max_rows: int = 4) -> list:
+    """Break the status line into panel-width rows. A Blender label never
+    wraps, so a long message (an error most of all) used to run off the edge
+    exactly when it mattered."""
+    rows, line = [], ""
+    for word in " ".join(text.split()).split(" "):
+        if line and len(line) + 1 + len(word) > width:
+            rows.append(line)
+            line = word
+        else:
+            line = f"{line} {word}".strip()
+    if line:
+        rows.append(line)
+    if len(rows) > max_rows:
+        rows = rows[:max_rows]
+        rows[-1] = rows[-1][:width - 3].rstrip() + "..."
+    return rows
+
+
 class HIHO_MOCAP_PT_main(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -51,42 +65,44 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene_settings = context.scene.hiho_mocap
-        # Machine-level settings — drawn from AddonPreferences so they survive
-        # new files and restarts (scene props reset per file; audit M18).
-        addon = context.preferences.addons.get(__package__.rsplit(".", 1)[0])
+        # The set-once computer paths (Save to, the two tracker envs) are NOT
+        # drawn here any more: they live in Edit > Preferences > Add-ons >
+        # HIHO MOCAP, so the panel holds only the steps of a session.
 
-        # --- Capture (launches your FreeMoCap env in a separate window) ----
-        layout.label(text="Capture")
+        # One status line, always in the same place, whichever step is talking.
+        # It used to sit under Record even when the news was about processing.
+        status = STATE.get("status_text", "")
+        if status:
+            box = layout.box()
+            col = box.column(align=True)
+            col.alert = "fail" in status.lower() or "not installed" in status
+            for i, line in enumerate(_wrap(status)):
+                col.label(text=line, icon='INFO' if i == 0 else 'BLANK1')
+
+        # --- 1. Cameras ------------------------------------------------------
+        layout.label(text="1. Cameras", icon='OUTLINER_OB_CAMERA')
         layout.operator("hiho_mocap.preview_cameras", icon='OUTLINER_OB_CAMERA', text="Show Cameras")
         hint = layout.column(align=True)
         hint.scale_y = 0.7
         hint.label(text="Right-click a camera there to include/exclude it,")
         hint.label(text="left-click to rotate. Picks fill the list below.")
-        col = layout.column(align=True)
-        col.prop(scene_settings, "camera_ids")
-        col.prop(scene_settings, "countdown_seconds")
-        col.prop(scene_settings, "record_length_seconds")
-        if addon is not None and addon.preferences is not None:
-            layout.prop(addon.preferences, "data_home", text="Save to")
-        row = layout.row(align=True)
-        row.operator("hiho_mocap.record_external", icon='RADIOBUT_ON', text="Record")
-        row.operator("hiho_mocap.stop_capture", icon='X', text="")
+        layout.prop(scene_settings, "camera_ids")
 
-        status = STATE.get("status_text", "")
-        if status:
-            layout.label(text=status)
-
-        # --- Calibrate -----------------------------------------------------
+        # --- 2. Calibrate (start of every session) ---------------------------
         layout.separator()
-        layout.label(text="Calibrate")
+        layout.label(text="2. Calibrate", icon='MESH_GRID')
+        col = layout.column(align=True)
+        col.prop(scene_settings, "countdown_seconds")
+        col.prop(scene_settings, "calibration_length_seconds")
+        # A grid, never the record dot: the panel has exactly ONE record dot,
+        # and it belongs to the performance.
+        layout.operator("hiho_mocap.record_calibration", icon='MESH_GRID',
+                        text="Record Calibration")
+        row = layout.row(align=True)
+        row.operator("hiho_mocap.solve_calibration", icon='CAMERA_DATA', text="Solve")
+        row.operator("hiho_mocap.check_calibration", icon='SEQ_HISTOGRAM', text="Check")
         layout.prop(scene_settings, "calibration_take_path", text="Board take")
         layout.prop(scene_settings, "charuco_square_mm", text="Square size (mm)")
-        row = layout.row(align=True)
-        row.operator("hiho_mocap.record_calibration", icon='RADIOBUT_ON',
-                     text="Record Calibration")
-        row.operator("hiho_mocap.solve_calibration", icon='CAMERA_DATA', text="Solve")
-        layout.operator("hiho_mocap.check_calibration", icon='SEQ_HISTOGRAM',
-                        text="Check Calibration")
         verdict = scene_settings.calibration_verdict
         if verdict:
             px = scene_settings.calibration_quality_px
@@ -118,16 +134,22 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
             row.alert = True
             row.label(text="Board take not solved yet - click Solve", icon='ERROR')
 
-        # --- Process (always visible — works on disk paths) ----------------
+        # --- 3. Record -------------------------------------------------------
         layout.separator()
-        layout.label(text="Process")
+        layout.label(text="3. Record", icon='REC')
+        col = layout.column(align=True)
+        # The same Countdown as step 2 (time to walk to your spot): one number.
+        col.prop(scene_settings, "countdown_seconds")
+        col.prop(scene_settings, "record_length_seconds")
+        row = layout.row(align=True)
+        row.operator("hiho_mocap.record_external", icon='REC', text="Record Mocap")
+        row.operator("hiho_mocap.stop_capture", icon='X', text="")
+
+        # --- 4. Process (works on disk paths) --------------------------------
+        layout.separator()
+        layout.label(text="4. Process", icon='PLAY')
         layout.prop(scene_settings, "last_take_path", text="Take")
         layout.prop(scene_settings, "calibration_toml_path", text="Calib")
-        if addon is not None and addon.preferences is not None:
-            layout.prop(addon.preferences, "freemocap_env_python", text="FreeMoCap")
-            # Not "FreeMoCap 2.0": at the panel's usual width both labels cut
-            # off to "FreeMoC..." and the two fields look identical.
-            layout.prop(addon.preferences, "fmc2_env_python", text="RTMPose")
         col = layout.column()
         col.scale_y = 0.7
         col.label(text="Calib blank = use last_successful_calibration.toml")
@@ -162,9 +184,9 @@ class HIHO_MOCAP_PT_main(bpy.types.Panel):
                 op = box.operator("wm.path_open", icon='IMAGE_DATA', text="Open Map")
                 op.filepath = map_path
 
-        # --- Output (always visible) ---------------------------------------
+        # --- 5. Rig (works on disk paths) ------------------------------------
         layout.separator()
-        layout.label(text="Output")
+        layout.label(text="5. Rig", icon='ARMATURE_DATA')
         layout.prop(scene_settings, "last_processed_path", text="Processed")
         layout.operator("hiho_mocap.spawn_rig", icon='ARMATURE_DATA', text="Spawn Rig")
         layout.operator("hiho_mocap.add_camera_videos", icon='IMAGE_DATA',

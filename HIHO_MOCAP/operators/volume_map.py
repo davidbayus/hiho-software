@@ -39,7 +39,7 @@ class HIHO_MOCAP_OT_volume_map(bpy.types.Operator):
         env = get_env_python(context)
         if not env or not os.path.exists(env):
             self.report({'ERROR'}, f"FreeMoCap env Python not found: {env or '(blank)'}. "
-                                   "Set it in the panel (saved in Preferences).")
+                                   "Set it in Edit > Preferences > Add-ons > HIHO MOCAP.")
             return {'CANCELLED'}
 
         take = norm_path(s.last_take_path)

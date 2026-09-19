@@ -26,6 +26,16 @@ class HIHO_MOCAP_PG_settings(bpy.types.PropertyGroup):
         min=1,
         max=600,
     )
+    # Its own box (PANEL_REDESIGN_DESIGN_2026-09-19): one shared Length meant
+    # typing 120 for the calibration dance, then remembering to change it back
+    # before the performance. Every calibration take on disk was set to 120.
+    calibration_length_seconds: bpy.props.IntProperty(
+        name="Length",
+        description="Calibration recording length in seconds. The calibration dance needs 120",
+        default=120,
+        min=1,
+        max=600,
+    )
     # Per FILE on purpose (V2_CHANGEOVER_DESIGN_2026-09-18, Q2): every new
     # .blend starts on RTMPose, so a forgotten switch to the slow tracker can
     # never follow the next student.

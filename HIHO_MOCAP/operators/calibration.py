@@ -56,7 +56,7 @@ class HIHO_MOCAP_OT_check_calibration(bpy.types.Operator):
         env = get_env_python(context)
         if not env or not os.path.exists(env):
             self.report({'ERROR'}, f"FreeMoCap env Python not found: {env or '(blank)'}. "
-                                   "Set it in the panel (saved in Preferences).")
+                                   "Set it in Edit > Preferences > Add-ons > HIHO MOCAP.")
             return {'CANCELLED'}
 
         toml = norm_path(s.calibration_toml_path) or DEFAULT_CALIBRATION_TOML
@@ -125,7 +125,7 @@ class HIHO_MOCAP_OT_record_calibration(bpy.types.Operator):
         args = [
             "--output", out, "--cameras", cams,
             "--countdown", str(s.countdown_seconds),
-            "--duration", str(s.record_length_seconds),
+            "--duration", str(s.calibration_length_seconds),
             "--show", "--board-overlay",
         ]
         # Board-take path fills in on completion (watched launch) — Solve's
@@ -202,7 +202,7 @@ class HIHO_MOCAP_OT_solve_calibration(bpy.types.Operator):
         env = get_env_python(context)
         if not env or not os.path.exists(env):
             self.report({'ERROR'}, f"FreeMoCap env Python not found: {env or '(blank)'}. "
-                                   "Set it in the panel (saved in Preferences).")
+                                   "Set it in Edit > Preferences > Add-ons > HIHO MOCAP.")
             return {'CANCELLED'}
 
         take = norm_path(s.calibration_take_path)
