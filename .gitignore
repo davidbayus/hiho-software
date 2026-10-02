@@ -32,3 +32,6 @@ PaWrappa_Guide_for_*.pdf
 SESSION_*.md
 DEVELOPMENT_DEBRIEF*.md
 CLAUDE_LEGACY*.md
+
+# Quadre A/B harness scratch (inputs, results, renders)
+CADRE_REMESHER/ab_harness/work/

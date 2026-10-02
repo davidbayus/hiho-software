@@ -36,7 +36,7 @@ measured with the same ruler and rendered from the same camera.
 3. **No finishing pass.** The engine hands back quads that are sheared and sitting on its own rough
    copy of the shape. Nothing squared them up or put them back on the real sculpt.
 
-**The fix (three changes, same engine, no new dependencies):**
+**The fix (same engine, no new dependencies), built and shipped today as v0.3.9 → v0.4.2:**
 
 1. Only look for hard edges on the student's own geometry, never on the auto-simplified copy.
 2. Quadre draws its own flow map: follow the shape's curvature where the shape clearly has a direction
@@ -44,25 +44,26 @@ measured with the same ruler and rendered from the same camera.
 3. A finishing pass after the engine: square the quads up, turn them toward the flow, even out
    neighbouring sizes, and snap every vertex onto the original sculpt.
 
-**Result on the six-case suite (lower is better everywhere):**
+**Result on the six-case suite, real operator (lower is better everywhere):**
 
-| Measure | Quadre 0.3.8 | New recipe | Exoside 1.4 |
+| Measure | Quadre 0.3.8 | Quadre 0.4.2 | Exoside 1.4 |
 |---|---|---|---|
-| Loops off the form (degrees; random = 22.5) | 15.9 | 10.3 | 8.4 |
-| Quads badly off the form (% over 20 degrees) | 32 | 16 | 11 |
+| Loops off the form (degrees; random = 22.5) | 15.9 | 11.5 | 8.4 |
+| Quads badly off the form (% over 20 degrees) | 32 | 19 | 11 |
 | Corner angle error (degrees from square) | 12.6 | 7.7 | 7.7 |
-| Badly bent corners (%) | 1.75 | 0.38 | 0.32 |
-| Quad twist (degrees) | 4.9 | 3.3 | 2.8 |
-| Neighbour size jump (95th percentile ratio) | 1.54 | 1.43 | 1.55 |
-| Vertices off the sculpt (per mille of size) | 0.47 | 0.01 | 0.02 |
-| Sculpt detail lost (per mille of size) | 1.18 | 0.72 | 0.41 |
+| Badly bent corners (%) | 1.75 | 0.46 | 0.32 |
+| Quad twist (degrees) | 4.9 | 3.7 | 2.8 |
+| Neighbour size jump (95th percentile ratio) | 1.54 | 1.46 | 1.55 |
+| Vertices off the sculpt (per mille of size) | 0.47 | 0.03 | 0.02 |
+| Sculpt detail lost (per mille of size) | 1.18 | 0.77 | 0.41 |
 
-Chibi alone at 5,000 quads with X symmetry: poles 112 → 48 (Exoside 75), corner error 12.6 → 6.1
-(Exoside 7.0), loops now ring the eye sockets with poles at the four corners, the way Exoside's do.
+Chibi alone at 5,000 quads with X symmetry: poles 112 → 48 (Exoside 75), corner error 12.6 → 8.0
+(Exoside 7.0), loops off the form 15.1 → 11.1 (Exoside 6.8), and loops now ring the eye sockets.
+Sheets and a blend with all six meshes: `AB_2026-10-02/`.
 
-**Still behind Exoside:** it follows the form a little better (8.4 against 10.3), and it uses smaller
-quads where the shape is tight (its "Adaptive Size"), which keeps more detail at low counts. Both are
-on the open list in section 6.
+**Still behind Exoside:** it follows the form better (8.4 against 11.5), it keeps more of the sculpt's
+detail, and it uses smaller quads where the shape is tight (its "Adaptive Size"). All three are on
+the open list in section 6.
 
 ---
 
@@ -117,10 +118,17 @@ Renders (`render.py`): same camera, wireframe, poles marked (red = 3 edges, blue
    recovers part of that.
 7. **Count accuracy rides on the crease count.** With the fake creases gone, asks land closer (Chibi
    5,000 → 5,180 instead of 6,122; 1,500 → 1,870 instead of 2,664).
+8. **The engine's patch layout is touchy.** A four-triangle difference in its remeshed copy moved the
+   Chibi from 4,138 to 4,604 faces and shifted where the forehead poles sit. Across asks of 4,600 /
+   5,000 / 5,400 the shipped settings kept the head clean every time; three alternative flow-map
+   settings each broke on at least one. Single-case differences under a degree are noise.
+9. **A flat open grid hangs the engine** (20×20 saddle-shaped plane: step 1 never returns and memory
+   climbs). Same in 0.3.8, so not caused by today's changes. Closed shapes, Suzanne's open eye
+   sockets, a cube, a torus, and a rotated scaled cylinder all run.
 
 ## 4. Design
 
-Three changes, shipped one at a time, each measured on the suite through the real operator.
+Four changes, shipped one at a time, each measured on the suite through the real operator.
 
 ### Change 1 — creases only from the student's own geometry (v0.3.9)
 
@@ -159,8 +167,12 @@ mirror step. 60 rounds of:
 3. Blend each quad's size halfway toward the average of the quads around it.
 4. Move each vertex to the average of the corners its quads want.
 5. Snap to the original object with `closest_point_on_mesh`. A snap is refused if it would move the
-   vertex more than one quad-edge away or onto a surface facing the other way (thin walls).
-6. Mirror-line vertices stay on the mirror plane. Open-border vertices do not move.
+   vertex more than half a quad-edge, onto a surface facing the other way (thin walls), or onto a
+   different piece of the original than the one that part of the result came from (Suzanne's
+   eyeballs sit inside her eye sockets; without this the two swapped surfaces). The piece check runs
+   when the shape has separate pieces and the original is under 150K faces.
+6. Mirror-line vertices stay on the mirror plane. Open-border vertices do not move. No vertex ends
+   more than one quad-edge from where the engine put it.
 
 If the original object is gone, or the pass fails, the engine's result is used as is.
 
@@ -170,8 +182,32 @@ to hold the main-thread pause near that.
 ### Change 4 — land on the typed count (v0.4.2)
 
 `Job.run`, step 3: after the engine builds the quads, compare the face count with the ask. If it is
-more than 8% off, rescale the density by `sqrt(got / asked)` and run step 3 once more (0.3–1 s). Keep
-whichever is closer.
+more than 5% off, rescale the density by `sqrt(got / asked)` and run step 3 once more (0.3–1 s,
+about 5 s at 25,000). Keep whichever is closer.
+
+### As built: suite means per version (real operator)
+
+| Version | Poles | Loops off form | Corner error | Bent corners % | Twist | Size jump | Off sculpt ‰ | Detail lost ‰ |
+|---|---|---|---|---|---|---|---|---|
+| 0.3.8 | 86 | 15.9 | 12.6 | 1.75 | 4.9 | 1.54 | 0.47 | 1.18 |
+| 0.3.9 creases | 50 | 14.8 | 11.3 | 0.65 | 4.4 | 1.30 | 0.44 | 1.34 |
+| 0.4.0 flow map | 75 | 13.7 | 10.8 | 0.98 | 4.4 | 1.38 | 0.47 | 1.27 |
+| 0.4.1 finishing pass | 75 | 11.3 | 7.6 | 0.47 | 3.6 | 1.43 | 0.02 | 0.74 |
+| 0.4.2 count retry | 75 | 11.5 | 7.7 | 0.46 | 3.7 | 1.46 | 0.03 | 0.77 |
+| Exoside 1.4 | 79 | 8.4 | 7.7 | 0.32 | 2.8 | 1.55 | 0.02 | 0.41 |
+
+The flow map on its own (0.4.0) raises the pole count to Exoside's level because loops now ring
+creases; its payoff shows with the finishing pass. Run through the experiment pipeline with the same
+finishing pass, the engine's own map scored 12.3 degrees off the form and 0.91 detail lost against
+10.3 and 0.72 for Quadre's map.
+
+Count accuracy after 0.4.2 (typed → delivered): Chibi X symmetry 500 → 560, 1,500 → 1,500,
+2,000 → 2,028, 5,000 → 4,776, 10,000 → 10,146; Chibi no symmetry 25,000 → 25,120; torus
+2,000 → 2,025; Suzanne X 2,000 → 2,322.
+
+Time on the Chibi (1.44M quads in): 6–9 s at 5,000, 8–17 s at 25,000. Student's path checked:
+zip installed with the real installer in a sandboxed Blender window, button pressed, modal +
+worker thread ran, same 4,776 faces as headless. The window pauses for the 1–2 s finishing pass.
 
 ## 5. What was tried and dropped
 
@@ -194,3 +230,8 @@ whichever is closer.
    crisp rim rounds slightly. A robust crease detector on the original sculpt would let them be pinned.
 4. **The simplify step lands at ~50K triangles when it aims for 80K.**
 5. Blender's built-in QuadriFlow was not measured (script error, not chased).
+6. **The flat-open-grid hang** (finding 9). Needs a preflight guard or a rebuilt engine.
+7. **The finishing pass runs on the main thread** (it needs Blender's own closest-point lookup), so
+   the window pauses 1–2 s at the end. The status line still says step 3 while it runs.
+8. **Windows has still never been observed running.** `flow.py` and `relax.py` are plain numpy, so
+   nothing new is platform-specific, but the volunteer test from the 08-20 list is still owed.
