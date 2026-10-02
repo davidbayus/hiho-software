@@ -21,7 +21,7 @@ import bmesh
 import mathutils
 import numpy as np
 
-from . import flow
+from . import flow, relax
 from .lib import (
     Quadwild, QuadreException, EngineLoadError,
     flow_config_files, satsuma_config_files,
@@ -61,6 +61,11 @@ MAX_INPUT_TRIS = 100_000
 # headroom, since voxel remeshing overshoots on curvy shapes.
 DECIMATE_TARGET_TRIS = 80_000
 
+# The finishing pass keeps separate pieces from snapping onto each other.
+# Labelling the pieces of the original is plain Python, so it only runs
+# when the original is small enough for that to be quick
+PIECE_GUARD_MAX_FACES = 150_000
+
 
 STAGE_LABELS = {
     1: "Step 1 of 3 — rebuilding the surface…",
@@ -78,8 +83,12 @@ class _Job:
     """
 
     def __init__(self, qw, target_faces, quad_count, obj_name,
-                 original_location, sym_x, sym_y, n_parts, ref_co, ref_no):
+                 original_location, sym_x, sym_y, n_parts, ref_co, ref_no,
+                 engine_matrix):
         self.qw = qw
+        # Rotation + scale that took the original's own coordinates into
+        # the engine's (location is left out and restored at the end)
+        self.engine_matrix = engine_matrix
         # Positions + normals of the mesh handed to the engine — what the
         # flow map reads the shape's curvature from
         self.ref_co = ref_co
@@ -409,6 +418,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                 n_parts=n_parts,
                 ref_co=ref_co,
                 ref_no=ref_no,
+                engine_matrix=matrix.to_4x4(),
             )
 
         except EngineLoadError as e:
@@ -449,6 +459,15 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
 
             # Import the result
             final_mesh = importer.import_mesh(job.qw.output_smoothed_path)
+
+            # Finishing pass: square the quads up and sit them on the
+            # original. If the original is gone or anything goes wrong, the
+            # engine's result stands as it is
+            if obj is not None:
+                try:
+                    self._finish_quads(context, job, obj, final_mesh)
+                except Exception as e:
+                    print(f"QUADRE: skipped the finishing pass ({e})")
             # Re-cleaning a result should yield X_clean.001 (Blender's own
             # numbering), never X_clean_clean
             m = re.match(r"^(.*_clean)(\.\d+)?$", job.obj_name)
@@ -494,6 +513,91 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
 
         finally:
             job.qw = None
+
+    def _finish_quads(self, context, job, obj, mesh):
+        depsgraph = context.evaluated_depsgraph_get()
+        original = obj.evaluated_get(depsgraph)
+        to_engine = job.engine_matrix
+        to_original = to_engine.inverted()
+        normal_to_engine = to_original.to_3x3().transposed()
+        facing = []   # +1 / -1 once known: does the engine wind its quads our way?
+
+        # A shape made of separate pieces (Suzanne's eyeballs sit inside
+        # her eye sockets): each piece of the result may only snap to the
+        # piece of the original it came from, or neighbours swap surfaces
+        source_piece = None
+        result_piece = None
+        piece_match = {}
+        polygons = original.data.polygons
+        if job.n_parts > 1 and len(polygons) <= PIECE_GUARD_MAX_FACES:
+            source_piece = self._face_pieces(
+                len(original.data.vertices), [p.vertices[:] for p in polygons]
+            )
+            faces = [p.vertices[:] for p in mesh.polygons]
+            piece_of_face = self._face_pieces(len(mesh.vertices), faces)
+            result_piece = {}
+            for face, piece in zip(faces, piece_of_face):
+                for v in face:
+                    result_piece[v] = piece
+
+        def snap(X, indices, normals, max_dist):
+            hits = {}
+            for i in indices:
+                found, loc, nrm, face = original.closest_point_on_mesh(
+                    to_original @ mathutils.Vector(X[i])
+                )
+                if not found:
+                    continue
+                point = to_engine @ loc
+                # Too far to be the same piece of surface — leave it
+                if (point - mathutils.Vector(X[i])).length > max_dist:
+                    continue
+                side = (normal_to_engine @ nrm).dot(mathutils.Vector(normals[i]))
+                hits[i] = (point, side, face)
+            if not hits:
+                return
+            if not facing:
+                sides = sorted(h[1] for h in hits.values())
+                facing.append(1.0 if sides[len(sides) // 2] >= 0 else -1.0)
+                if source_piece is not None:
+                    votes = {}
+                    for i, (_, _, face) in hits.items():
+                        tally = votes.setdefault(result_piece.get(i), {})
+                        tally[source_piece[face]] = tally.get(source_piece[face], 0) + 1
+                    for piece, tally in votes.items():
+                        piece_match[piece] = max(tally, key=tally.get)
+            for i, (point, side, face) in hits.items():
+                # A surface facing the other way is the far side of a thin
+                # wall, not the spot this vertex came from
+                if side * facing[0] < 0:
+                    continue
+                if source_piece is not None and (
+                    piece_match.get(result_piece.get(i)) != source_piece[face]
+                ):
+                    continue
+                X[i] = point[:]
+
+        relax.finish_quads(
+            mesh, snap, relax.load_flow(job.qw), job.sym_x, job.sym_y
+        )
+
+    def _face_pieces(self, n_verts, faces):
+        """Connected-piece id for every face (union-find over shared vertices)."""
+        parent = list(range(n_verts))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for face in faces:
+            root = find(face[0])
+            for v in face[1:]:
+                other = find(v)
+                if other != root:
+                    parent[other] = root
+        return [find(face[0]) for face in faces]
 
     def _mirror_geometry(self, obj, x: bool, y: bool):
         """Mirror mesh geometry and merge — produces a solid complete mesh, no modifiers."""
