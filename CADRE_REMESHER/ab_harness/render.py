@@ -3,6 +3,7 @@ magenta = 6+). Runs headless with Workbench.
 
 blender -b --factory-startup --python render.py -- <out_prefix> <px_per_slot> <views csv> <label>=<path.obj> ...
 views: front,side,back,threeq,head,headside,top,feet
+env: HEAT=1 (colour by flow error), RENDER_BG=<linear grey>, NO_POLES=1
 """
 import bpy, bmesh, os, sys, json, math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +30,8 @@ if scene.world is None:
     scene.world = bpy.data.worlds.new('w')
 scene.world.use_nodes = False
 scene.world.color = (1, 1, 1)
+if os.environ.get('RENDER_BG'):          # linear grey level, e.g. 0.0103 = slide background 1A1A1A
+    g = float(os.environ['RENDER_BG']); scene.world.color = (g, g, g)
 scene.render.film_transparent = False
 scene.render.image_settings.file_format = 'PNG'
 
@@ -95,7 +98,7 @@ for (label, V, faces), (_, path) in zip(meshes, items):
         cb = wire.data.color_attributes.new('Col', 'FLOAT_COLOR', 'CORNER')
         cb.data.foreach_set('color', np.tile([0.02, 0.02, 0.03, 1.0], len(cb.data)))
     wire.parent = root
-    for cls, test in ((3, val == 3), (5, val == 5), (6, val >= 6), (2, val <= 2)):
+    for cls, test in (() if os.environ.get('NO_POLES') else ((3, val == 3), (5, val == 5), (6, val >= 6), (2, val <= 2))):
         idx = np.nonzero(test)[0]
         if len(idx) == 0:
             continue
