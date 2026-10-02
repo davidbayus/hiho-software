@@ -19,7 +19,9 @@ import time
 import bpy
 import bmesh
 import mathutils
+import numpy as np
 
+from . import flow
 from .lib import (
     Quadwild, QuadreException, EngineLoadError,
     flow_config_files, satsuma_config_files,
@@ -76,8 +78,12 @@ class _Job:
     """
 
     def __init__(self, qw, target_faces, quad_count, obj_name,
-                 original_location, sym_x, sym_y, n_parts):
+                 original_location, sym_x, sym_y, n_parts, ref_co, ref_no):
         self.qw = qw
+        # Positions + normals of the mesh handed to the engine — what the
+        # flow map reads the shape's curvature from
+        self.ref_co = ref_co
+        self.ref_no = ref_no
         self.target_faces = target_faces   # what the engine aims for
         self.quad_count = quad_count       # what the student typed
         self.obj_name = obj_name
@@ -121,6 +127,15 @@ class _Job:
             if self.cancel_requested:
                 self.cancelled = True
                 return
+
+            # Swap in Quadre's own flow map. The engine's map is already on
+            # disk, so any failure here just leaves that one in place
+            try:
+                flow.write_flow_field(
+                    self.qw, self.ref_co, self.ref_no, self.target_faces
+                )
+            except Exception as e:
+                print(f"QUADRE: kept the engine's own flow map ({e})")
 
             self._enter_stage(2)
             if not self.qw.trace() or not os.path.exists(self.qw.traced_path):
@@ -366,6 +381,10 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             # Triangulate for QuadWild
             bmesh.ops.triangulate(bm, faces=bm.faces, quad_method='SHORT_EDGE', ngon_method='BEAUTY')
 
+            bm.normal_update()
+            ref_co = np.array([v.co[:] for v in bm.verts])
+            ref_no = np.array([v.normal[:] for v in bm.verts])
+
             # Export
             exporter.export_mesh(bm, mesh_filepath)
             exporter.export_sharp_features(bm, qw.sharp_path, SHARP_ANGLE)
@@ -388,6 +407,8 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                 sym_x=sym_x,
                 sym_y=sym_y,
                 n_parts=n_parts,
+                ref_co=ref_co,
+                ref_no=ref_no,
             )
 
         except EngineLoadError as e:
