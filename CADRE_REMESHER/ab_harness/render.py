@@ -3,7 +3,7 @@ magenta = 6+). Runs headless with Workbench.
 
 blender -b --factory-startup --python render.py -- <out_prefix> <px_per_slot> <views csv> <label>=<path.obj> ...
 views: front,side,back,threeq,head,headside,top,feet
-env: HEAT=1 (colour by flow error), RENDER_BG=<linear grey>, NO_POLES=1
+env: NO_WIRE=1 (surface only), HEAT=1 (colour by flow error), RENDER_BG=<linear grey>, NO_POLES=1
 """
 import bpy, bmesh, os, sys, json, math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +38,10 @@ scene.render.image_settings.file_format = 'PNG'
 meshes = []
 for label, path in items:
     verts, faces = read_obj(path)
-    meshes.append((label, np.array(verts), faces))
+    V_ = np.array(verts)
+    if os.environ.get('NORMALIZE'):
+        V_ = (V_ - 0.5 * (V_.min(0) + V_.max(0))) / float((V_.max(0) - V_.min(0)).max())
+    meshes.append((label, V_, faces))
 allv = np.concatenate([m[1] for m in meshes])
 lo, hi = allv.min(0), allv.max(0)
 center = 0.5 * (lo + hi)
@@ -89,6 +92,8 @@ for (label, V, faces), (_, path) in zip(meshes, items):
     val = np.bincount(E.ravel(), minlength=len(V))
     emean = float(np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1).mean())
     wire = obj_from_pydata(label + '_wire', Vc.tolist(), faces)
+    if os.environ.get('NO_WIRE'):
+        wire.hide_render = True
     wm = wire.modifiers.new('w', 'WIREFRAME')
     wm.thickness = max(0.0035 * 2 * hz, 0.05 * emean) * 0.55
     wm.use_replace = True

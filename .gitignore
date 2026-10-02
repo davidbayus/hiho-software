@@ -35,3 +35,6 @@ CLAUDE_LEGACY*.md
 
 # Quadre A/B harness scratch (inputs, results, renders)
 CADRE_REMESHER/ab_harness/work/
+
+# A/B result pictures and meshes (include student sculpts by code): disk only
+CADRE_REMESHER/AB_20*/

@@ -37,6 +37,20 @@ files `metrics.py` writes next to each OBJ).
 `exp_quadre.py` with its defaults reproduces the **0.3.8** operator; `exp_field.py` and
 `exp_post.py` are the prototypes that became `quadre/flow.py` and `quadre/relax.py`.
 
+## The eleven-shape benchmark (Phase 0)
+
+```
+$B -b <source.blend> --python bench_prep.py -- "<object name>" <code> work "<note>"   # one input per shape
+./bench_run.sh <code> ...               # Exoside, Quadre (current + 0.3.8), AutoRemesher, QuadriFlow at 5,000
+./bench_report.sh <outdir> <code> ...   # metrics, LABELED_ sheets, shuffled BLIND_ A/B sheets + key
+python3 bench_table.py work <code> ...  # markdown tables
+```
+
+Which source file and object each code stands for is kept outside the repo (student work is named
+only by code here). Every run goes through `tl.sh`, a hard time limit: Blender ignores SIGALRM, so a
+hung engine has to be polled and killed. AutoRemesher is expected at `SOFTWARE/R&D/autoremesher/`
+(or `$AUTOREMESHER`); the 0.3.8 source at `work/old038/` (`git archive 33d6b2d CADRE_REMESHER/quadre`).
+
 ## Reading the table
 
 `poles` irregular vertices · `flow°` loops off the form (0 best, 22.5 random) · `ang°` corner

@@ -1,7 +1,14 @@
 # QUADRE — plan for matching Exoside's quality (draft, 2026-10-02, laptop)
 
-**Status:** draft for David. Nothing in here is built. Follows the v0.4.2 work recorded in
+**Status:** Phase 0 is done (same day): results in `QUADRE_PHASE0_BENCHMARK_2026-10-02.md`, waiting on
+David's blind picks and markup. Phases 1 to 4 are not built. Follows the v0.4.2 work recorded in
 `QUADRE_FLOW_QUALITY_DESIGN_2026-10-02.md`.
+
+**What Phase 0 changed in this plan:** (a) it found and fixed a hang / shatter bug on dense open
+shapes (v0.4.3); (b) Phase 2's question is mostly answered: neither AutoRemesher nor QuadriFlow is a
+better base, one check left (AutoRemesher plus Quadre's finishing pass); (c) Phase 1 gets a new first
+item, a time limit around the engine, and a sharper target list: hard-surface pole count, symmetry on
+shapes with borders or creases, the open-shape path's rougher corners, faces.
 
 ---
 
