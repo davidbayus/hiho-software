@@ -13,6 +13,7 @@ See QUADRE_NOFREEZE_DESIGN_2026-07-06.md.
 import os
 import math
 import re
+import shutil
 import threading
 import time
 
@@ -51,6 +52,9 @@ SHARP_ANGLE = 35.0
 # Sharp features set a floor (~650 faces on Suzanne, ~1,450 on a
 # voxel-remeshed sculpt), so very low counts land above the ask.
 QUADWILD_K = 0.50
+
+# Further off the typed count than this, the engine gets one corrected retry
+COUNT_TOLERANCE = 0.05
 
 # Max input triangles before we auto-decimate.
 # QRemeshify recommends < 100K. We enforce it so students
@@ -172,9 +176,35 @@ class _Job:
 
             # The native call can fail without raising — ground truth is
             # whether the result file actually appeared
-            if not os.path.exists(self.qw.output_smoothed_path):
+            result_path = self.qw.output_smoothed_path
+            if not os.path.exists(result_path):
                 self.error = "the engine finished without producing a result"
                 return
+
+            # The density formula is an estimate. When the engine lands well
+            # off the typed count, correct the density from what it actually
+            # delivered and build the quads once more (this step is the
+            # quick one), then keep whichever result is closer
+            got = _count_obj_faces(result_path)
+            if (
+                got > 0
+                and abs(got / self.target_faces - 1.0) > COUNT_TOLERANCE
+                and not self.cancel_requested
+            ):
+                retry_density = density * math.sqrt(got / self.target_faces)
+                retry_density = min(max(retry_density, 0.4), 12.0)
+                if abs(retry_density - density) > 1e-3:
+                    first_path = result_path + ".first"
+                    shutil.copyfile(result_path, first_path)
+                    self.qw.quadrangulate(qr_params, retry_density, 0, True)
+                    retry = (
+                        _count_obj_faces(result_path)
+                        if os.path.exists(result_path) else 0
+                    )
+                    if retry == 0 or (
+                        abs(retry - self.target_faces) >= abs(got - self.target_faces)
+                    ):
+                        os.replace(first_path, result_path)
             self.finished_ok = True
 
         except Exception as e:
