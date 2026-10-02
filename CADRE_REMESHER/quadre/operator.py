@@ -65,6 +65,10 @@ MAX_INPUT_TRIS = 100_000
 # headroom, since voxel remeshing overshoots on curvy shapes.
 DECIMATE_TARGET_TRIS = 80_000
 
+# A voxel-simplified copy with fewer triangles than this is scraps, not a
+# shape (seen: 12 faces from a 287K-triangle open hand)
+VOXEL_SCRAPS_TRIS = 2_000
+
 # The finishing pass keeps separate pieces from snapping onto each other.
 # Labelling the pieces of the original is plain Python, so it only runs
 # when the original is small enough for that to be quick
@@ -668,24 +672,28 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
         return parts
 
     def _make_decimated_copy(self, evaluated_obj, depsgraph):
-        """Voxel-remesh a temporary copy of an oversized mesh down to the
-        tri budget. Voxel size is computed from the mesh's actual surface
-        area — a fixed size can EXPLODE the count on larger meshes."""
+        """Simplify a temporary copy of an oversized mesh down to the tri
+        budget. Watertight shapes are voxel-remeshed (fast); open shapes
+        are collapse-decimated, because voxel remeshing turns an open shell
+        into scraps."""
         temp_mesh = bpy.data.meshes.new_from_object(
             evaluated_obj, preserve_all_data_layers=False, depsgraph=depsgraph
         )
         temp_obj = bpy.data.objects.new("_quadre_decimate_tmp", temp_mesh)
         bpy.context.collection.objects.link(temp_obj)
 
+        tris_before = sum(len(p.vertices) - 2 for p in temp_mesh.polygons)
         area = sum(p.area for p in temp_mesh.polygons)
         # Voxel remeshing yields roughly 2 triangles per voxel-sized
-        # square of surface, so: voxel = sqrt(area * 2 / target_tris)
+        # square of surface, so: voxel = sqrt(area * 2 / target_tris).
+        # A fixed size can EXPLODE the count on larger meshes
         voxel = math.sqrt(area * 2.0 / DECIMATE_TARGET_TRIS) if area > 0 else 0.02
 
         # Thin-wall check (THIN_WALL_RESEARCH_2026-07-06): a voxel bigger
         # than half the wall can't see the cavity between two walls and
         # silently fuses them (measured 34% volume loss). Characteristic
         # wall ≈ 2·volume/area — only meaningful on a closed mesh
+        is_closed = False
         if area > 0:
             bm_check = bmesh.new()
             bm_check.from_mesh(temp_mesh)
@@ -706,15 +714,37 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
         prev_active = bpy.context.view_layer.objects.active
         bpy.context.view_layer.objects.active = temp_obj
         try:
-            for _ in range(3):
-                mod = temp_obj.modifiers.new("_quadre_decimate", 'REMESH')
-                mod.mode = 'VOXEL'
-                mod.voxel_size = voxel
+            voxel_ok = False
+            if is_closed:
+                for _ in range(3):
+                    mod = temp_obj.modifiers.new("_quadre_decimate", 'REMESH')
+                    mod.mode = 'VOXEL'
+                    mod.voxel_size = voxel
+                    bpy.ops.object.modifier_apply(modifier=mod.name)
+                    tris = sum(len(p.vertices) - 2 for p in temp_obj.data.polygons)
+                    if tris <= MAX_INPUT_TRIS:
+                        break
+                    voxel *= 1.5
+                voxel_ok = tris >= VOXEL_SCRAPS_TRIS
+
+            if not voxel_ok:
+                # An open shape (a hand cut at the wrist, a head with no
+                # neck cap) has no inside for the voxel grid to fill: it
+                # came back as two 6-face scraps on the benchmark hand, and
+                # the engine never returns from scraps (2026-10-02). Start
+                # again from the real surface and collapse edges instead —
+                # slower, but it keeps open borders where they are
+                if is_closed:
+                    scraps = temp_obj.data
+                    temp_obj.data = bpy.data.meshes.new_from_object(
+                        evaluated_obj, preserve_all_data_layers=False, depsgraph=depsgraph
+                    )
+                    bpy.data.meshes.remove(scraps)
+                mod = temp_obj.modifiers.new("_quadre_decimate", 'DECIMATE')
+                mod.decimate_type = 'COLLAPSE'
+                mod.ratio = min(1.0, DECIMATE_TARGET_TRIS / max(tris_before, 1))
+                mod.use_collapse_triangulate = True
                 bpy.ops.object.modifier_apply(modifier=mod.name)
-                tris = sum(len(p.vertices) - 2 for p in temp_obj.data.polygons)
-                if tris <= MAX_INPUT_TRIS:
-                    break
-                voxel *= 1.5
         finally:
             bpy.context.view_layer.objects.active = prev_active
         return temp_obj
