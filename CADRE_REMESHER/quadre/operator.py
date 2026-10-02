@@ -289,7 +289,8 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             # If the shape is too dense, simplify a temporary COPY —
             # the student's original mesh is never modified
             tri_count = sum(len(p.vertices) - 2 for p in mesh.polygons)
-            if tri_count > MAX_INPUT_TRIS:
+            simplified = tri_count > MAX_INPUT_TRIS
+            if simplified:
                 self.report({'INFO'}, f"Shape has {tri_count:,} triangles — simplifying a copy first...")
                 temp_obj = self._make_decimated_copy(evaluated_obj, depsgraph)
                 source_mesh = temp_obj.data
@@ -337,11 +338,18 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                     )
                     return None
 
-            # Mark sharp edges from angle threshold, seams, material boundaries
+            # Mark sharp edges from angle threshold, seams, material boundaries.
+            # The angle test only runs on the student's own geometry: the
+            # simplified copy is covered in short false creases, and the
+            # engine bends the quad flow around every one of them (measured
+            # 2026-10-02 on the Chibi sculpt: 112 poles with them, 48 without)
             face_set_layer = bm.faces.layers.int.get('.sculpt_face_set')
             bm.edges.ensure_lookup_table()
             for edge in bm.edges:
-                is_sharp = math.degrees(edge.calc_face_angle(0)) > SHARP_ANGLE
+                is_sharp = (
+                    not simplified
+                    and math.degrees(edge.calc_face_angle(0)) > SHARP_ANGLE
+                )
                 is_material_boundary = (
                     len(edge.link_faces) > 1 and
                     edge.link_faces[0].material_index != edge.link_faces[1].material_index
