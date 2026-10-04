@@ -1,5 +1,5 @@
---- a/quadre/flow.py	2026-10-03 19:01:33
-+++ b/quadre/flow.py	2026-10-03 19:38:40
+--- a/quadre/flow.py
++++ b/quadre/flow.py
 @@ -264,11 +264,27 @@
          if guide is None:
              clear = np.where(pinned, 1.0, np.clip(strength / GUIDE_FULL, 0.0, 1.0))

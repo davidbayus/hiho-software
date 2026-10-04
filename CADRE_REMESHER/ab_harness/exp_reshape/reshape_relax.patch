@@ -1,0 +1,20 @@
+--- a/quadre/relax.py
++++ b/quadre/relax.py
+@@ -24,7 +24,7 @@
+ from .flow import _read_triangles, _read_sharp
+ 
+ 
+-ROUNDS = 60
++ROUNDS = int(os.environ.get('QRELAX_ROUNDS', 60))
+ 
+ # How far each vertex moves toward where its quads want it, per round
+ STEP = 0.7
+@@ -35,7 +35,7 @@
+ FLOW_PULL = 0.3
+ 
+ # Blend of each quad's size toward the average of the quads around it
+-SIZE_EVEN = 0.5
++SIZE_EVEN = float(os.environ.get('QRELAX_EVEN', 0.5))
+ 
+ # The flow map is looked up again every few rounds as quads drift
+ FLOW_LOOKUP_EVERY = 5
