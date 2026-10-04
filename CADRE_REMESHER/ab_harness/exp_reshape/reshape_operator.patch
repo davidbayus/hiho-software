@@ -1,0 +1,110 @@
+--- a/quadre/operator.py	2026-10-03 19:01:33
++++ b/quadre/operator.py	2026-10-03 19:38:40
+@@ -29,7 +29,7 @@
+ import mathutils
+ import numpy as np
+ 
+-from . import child, flow, relax, score, stages
++from . import child, flow, relax, score, stages, warp
+ from .lib import Quadwild, EngineLoadError
+ from .stages import SHARP_ANGLE
+ from .util import bisect, exporter, importer
+@@ -175,23 +175,56 @@
+             names = [name for name, _, _ in flow.MAPS]
+             normals_at = None
+             sides = []
++            shaped = None
+             try:
+                 normals_at = flow.normal_lookup(self.ref_co, self.ref_no)
+                 sides = [stages.layout_folder(self.qw, k) for k in range(len(names))]
+                 guide_path = sides[0].field_path + ".guide"
+-                flow.write_flow_fields(
++
++                gains = []
++
++                def reshape(V, F, D, bending, quad_edge):
++                    t0 = time.monotonic()
++                    A, gain, top = warp.stretch_tensors(V, F, D, bending, quad_edge)
++                    plane_x = np.abs(V[:, 0]) < 1e-4 if self.sym_x else None
++                    plane_y = np.abs(V[:, 1]) < 1e-4 if self.sym_y else None
++                    X = warp.reshape(V, F, A, plane_x, plane_y)
++                    def area(P):
++                        return 0.5 * np.linalg.norm(np.cross(P[F[:, 1]] - P[F[:, 0]], P[F[:, 2]] - P[F[:, 0]]), axis=1).sum()
++                    gains.append(area(X) / max(area(V), 1e-30))
++                    print(f"QUADRE: reshape: wanted area x{gain:.2f}, got x{gains[-1]:.2f}, top stretch {top:.2f}, {time.monotonic() - t0:.1f}s")
++                    return X
++
++                shaped = flow.write_flow_fields(
+                     self.qw.remeshed_path, self.qw.sharp_path, normals_at,
+                     self.target_faces, [side.field_path for side in sides],
+                     guide_path,
++                    reshape=None if os.environ.get('QWARP_OFF') else reshape,
+                 )
+                 self.flow_path = guide_path
+             except Exception as e:
++                import traceback; traceback.print_exc()
+                 print(f"QUADRE: used the engine's own flow map only ({e})")
+-                names, normals_at, sides = [], None, []
++                names, normals_at, sides, shaped = [], None, [], None
+             engine_side = stages.layout_folder(self.qw, len(sides))
+             shutil.copyfile(self.qw.field_path, engine_side.field_path)
+             names.append('engine')
+             sides.append(engine_side)
++
++            targets = [self.target_faces] * len(sides)
++            if shaped is not None:
++                V, F = shaped['V'], shaped['F']
++                D_engine = flow._read_field(self.qw.field_path)
++                shaped['X'].append(reshape(V, F, D_engine, shaped['bending'], shaped['quad_edge']))
++                flow._write_field(
++                    engine_side.field_path,
++                    warp.carry_directions(D_engine, V, shaped['X'][-1], F),
++                )
++                for side, X in zip(sides, shaped['X']):
++                    warp.rewrite_obj_vertices(self.qw.remeshed_path, side.remeshed_path, X)
++                if os.environ.get('QWARP_COUNT') == 'adapt':
++                    # keep the typed quad size on the plain areas; the stretched ones add quads
++                    targets = [max(int(round(self.target_faces * g)), 1) for g in gains]
+ 
+             self.layouts_total = len(sides)
+             self._enter_stage(2)
+@@ -200,7 +233,7 @@
+                 self.layouts_done += 1
+ 
+             outcomes = self._engine(
+-                [('layout', side.mesh_path, self.target_faces) for side in sides],
++                [('layout', side.mesh_path, target) for side, target in zip(sides, targets)],
+                 one_done,
+             )
+             if self.cancel_requested:
+@@ -210,7 +243,7 @@
+             best = None
+             failure = None
+             notes = []
+-            for name, side, outcome in zip(names, sides, outcomes):
++            for index, (name, side, outcome) in enumerate(zip(names, sides, outcomes)):
+                 result_path = side.output_smoothed_path
+                 if outcome is None and not os.path.exists(result_path):
+                     outcome = stages.EngineError(
+@@ -220,6 +253,21 @@
+                     failure = outcome
+                     notes.append(f"{name} failed")
+                     continue
++                if shaped is not None:
++                    # carry the quads from the reshaped mesh back to the real shape
++                    X, V, F = shaped['X'][index], shaped['V'], shaped['F']
++                    Vq, Q, _ = score._read_quads(result_path)
++                    real, worst = warp.carry_back(Vq, X, V, F)
++                    real_path = result_path + ".real.obj"
++                    with open(result_path) as f, open(real_path, 'w') as g:
++                        it = iter(real)
++                        for line in f:
++                            if line.startswith('v '):
++                                p = next(it)
++                                g.write(f"v {p[0]:.6f} {p[1]:.6f} {p[2]:.6f}\n")
++                            else:
++                                g.write(line)
++                    result_path = real_path
+                 total = self._measure(result_path, normals_at)
+                 notes.append(f"{name} {total:.1f}")
+                 if best is None or total < best[0]:

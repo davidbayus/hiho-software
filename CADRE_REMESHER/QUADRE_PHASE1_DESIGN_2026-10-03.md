@@ -462,15 +462,40 @@ count something his eye weighs. Two things were measured afterwards that it had 
   the ten (up to 12,228 where 5,000 was asked) and it varies quad size far more (smaller quads on
   tight features). On the one shape he gave to Quadre the two are closest on both counts.
 
-Not yet known: which of these decided his picks, or whether it is something else again (rings around
-bumps, where the poles sit). That is the next question, and it is his to answer.
+**His answer, the same evening.** The goal: "we want to get as close to 1:1 with exoside as possible
+if not better." All three of these tipped his picks: smaller quads on tight spots, straighter and
+calmer lines, loops that ring the forms. He marked up three crops:
+
+- **Chibi neck and crotch:** "look at the areas where things tighten up". Exoside stacks thin rings
+  into the neck crease and the bend between the legs; Quadre's quads stay one size.
+- **Bucket:** "look at how exoside's mesh follows the details like the line moving across the center
+  of the shape". Exoside lays an edge loop exactly along the crease and runs its neighbours parallel.
+- **Film head chin:** "look at how the lower chin quads are adjusted to contour the general shape of
+  the chin dimple detail".
+
+So what the eye wants is quad size that follows the shape (and not evenly: thin rings stacked across a
+crease, normal width along it), and loops laid on crease lines. Neither is in the ruler, and neither
+can be asked of the engine as it is.
+
+### 5.8 First experiment toward that (not shipped)
+
+`ab_harness/exp_reshape/` (README inside). Between step 1 and the layouts, the engine's working mesh is
+stretched where the surface turns fast, the engine lays its even quads on the stretched mesh, and the
+quads are carried back to the real shape, where the stretched areas now have smaller quads. It runs
+end to end in about a second per flow map. On the hand it brings loops and corners close to Exoside
+(6.0 / 4.6 against 5.1 / 5.3; 0.4.7 has 8.1 / 5.5). On the Chibi it is worse than 0.4.7, because the
+four layouts on the stretched mesh all drew worse than the one lucky plain layout, and the neck did not
+get Exoside's stack of rings. The README lists what to try next, in order.
 
 ## 6. Open list after this phase
 
-0. **The ruler has to learn what David's eye sees** (section 5.7) before more engine work is steered
-   by it. First steps: his words on what tipped the picks; add loop straightness to `metrics.py`; a
-   blind round with Quadre run at the quad count Exoside actually delivered, so density is not the
-   difference.
+0. **Get as close to 1:1 with Exoside as possible** (David, section 5.7): quad size that follows the
+   shape, loops laid on crease lines, straighter lines. The reshape experiment (section 5.8,
+   `ab_harness/exp_reshape/README.md`) is the first try at the first of these without rebuilding the
+   engine; its next steps are listed there. The ruler needs two new columns to steer this: loop
+   straightness (`ab_harness/straight.py`, not yet in `metrics.py`) and something that sees quad size
+   following the shape. And a blind round with Quadre run at the quad count Exoside actually
+   delivered, so plain density is not the difference.
 
 1. **The two gaps in the parity plan are untouched:** adaptive quad size (all of the detail gap) and
    quads following the map loosely inside big patches (most of the remaining flow gap). Phase 3.

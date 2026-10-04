@@ -1,0 +1,61 @@
+--- a/quadre/flow.py	2026-10-03 19:01:33
++++ b/quadre/flow.py	2026-10-03 19:38:40
+@@ -264,11 +264,27 @@
+         if guide is None:
+             clear = np.where(pinned, 1.0, np.clip(strength / GUIDE_FULL, 0.0, 1.0))
+             guide = fields[0] * clear[:, None]
+-    return fields, guide
++            bending = M
++    return fields, guide, bending
+ 
+ 
++def _write_field(path, D):
++    tmp_path = path + '.tmp'
++    with open(tmp_path, 'w') as f:
++        f.write(f"{len(D)}\n4\n")
++        for d in D:
++            f.write(f"{d[0]:.6f} {d[1]:.6f} {d[2]:.6f} \n")
++    os.replace(tmp_path, path)
++
++
++def _read_field(path):
++    with open(path) as f:
++        lines = f.read().split('\n')[2:]
++    return np.array([[float(x) for x in line.split()] for line in lines if line.strip()])
++
++
+ def write_flow_fields(remeshed_path, sharp_path, normals_at, target_faces, paths,
+-                      guide_path, maps=MAPS):
++                      guide_path, maps=MAPS, reshape=None):
+     """Write one flow map file per entry of maps, for the engine's remeshed
+     triangles, and the finishing pass's guide (same file layout, directions
+     scaled by their strength). Raises on any problem; the caller then falls
+@@ -282,14 +298,20 @@
+         np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), axis=1
+     ).sum()
+     quad_edge = math.sqrt(area / max(target_faces, 1))
+-    fields, guide = compute_fields(V, F, sharp, normals_at, quad_edge, maps)
++    fields, guide, bending = compute_fields(V, F, sharp, normals_at, quad_edge, maps)
+     for D in fields + [guide]:
+         if not np.isfinite(D).all():
+             raise ValueError("flow map has gaps")
+-    for D, path in zip(fields + [guide], list(paths) + [guide_path]):
+-        tmp_path = path + '.tmp'
+-        with open(tmp_path, 'w') as f:
+-            f.write(f"{len(F)}\n4\n")
+-            for d in D:
+-                f.write(f"{d[0]:.6f} {d[1]:.6f} {d[2]:.6f} \n")
+-        os.replace(tmp_path, path)
++    _write_field(guide_path, guide)
++    shaped = None
++    if reshape is not None:
++        # reshape(V, F, D, bending, quad_edge) -> reshaped vertex positions
++        # for the map D; each map is carried onto its own reshaped triangles
++        from . import warp
++        shapes = [reshape(V, F, D, bending, quad_edge) for D in fields]
++        if all(np.isfinite(X).all() for X in shapes):
++            shaped = dict(V=V, F=F, X=shapes, bending=bending, quad_edge=quad_edge)
++            fields = [warp.carry_directions(D, V, X, F) for D, X in zip(fields, shapes)]
++    for D, path in zip(fields, paths):
++        _write_field(path, D)
++    return shaped

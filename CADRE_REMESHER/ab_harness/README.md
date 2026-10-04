@@ -30,6 +30,10 @@ $B -b "../BUG_REPORTS/ORGANIC TEST2.blend" --python prep_more.py -- work   # buc
 | `render.py` + `montage.py` | Same-camera wireframe renders with poles marked, stacked into a sheet |
 | `gui_test.py` | Student's path: install the zip in a sandboxed Blender window and press the button |
 | `test_child.py` | Does the engine-in-its-own-process path hold up: fallback, a child that dies, Esc, a deliberate hang |
+| `straight.py <obj> ...` | How straight the edge loops run, and how much quad size varies (plain python3 + numpy) |
+| `where_bad.py <obj> ...` | Where the bent corners sit: near borders, near poles, or in the open |
+| `crop.py` | Cut the same window out of every slot of a `render.py` picture (close-ups for the eye) |
+| `exp_reshape/` | Experiment, not shipped: quads that shrink where the shape tightens (README inside) |
 | `field_diag.py`, `worst.py` | How well a flow map follows curvature; where a result strays furthest |
 
 `HEAT=1` on `render.py` colours quads by how far they sit off the form (needs the `.mis.npy`
