@@ -1,0 +1,416 @@
+# QUADRE — Phase 1: squeeze the current engine (findings + design, 2026-10-03, laptop)
+
+**Occasion:** David, Saturday evening: "can we pick up our dev work from where we last left off on the
+Quadre add-on... feel free to go hard on this for a bit." This is Phase 1 of
+`QUADRE_EXOSIDE_PARITY_PLAN_2026-10-02.md`. It follows `QUADRE_PHASE0_BENCHMARK_2026-10-02.md`.
+
+**Status:** built the same evening as **v0.4.4, v0.4.5 and v0.4.6**, one commit each, each measured
+through the real operator before the next. Sections 2 and 3 were written first, from measurements on
+throwaway copies of the add-on in the session scratch folder. Section 5 records what was built and
+what it measured. David has not looked at any of it yet.
+
+---
+
+## 1. Read this first (plain English)
+
+Before changing anything, the test shapes were rebuilt and 0.4.3 was measured again. The numbers came
+out the same as yesterday's to the digit, so everything below is measured from a known starting point.
+
+Then the question was: where do 0.4.3's ugly quads actually sit, and why? Three findings.
+
+**1. The engine is moody, and Quadre was taking its first answer.**
+The engine lays quads out in a few dozen big patches. Small changes to the flow map it is handed move
+the poles around and can skew whole patches. Yesterday's new flow map (the 0.4.0 change) helps most
+shapes. On some it gives a clearly worse layout than the engine's own built-in map:
+
+- the hand came out with sheared quads across the whole back of the hand;
+- the hard-surface bracket got 152 poles where the engine's own map gives 48;
+- Suzanne with symmetry got three corners in every hundred bent past 45 degrees.
+
+Neither map wins everywhere. Across the eleven benchmark shapes, Quadre's map follows the form better
+(11.6 against 12.6 degrees) and the engine's map gives squarer quads with half the poles (66 against
+138). No single setting of Quadre's map was better on both counts (five were tried).
+
+**2. The finishing pass was sanding the hard edges off.**
+It squares the quads up by moving points around. It was moving points that sit ON a hard edge off that
+edge, so the edge came out wavy. On the bracket that lost fifteen times more of the shape than 0.3.8
+did. Points on an open border had the opposite problem: they were frozen in place.
+
+**3. A hang or a crash inside the engine still takes Blender with it.** Known since August. Phase 0
+put a time limit at the top of the Phase 1 list.
+
+**The three changes, in the order they will be built:**
+
+1. **Keep the lines (0.4.4).** In the finishing pass, a point on a hard edge or an open border slides
+   along that line and never leaves it. Where a line has a corner, that point does not move at all.
+2. **Build four layouts, keep the best (0.4.5).** Quadre draws four flow maps instead of one (its own,
+   a smoother one, a stricter one, and the engine's built-in one), has the engine build quads from each,
+   measures every result with the same ruler the benchmark uses, and keeps the best.
+3. **The engine runs outside Blender (0.4.6).** It becomes a small separate program that Blender
+   starts and watches. A hang is stopped after five minutes with a plain-English message. A crash no
+   longer closes Blender. Esc stops it at once. And the four layouts are built at the same time on
+   separate processor cores, so four cost about the same wait as one.
+
+**What it measured once built** (lower is better; full tables in section 5):
+
+| Nine shapes every tool finished | Exoside 1.4 | Quadre 0.4.6 | Quadre 0.4.3 |
+|---|---|---|---|
+| Loops off the form (degrees) | 10.4 | 12.0 | 12.7 |
+| Corners off square (degrees) | 7.9 | 7.3 | 9.0 |
+| Corners bent past 45 degrees (%) | 0.43 | 0.35 | 0.91 |
+| Poles | 202 | 131 | 151 |
+| Sculpt detail lost | 0.39 | 0.80 | 0.77 |
+
+In words: the quads are now squarer than Exoside's and fewer of them are badly bent. The gap in
+following the form closed by about a third. Kept detail did not move; that gap is the adaptive
+sizing in the parity plan (Phase 3), and it shows most on the film head.
+
+And for the lines: the bracket's lost detail went from 1.81 to 0.18 (0.3.8 had 0.12, Exoside 0.90),
+and its bottom edge is straight again.
+
+**What it costs:** about one second more per run than 0.4.3.
+
+**What this does not fix:** the two gaps named in the parity plan (Exoside sizes its quads to the
+shape; the engine fills big patches with plain grids). Those are still Phase 3. This phase gets more
+out of the engine as it is.
+
+---
+
+## 2. How the diagnosis went
+
+Set-up: the eleven benchmark inputs were rebuilt from the private key with `bench_prep.py` into the
+session scratch folder (`AB_WORK`), not the repo. All eleven reference surfaces came out byte-identical
+to yesterday's. `suite_op.sh` on the untouched source gave yesterday's row exactly (Chibi 5,000 with X
+symmetry: 4,776 faces, 48 poles; suite mean 11.45 / 7.68 / 0.77).
+
+One harness oddity: the rebuilt `<code>.json` files gave different symmetry scores for seven shapes
+(the hand came back as "X"). Yesterday's files were kept so every run uses yesterday's settings. Not
+chased; see the open list.
+
+### 2.1 Where the bent corners sit
+
+Corners were sorted by how far they are from a pole or an open border (`where_bad.py`, scratch).
+
+| Shape (0.4.3) | Corner error far from any pole or border | Exoside, same region |
+|---|---|---|
+| Suzanne, X symmetry | 10.8 degrees, 2.4% bent | 5.9 degrees, 0.01% bent |
+| Hand | 11.1 degrees, 1.0% bent | 4.9 degrees, 0% bent |
+| Film head | 6.8 degrees | 6.5 degrees |
+| Chibi | 7.7 degrees | 6.4 degrees |
+
+So on Suzanne and the hand the trouble is not at borders or poles. Ordinary quads in the middle of
+nowhere are sheared. On the film head the ordinary quads are fine; the trouble is the pole count (198
+against 138) and the rows next to the neck border.
+
+### 2.2 The flow map is the cause
+
+Same shapes, finishing pass on, only the flow map swapped:
+
+| Shape | Quadre's map: loops / corners / bent % / poles | Engine's own map |
+|---|---|---|
+| Hand | 10.9 / 11.3 / 1.11 / 38 | 8.5 / 5.7 / 0.08 / 38 |
+| Suzanne, X symmetry | 13.1 / 11.7 / 3.05 / 95 | 14.5 / 7.4 / 0.32 / 56 |
+| Bracket | 9.9 / 6.7 / 0.23 / 152 | 10.2 / 4.0 / 0.18 / 48 |
+| Film head | 14.8 / 9.5 / 2.07 / 198 | 15.5 / 7.5 / 0.60 / 96 |
+| Bucket | 10.3 / 7.4 / 0.26 / 91 | 15.1 / 9.3 / 0.35 / 40 |
+| Chibi, X symmetry | 11.1 / 8.0 / 0.16 / 48 | 11.5 / 9.4 / 0.29 / 48 |
+| Eleven-shape mean | 11.6 / 8.1 / 0.77 / 138 | 12.6 / 7.0 / 0.28 / 66 |
+
+Both maps are smooth and have about the same number of singular points (checked on the hand: 36 each).
+The difference is where those points land. Quadre's map follows curvature at the scale of one quad, so
+it reacts to knuckles and lumps; the engine then has to thread its patches between more poles, and the
+patches come out skewed.
+
+### 2.3 No single setting fixes it
+
+Five settings of Quadre's map were run over the suite and all eleven shapes: curvature read at twice
+and three times the scale, more smoothing, a weaker pull, a stricter confidence. Each trades poles for
+loop-following along the same line. None is better on both.
+
+| Setting (eleven-shape mean) | Poles | Loops off form | Corners | Bent % |
+|---|---|---|---|---|
+| 0.4.3 | 138 | 11.6 | 8.1 | 0.77 |
+| Curvature at 2x scale | 117 | 11.9 | 8.4 | 0.66 |
+| Curvature at 3x scale | 97 | 12.0 | 8.0 | 0.46 |
+| Six smoothing rounds | 116 | 12.0 | 8.2 | 0.55 |
+| Pull 2 instead of 5 | 112 | 12.1 | 7.8 | 0.68 |
+| Confidence threshold doubled | 105 | 12.0 | 8.3 | 0.62 |
+| Engine's own map | 66 | 12.6 | 7.0 | 0.28 |
+
+### 2.4 But the best one per shape is much better
+
+Taking, for every shape, whichever of those seven runs scored best (loops + corners):
+
+| | Loops off form | Corners | Bent % |
+|---|---|---|---|
+| Suite, 0.4.3 | 11.5 | 7.7 | 0.46 |
+| Suite, best of seven per case | 10.1 | 6.6 | 0.23 |
+| Eleven shapes, 0.4.3 | 11.6 | 8.1 | 0.77 |
+| Eleven shapes, best of seven per shape | 10.8 | 6.4 | 0.31 |
+
+Pairing 0.4.3 with a near-copy of itself (six smoothing rounds) gains as much as pairing it with the
+engine's map. So most of the gain is not "the right map for the right shape". It is the engine's
+moodiness: give it several slightly different maps and one of the layouts comes out clean. Yesterday's
+finding 8 said the same thing from the other side ("tiny input changes move face counts by 10% and
+shift poles").
+
+The best four of the seven (`0.4.3 + engine + six smoothing rounds + doubled confidence threshold`)
+get nearly all of it (suite 10.1 / 6.8, eleven shapes 10.8 / 6.6).
+
+### 2.5 The finishing pass and lines
+
+| Bracket | Detail lost | Worst spot | Corners |
+|---|---|---|---|
+| 0.3.8 (no finishing pass) | 0.12 | 2.2 | 6.7 |
+| 0.4.3 | 1.81 | 7.3 | 6.7 |
+| Exoside | 0.90 | 6.6 | 6.7 |
+
+The engine puts its points exactly on the crease and border lines it was given (measured: within a
+hundredth of a quad edge, and the next-nearest points are a third of a quad away or more). The
+finishing pass then moved them.
+
+---
+
+## 3. Design
+
+Three changes, shipped one at a time, each measured through the real operator on the suite and the
+eleven shapes before the next one starts.
+
+### Change 1 — the finishing pass keeps the lines (0.4.4)
+
+`quadre/relax.py` only.
+
+1. **Read the lines.** After step 1 the engine has written its own copy of the shape (`_rem.obj`) and
+   the list of crease and border edges on it (`_rem.sharp`). Open edges of that copy are added. Lines
+   that lie in a mirror plane are left out: the mirror step already owns those.
+2. **Which lines count.** Connected runs of edges are measured. A run shorter than four quad edges is
+   a stray mark (a pinhole, a crease fragment), not a line. Found on the hand: two stray edges between
+   the fingers.
+3. **Which points are on a line.** A result point within 0.02 quad edges of a kept line is on it.
+4. **Corners.** Where three or more line edges meet, or where a line turns more than 35 degrees, the
+   point there does not move. The same goes for a point that sits on a line and on a mirror plane.
+   A line's loose end is not a corner.
+5. **In every round,** a point on a line moves like any other point and is then put back on the
+   nearest spot of its own line (never another line that happens to run close by). It is not snapped
+   to the original surface; the line is already on it.
+6. Border points that are not on any kept line stay frozen, as before.
+
+Measured with the test copy: bracket detail lost 1.81 to 0.14, worst spot 7.3 to 2.1, corners 6.7 to
+6.8. Hand: the wrist rows go from 4.2 degrees off square to 0.8. Shapes with no creases or open borders
+(seven of the eleven) come out identical.
+
+Honest note: on Suzanne with symmetry this change alone makes the eye-socket rows slightly worse
+(bent corners 3.05% to 3.45%). That layout is already a mess there, and holding points to the socket
+rim keeps the mess from being smeared. Change 2 replaces that layout.
+
+### Change 2 — four layouts, keep the best (0.4.5)
+
+`quadre/flow.py`, new `quadre/score.py`, `quadre/operator.py`.
+
+1. **Four flow maps from one reading.** The slow part of the map (reading curvature off the shape) is
+   done once. From it:
+   - *ours*: 0.4.3's map exactly (2 smoothing rounds, confidence threshold 1.0);
+   - *smoother*: 6 smoothing rounds;
+   - *stricter*: confidence threshold 2.0 (only strong curvature steers);
+   - *engine*: the map the engine wrote in step 1, saved before it is overwritten.
+2. **One layout per map.** Steps 2 and 3 (trace, build quads, the count retry from 0.4.2) run once
+   per map. In this version they run one after the other.
+3. **Measure each result** (`score.py`, numpy, 0.1 s each): loops off the form and corners off square,
+   the same arithmetic as the harness ruler (`metrics.py`), read against the shape handed to the
+   engine. The score is the sum of the two, in degrees. Lowest wins.
+4. **Finishing pass** runs on the winner only, and always turns quads toward the *ours* map, whichever
+   layout won (measured: 0.3 degrees better on loops, 0.2 worse on corners than using the winner's own
+   map).
+5. If a layout fails, the others still count. If Quadre's maps cannot be built at all, the engine's
+   map alone is used (0.3.9 behaviour).
+6. The status line says how many layouts are done.
+
+Cost in this version: about 2 to 3 seconds per extra layout on this laptop (trace about 1 s, quads
+1 to 2 s), so roughly 7 seconds more per run until Change 3 runs them side by side.
+
+Not in the score: pole count and lost detail. Poles are a matter of taste David has not ruled on yet
+(the blind sheets will say); detail cannot be read reliably before the finishing pass.
+
+Eight layouts instead of four were also measured: corners 6.2 instead of 6.4 on the eleven shapes,
+loops unchanged. Not worth twice the work.
+
+### Change 3 — the engine in its own process (0.4.6)
+
+New `quadre/stages.py` and `quadre/engine_runner.py`, `quadre/operator.py`.
+
+1. **`stages.py`:** the engine steps as plain functions (rebuild; trace + quads + count retry). No
+   Blender calls. Used by both paths below, so there is one copy of the logic.
+2. **`engine_runner.py`:** a tiny script started with Blender's own bundled Python (`sys.executable`).
+   It loads the engine, writes a "ready" marker file, runs one step, and exits with a code that says
+   which step failed, if any. Checked on this Mac: the bundled Python loads the engine libraries.
+3. **Step 1** runs in one child process. The flow maps and the scoring stay inside Blender on the
+   worker thread (they need numpy and Blender's own maths library, and they cannot hang).
+4. **The four layouts** run in four child processes at once, each in its own folder, at most one per
+   processor core minus one.
+5. **Time limit:** 300 seconds per child. Past that the child is stopped and the student reads:
+   "QUADRE's engine got stuck on this shape and was stopped. Blender and your shape are fine..." The
+   child also carries its own alarm, so one orphaned by a Blender quit cannot run forever.
+6. **A crash** in the engine (it calls `exit()` on bad input) ends the child, not Blender. The student
+   gets the usual "this shape confused the engine" message.
+7. **Esc** stops the children at once. The old "(stopping after this step)" wording goes.
+8. **Fallback:** if the child never reports "ready" (it could not start, or could not load the
+   engine), the whole job runs inside Blender exactly as in 0.4.5: same four layouts, one after the
+   other, same result. No time limit on that path, as today.
+9. **Unchanged:** `_prep` still loads the engine inside Blender first, so the macOS "blocked" message
+   still appears before any heavy work.
+10. **Windows:** the child is started without a console window, and it is told where Blender's own
+    runtime libraries are. Still unobserved, like everything else on Windows. The fallback is the
+    safety net.
+
+Results must not change with this change. The check is that the suite and the eleven shapes give the
+same face counts and the same numbers as 0.4.5.
+
+Tests beyond the suite: a shape that hangs the engine (the flat open grid from yesterday's finding 9)
+with the limit turned down; a child killed mid-run; Esc from a second thread; the zip installed in a
+sandboxed Blender window and the button pressed (`gui_test.py`).
+
+---
+
+## 4. Tried and dropped
+
+- **One better setting of Quadre's map** (five tried, section 2.3): each trades poles for loops.
+- **Eight layouts:** small gain over four.
+- **Only regular points slide** (two quads at a border point, four at a crease point): slightly worse
+  than letting them all slide on Suzanne and the film head, same on the hand.
+- **Borders stay frozen, only creases slide:** no better on Suzanne, slightly worse on the film head,
+  and it gives up the squarer rows at the hand's wrist.
+- **Count accuracy in the score.** Looked at after the build: at low counts the four layouts land on
+  quite different face counts (bucket, 500 asked: 926 / 950 / 798 / 585). The layout that wins on
+  quality was also the closest to the typed count in five of seven low-count checks, so a count
+  penalty was left out. On the open list.
+
+## 5. As built
+
+Three commits on the SOFTWARE repo, local, unpushed: `d92175e` (0.4.4), `4de5cf4` (0.4.5), `8a2413c`
+(0.4.6). Zip: `quadre-v0.4.6.zip`. Notes: `QUADRE_v0.4.6_NOTES_2026-10-03.md`. Pictures:
+`AB_2026-10-03/` (one `LABELED_` sheet per shape with all five tools, and a fresh set of `BLIND_`
+sheets, Exoside against 0.4.6, with their own `BLIND_KEY.json`).
+
+### 5.1 Each version, real operator
+
+Six-case suite, means:
+
+| Version | Poles | Loops off form | Corner error | Bent corners % | Twist | Size jump | Off sculpt ‰ | Detail lost ‰ |
+|---|---|---|---|---|---|---|---|---|
+| 0.4.3 | 75 | 11.5 | 7.7 | 0.46 | 3.7 | 1.46 | 0.03 | 0.77 |
+| 0.4.4 lines kept | 75 | 11.4 | 7.7 | 0.62 | 3.8 | 1.47 | 0.02 | 0.77 |
+| 0.4.5 four layouts | 70 | 10.4 | 6.6 | 0.20 | 3.2 | 1.39 | 0.01 | 0.81 |
+| 0.4.6 engine outside Blender | 70 | 10.4 | 6.6 | 0.20 | 3.2 | 1.39 | 0.01 | 0.81 |
+| Exoside 1.4 | 79 | 8.4 | 7.7 | 0.32 | 2.8 | 1.55 | 0.02 | 0.41 |
+
+All eleven benchmark shapes, means (Exoside is left out here because it failed one shape):
+
+| Version | Poles | Loops off form | Corner error | Bent corners % | Detail lost ‰ |
+|---|---|---|---|---|---|
+| 0.4.3 | 138 | 11.6 | 8.1 | 0.77 | 0.85 |
+| 0.4.4 lines kept | 138 | 11.6 | 8.1 | 0.80 | 0.70 |
+| 0.4.5 four layouts | 112 | 10.9 | 6.7 | 0.30 | 0.73 |
+| 0.4.6 engine outside Blender | 112 | 10.9 | 6.7 | 0.30 | 0.73 |
+
+0.4.4 on its own raised the suite's bent corners (0.46% to 0.62%). That is one case, Suzanne with
+symmetry, as the design said it would be; 0.4.5 took it to 0.20%. 0.4.6 gives the same mesh as 0.4.5
+on every case, to the digit, which was its test.
+
+### 5.2 Five tools, nine shapes all of them finished
+
+Shapes counted: B01_chibi, B02_bucket, B03_suzanne, B04_filmhead, B05_hand, B06_firstsculpt,
+B07_alientree, B09_studentA, B11_studentC. (Yesterday's table counted eight: 0.3.8 could not do the
+hand. So these Exoside numbers differ a little from yesterday's.)
+
+| Tool | Finished | Poles | Loops off form | Corner error | Bent corners % | Size jump | Off sculpt ‰ | Detail lost ‰ | Worst spot ‰ |
+|---|---|---|---|---|---|---|---|---|---|
+| Exoside 1.4 | 10/11 | 202 | 10.4 | 7.9 | 0.43 | 1.49 | 0.05 | 0.39 | 5.9 |
+| Quadre 0.4.6 | 11/11 | 131 | 12.0 | 7.3 | 0.35 | 1.45 | 0.01 | 0.80 | 16.3 |
+| Quadre 0.4.3 | 11/11 | 151 | 12.7 | 9.0 | 0.91 | 1.52 | 0.02 | 0.77 | 15.3 |
+| AutoRemesher 1.2 | 11/11 | 156 | 13.4 | 8.0 | 1.94 | 1.73 | 0.24 | 1.05 | 21.6 |
+| QuadriFlow | 10/11 | 101 | 16.6 | 8.8 | 0.94 | 1.26 | 0.10 | 1.17 | 24.5 |
+
+### 5.3 Exoside against Quadre 0.4.6, shape by shape
+
+| Shape | Loops off form (E / Q) | Corner error (E / Q) | Detail lost (E / Q) | Poles (E / Q) | Quads (E / Q) | Layout kept |
+|---|---|---|---|---|---|---|
+| B01_chibi | 7.0 / 9.2 | 7.2 / 5.4 | 0.27 / 0.57 | 79 / 64 | 5,956 / 5,074 | stricter |
+| B02_bucket | 12.2 / 10.3 | 9.6 / 7.4 | 0.31 / 0.33 | 68 / 91 | 4,657 / 4,909 | own |
+| B03_suzanne | 8.6 / 11.2 | 6.9 / 6.6 | 0.33 / 0.49 | 92 / 99 | 6,210 / 5,262 | smoother |
+| B04_filmhead | 12.0 / 14.5 | 7.6 / 7.6 | 0.37 / 0.94 | 138 / 96 | 8,126 / 5,150 | engine |
+| B05_hand | 5.1 / 8.0 | 5.3 / 5.8 | 0.27 / 0.45 | 40 / 38 | 5,325 / 5,029 | engine |
+| B06_firstsculpt | 12.9 / 14.2 | 9.1 / 7.9 | 0.38 / 0.63 | 330 / 265 | 7,175 / 5,442 | own |
+| B07_alientree | 11.7 / 14.0 | 8.4 / 8.8 | 0.40 / 0.71 | 240 / 172 | 6,807 / 5,392 | stricter |
+| B08_bracket | 12.9 / 9.4 | 6.7 / 5.8 | 0.90 / 0.18 | 42 / 48 | 10,298 / 5,200 | engine |
+| B09_studentA | 16.3 / 16.8 | 10.1 / 8.5 | 0.77 / 2.35 | 603 / 251 | 12,301 / 5,481 | own |
+| B11_studentC | 7.9 / 9.8 | 7.1 / 7.9 | 0.41 / 0.70 | 228 / 104 | 9,016 / 5,284 | engine |
+
+Against 0.4.3 on yesterday's weak spots:
+
+| Shape | 0.4.3 | 0.4.6 |
+|---|---|---|
+| Hand: loops / corners / bent % | 10.9 / 11.3 / 1.11 | 8.0 / 5.8 / 0.05 |
+| Suzanne, X symmetry: loops / corners / bent % | 13.1 / 11.7 / 3.05 | 11.2 / 6.6 / 0.17 |
+| Bracket: poles / corners / detail lost | 152 / 6.7 / 1.81 | 48 / 5.8 / 0.18 |
+| Film head: poles / corners / bent % / detail lost | 198 / 9.5 / 2.07 / 0.74 | 96 / 7.6 / 0.64 / 0.94 |
+| Chibi, X symmetry: loops / corners | 11.1 / 8.0 | 9.2 / 5.4 |
+
+**The one trade to look at: the film head.** The layout that won has half the poles and far fewer
+bent corners, and it keeps a little less of the sculpt (0.94 against 0.74). Exoside is still clearly
+ahead on that shape (it spends 8,126 quads and sizes them to the face).
+
+### 5.4 Time
+
+Same laptop, three runs sharing the processor (the harness runs three shapes at once):
+
+| Shape | 0.4.4 (one layout) | 0.4.5 (four, one after another) | 0.4.6 (four, side by side) |
+|---|---|---|---|
+| Chibi | 9.1 s | 13.1 s | 10.5 s |
+| Bucket | 8.9 s | 14.8 s | 10.5 s |
+| Film head | 38.0 s | 45.2 s | 39.3 s |
+| Student A (6.5M triangles) | 22.0 s | 33.1 s | 23.4 s |
+
+With nothing else running, 0.4.3 against 0.4.6: Chibi 8.1 s against 8.7 s (two runs each), the
+4.9M-triangle first sculpt 16.5 s against 17.5 s. So about one second more per run than 0.4.3.
+
+Chibi at 25,000 quads: 20 s. In a real window from the installed zip: 9.6 s at 5,000 with X symmetry.
+
+### 5.5 Checked
+
+- Suite and eleven shapes through the real operator after every change.
+- `ab_harness/test_child.py`, five cases, all pass: a normal run; the child process made
+  unavailable (falls back inside Blender, identical mesh); a child that dies mid-step (plain failure
+  message, Blender carries on); Esc during the layouts (stops in a fraction of a second, no child left
+  running); and the flat open grid that hangs the engine, with the limit turned down to 8 s (stopped
+  at 8.1 s with the "got stuck" message, no child left running).
+- Extremes: Chibi at 500 / 10,000 with X symmetry and 25,000 without; Suzanne at 500, 2,000 with X and
+  Y symmetry, 25,000 with X. All finish.
+- Student's path: the zip installed with the real installer in a sandboxed Blender window, button
+  pressed, 5,074 faces, the same as headless; the window stayed alive; the status line read "Step 3
+  of 3" before the finishing pass.
+
+### 5.6 Not checked
+
+- **David's eye.** Nothing here has been looked at by him.
+- **Windows.** The child process is new code that has never run there (nor has any other part of
+  Quadre been observed there). If the child cannot start, the fallback runs everything inside Blender.
+- **An old or slow Mac.** All timings are from the M4 laptop.
+- The 300-second limit has only been exercised turned down to 8.
+
+## 6. Open list after this phase
+
+1. **The two gaps in the parity plan are untouched:** adaptive quad size (all of the detail gap) and
+   quads following the map loosely inside big patches (most of the remaining flow gap). Phase 3.
+2. **Taste, for David to rule on:** the score is loops + corners. Poles and typed-count accuracy are
+   not in it. The new blind sheets are the test.
+3. **A count penalty in the score** if low-count runs turn out to stray (section 4).
+4. **One slow layout holds up the other three** until the 300-second limit. Not seen happen; if it
+   does, give stragglers a shorter leash once one layout is done.
+5. **More than four layouts** on machines with cores to spare: eight measured a little better.
+6. **The finishing pass still pauses the window** for a second or two (it needs Blender's own
+   closest-point lookup). The status line now says so first.
+7. **The harness's symmetry verdict is not repeatable:** `bench_prep.py` rebuilt today gave different
+   `sym` values for seven shapes than yesterday's saved `.json` files (the hand came back "X").
+   Yesterday's files were used. Until this is found, keep the saved `.json` files when rebuilding inputs.
+8. Carried: the simplify step lands at about 50K triangles when it aims for 80K; curvature is read off
+   the simplified copy, not the sculpt; Windows volunteer test; materials on the result; non-ASCII paths.

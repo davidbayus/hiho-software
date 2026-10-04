@@ -29,6 +29,7 @@ $B -b "../BUG_REPORTS/ORGANIC TEST2.blend" --python prep_more.py -- work   # buc
 | `run_quadre.py` | Quadre's operator from source |
 | `render.py` + `montage.py` | Same-camera wireframe renders with poles marked, stacked into a sheet |
 | `gui_test.py` | Student's path: install the zip in a sandboxed Blender window and press the button |
+| `test_child.py` | Does the engine-in-its-own-process path hold up: fallback, a child that dies, Esc, a deliberate hang |
 | `field_diag.py`, `worst.py` | How well a flow map follows curvature; where a result strays furthest |
 
 `HEAT=1` on `render.py` colours quads by how far they sit off the form (needs the `.mis.npy`
@@ -41,15 +42,22 @@ files `metrics.py` writes next to each OBJ).
 
 ```
 $B -b <source.blend> --python bench_prep.py -- "<object name>" <code> work "<note>"   # one input per shape
-./bench_run.sh <code> ...               # Exoside, Quadre (current + 0.3.8), AutoRemesher, QuadriFlow at 5,000
+./bench_run.sh <code> ...               # Exoside, Quadre (current + the "before" source), AutoRemesher, QuadriFlow at 5,000
 ./bench_report.sh <outdir> <code> ...   # metrics, LABELED_ sheets, shuffled BLIND_ A/B sheets + key
 python3 bench_table.py work <code> ...  # markdown tables
 ```
 
+The two Quadre columns are named by `NEW_TAG` / `NEW_LABEL` (the current source, default `quadre046` /
+"Quadre 0.4.6") and `OLD_TAG` / `OLD_LABEL` (the "before", default `quadre043`, source expected at
+`work/old043/`). `ONLY_QUADRE=1 ./bench_run.sh ...` reruns only the current source and reuses the
+other tools' saved results. `bench_prep.py`'s symmetry verdict was not repeatable on 2026-10-03 (the
+hand came back "X"): keep the saved `work/input/<code>.json` files when rebuilding inputs.
+
 Which source file and object each code stands for is kept outside the repo (student work is named
 only by code here). Every run goes through `tl.sh`, a hard time limit: Blender ignores SIGALRM, so a
 hung engine has to be polled and killed. AutoRemesher is expected at `SOFTWARE/R&D/autoremesher/`
-(or `$AUTOREMESHER`); the 0.3.8 source at `work/old038/` (`git archive 33d6b2d CADRE_REMESHER/quadre`).
+(or `$AUTOREMESHER`); the "before" source at `work/old043/` (`git archive bf1b608 CADRE_REMESHER/quadre`;
+0.3.8 is `33d6b2d`).
 
 ## Reading the table
 

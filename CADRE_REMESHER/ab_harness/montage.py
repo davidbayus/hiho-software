@@ -2,7 +2,7 @@
 
 python3 montage.py <prefix> <out.png> <title> [caption per label, '|' separated lines] ...
 """
-import sys, json
+import os, sys, json
 from PIL import Image, ImageDraw, ImageFont
 
 prefix, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -26,7 +26,8 @@ H = head + sum(i.height for i in imgs)
 sheet = Image.new('RGB', (W, H), 'white')
 d = ImageDraw.Draw(sheet)
 d.text((20, 12), title, fill='black', font=font(40))
-d.text((20, 62), "dots = poles:  red = 3 edges meet,  blue = 5 edges meet,  magenta = 6+", fill=(90, 90, 90), font=font(22))
+if not os.environ.get('NO_POLES'):      # the blind sheets hide the pole dots
+    d.text((20, 62), "dots = poles:  red = 3 edges meet,  blue = 5 edges meet,  magenta = 6+", fill=(90, 90, 90), font=font(22))
 slot = W / n
 for i, lab in enumerate(labels):
     x = int(i * slot + 20)

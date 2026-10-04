@@ -43,7 +43,7 @@ sudo find /Users/*/Library/Application\ Support/Blender/*/extensions/*/quadre/ -
 Or if you're distributing QUADRE as a zip, clear the quarantine on the zip itself BEFORE students install it:
 
 ```bash
-xattr -d com.apple.quarantine quadre-v0.4.3.zip
+xattr -d com.apple.quarantine quadre-v0.4.6.zip
 ```
 
 This way the extracted files won't be quarantined in the first place.
