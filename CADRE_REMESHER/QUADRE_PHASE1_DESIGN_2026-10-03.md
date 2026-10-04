@@ -66,7 +66,7 @@ the grid lines wandering on flat faces.
 | Sculpt detail lost | 0.39 | 0.79 | 0.77 |
 
 In words: the quads are now squarer than Exoside's and fewer of them are badly bent. The gap in
-following the form closed by about a third. Kept detail did not move; that gap is the adaptive
+following the form closed by about a quarter. Kept detail did not move; that gap is the adaptive
 sizing in the parity plan (Phase 3), and it shows most on the film head.
 
 And for the lines: the bracket's lost detail went from 1.81 to 0.18 (0.3.8 had 0.12, Exoside 0.90),
