@@ -10,7 +10,10 @@ progress. Headless/script calls fall back to the old synchronous path.
 See QUADRE_NOFREEZE_DESIGN_2026-07-06.md.
 
 The engine builds one quad layout per flow map, and the layout that
-measures best is the one that gets finished and handed back.
+measures best is the one that gets finished and handed back. The engine
+itself runs as separate child processes (child.py), so a hang or a crash
+in it cannot take Blender down; if that is not possible on a computer,
+the same steps run inside Blender as they used to.
 See QUADRE_PHASE1_DESIGN_2026-10-03.md.
 """
 
@@ -26,7 +29,7 @@ import bmesh
 import mathutils
 import numpy as np
 
-from . import flow, relax, score, stages
+from . import child, flow, relax, score, stages
 from .lib import Quadwild, EngineLoadError
 from .stages import SHARP_ANGLE
 from .util import bisect, exporter, importer
@@ -70,8 +73,12 @@ class _Job:
 
     def __init__(self, qw, target_faces, quad_count, obj_name,
                  original_location, sym_x, sym_y, n_parts, ref_co, ref_no,
-                 engine_matrix):
+                 engine_matrix, host_dir):
         self.qw = qw
+        # The engine runs as child processes until one fails to start;
+        # from then on this job runs it inside Blender
+        self.use_child = True
+        self.host_dir = host_dir
         # Rotation + scale that took the original's own coordinates into
         # the engine's (location is left out and restored at the end)
         self.engine_matrix = engine_matrix
@@ -101,6 +108,7 @@ class _Job:
         self.cancelled = False
         self.finished_ok = False
         self.error = None
+        self.stuck = False
         self.done = False
 
     def _enter_stage(self, n):
@@ -113,16 +121,53 @@ class _Job:
         if self.stage == 2 and self.layouts_total:
             line += f"  ({self.layouts_done} of {self.layouts_total} done)"
         if self.cancel_requested:
-            line += "  (stopping after this step)"
+            line += "  (stopping…)" if self.use_child else "  (stopping after this step)"
         return line
+
+    def _engine(self, steps, on_done=None):
+        """Run engine steps; one outcome each (None = done, else the
+        exception that says why not). Child processes side by side where
+        that works, otherwise inside Blender one after another."""
+        if self.use_child:
+            outcomes = child.run_steps(
+                steps, self.host_dir, lambda: self.cancel_requested, on_done
+            )
+            unavailable = [o for o in outcomes if isinstance(o, child.Unavailable)]
+            if not unavailable:
+                return outcomes
+            print(f"QUADRE: running the engine inside Blender ({unavailable[0]})")
+            self.use_child = False
+            self.layouts_done = 0
+
+        outcomes = []
+        for step in steps:
+            try:
+                qw = Quadwild(step[1])
+                if step[0] == 'rebuild':
+                    stages.rebuild(qw)
+                elif stages.layout(qw, step[2], lambda: self.cancel_requested) is None:
+                    raise child.Stopped()
+                outcomes.append(None)
+            except child.Stopped:
+                raise
+            except Exception as e:
+                outcomes.append(e)
+            if on_done is not None:
+                on_done()
+        return outcomes
 
     def run(self):
         try:
             self._enter_stage(1)
-            stages.rebuild(self.qw)
+            failure = self._engine([('rebuild', self.qw.mesh_path)])[0]
+            if failure is not None:
+                raise failure
+            if not os.path.exists(self.qw.remeshed_path):
+                raise stages.EngineError(
+                    "the engine could not rebuild the surface of this shape"
+                )
             if self.cancel_requested:
-                self.cancelled = True
-                return
+                raise child.Stopped()
 
             # One folder per layout: Quadre's own flow maps first, then the
             # map the engine wrote in step 1. If Quadre's maps cannot be
@@ -148,35 +193,46 @@ class _Job:
 
             self.layouts_total = len(sides)
             self._enter_stage(2)
+
+            def one_done():
+                self.layouts_done += 1
+
+            outcomes = self._engine(
+                [('layout', side.mesh_path, self.target_faces) for side in sides],
+                one_done,
+            )
+            if self.cancel_requested:
+                raise child.Stopped()
+
+            # One layout failing is not the end: the others still count
             best = None
             failure = None
             notes = []
-            for name, side in zip(names, sides):
-                try:
-                    result_path = stages.layout(
-                        side, self.target_faces, lambda: self.cancel_requested
+            for name, side, outcome in zip(names, sides, outcomes):
+                result_path = side.output_smoothed_path
+                if outcome is None and not os.path.exists(result_path):
+                    outcome = stages.EngineError(
+                        "the engine finished without producing a result"
                     )
-                except Exception as e:
-                    # One layout failing is not the end: the others still count
-                    failure = str(e)
-                    self.layouts_done += 1
+                if outcome is not None:
+                    failure = outcome
                     notes.append(f"{name} failed")
                     continue
-                if result_path is None or self.cancel_requested:
-                    self.cancelled = True
-                    return
-                self.layouts_done += 1
                 total = self._measure(result_path, normals_at)
                 notes.append(f"{name} {total:.1f}")
                 if best is None or total < best[0]:
                     best = (total, name, result_path)
             if best is None:
-                self.error = failure or "the engine finished without producing a result"
-                return
+                raise failure
             print(f"QUADRE: layouts (loops + corners off, degrees): {', '.join(notes)}; kept {best[1]}")
             self.result_path = best[2]
             self.finished_ok = True
 
+        except child.Stopped:
+            self.cancelled = True
+        except child.Stuck:
+            self.stuck = True
+            self.error = "the engine got stuck"
         except Exception as e:
             self.error = str(e)
         finally:
@@ -431,6 +487,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                 ref_co=ref_co,
                 ref_no=ref_no,
                 engine_matrix=matrix.to_4x4(),
+                host_dir=os.path.dirname(bpy.app.binary_path),
             )
 
         except EngineLoadError as e:
@@ -458,6 +515,16 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
         try:
             if job.cancelled:
                 self.report({'INFO'}, "Cancelled — your shape is untouched")
+                return {'CANCELLED'}
+
+            if job.stuck:
+                self.report(
+                    {'ERROR'},
+                    "QUADRE's engine got stuck on this shape and was stopped. "
+                    "Blender and your shape are fine. Flat sheets and "
+                    "paper-thin shapes can do this: give the shape some "
+                    "thickness (Solidify), or try Blender's Voxel Remesh first",
+                )
                 return {'CANCELLED'}
 
             if job.error is not None or not job.finished_ok:
