@@ -9,7 +9,7 @@
  from .lib import Quadwild, EngineLoadError
  from .stages import SHARP_ANGLE
  from .util import bisect, exporter, importer
-@@ -175,23 +175,64 @@
+@@ -175,24 +175,65 @@
              names = [name for name, _, _ in flow.MAPS]
              normals_at = None
              sides = []
@@ -58,7 +58,7 @@
              shutil.copyfile(self.qw.field_path, engine_side.field_path)
              names.append('engine')
              sides.append(engine_side)
-+
+ 
 +            targets = [self.target_faces] * len(sides)
 +            if shaped is not None:
 +                V, F = shaped['V'], shaped['F']
@@ -73,9 +73,10 @@
 +                if os.environ.get('QWARP_COUNT') == 'adapt':
 +                    # keep the typed quad size on the plain areas; the stretched ones add quads
 +                    targets = [max(int(round(self.target_faces * g)), 1) for g in gains]
- 
++
              self.layouts_total = len(sides)
              self._enter_stage(2)
+ 
 @@ -200,7 +241,7 @@
                  self.layouts_done += 1
  
@@ -94,7 +95,7 @@
                  result_path = side.output_smoothed_path
                  if outcome is None and not os.path.exists(result_path):
                      outcome = stages.EngineError(
-@@ -220,6 +261,25 @@
+@@ -220,8 +261,31 @@
                      failure = outcome
                      notes.append(f"{name} failed")
                      continue
@@ -117,6 +118,22 @@
 +                            else:
 +                                g.write(line)
 +                    result_path = real_path
++                if os.environ.get('QKEEP_CANDIDATES'):
++                    shutil.copyfile(result_path, os.path.join(bpy.app.tempdir, f"_cand_{name}.obj"))
                  total = self._measure(result_path, normals_at)
                  notes.append(f"{name} {total:.1f}")
++                if os.environ.get('QFORCE'):
++                    total = 0.0 if name == os.environ['QFORCE'] else 1e9
                  if best is None or total < best[0]:
+                     best = (total, name, result_path)
+             if best is None:
+@@ -252,7 +316,8 @@
+             measured = None
+         if measured is None:
+             return float('inf')
+-        return measured['flow'] + measured['corners']
++        print(f"QUADRE:   candidate {os.path.basename(os.path.dirname(result_path))[-8:]}: faces {measured['faces']} flow {measured['flow']:.1f} corners {measured['corners']:.1f} span {measured['span']:.1f} over {measured['over']:.2f} turn95 {measured['turn95']:.1f}")
++        return measured['flow'] + measured['corners'] + float(os.environ.get('QSCORE_OVER', 0)) * measured['over'] + float(os.environ.get('QSCORE_SPAN', 0)) * measured['span']
+ 
+ 
+ class QUADRE_OT_cleanup(bpy.types.Operator):

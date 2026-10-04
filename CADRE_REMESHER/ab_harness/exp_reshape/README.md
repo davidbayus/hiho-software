@@ -17,11 +17,67 @@ reshaping is an as-rigid-as-possible solve with that stretch as the target (nump
 The map is carried onto the reshaped triangles so the engine traces the same directions. Version 1
 scaled both directions alike (`QWARP_ISO=1` reproduces it).
 
-**To run it:** copy `quadre/` somewhere, apply the three patches (`reshape_flow.patch`,
-`reshape_operator.patch`, `reshape_relax.patch`, made against 0.4.7, commit b63baac), drop `warp.py`
+**To run it:** copy `quadre/` somewhere, apply the four patches (`reshape_flow.patch`,
+`reshape_operator.patch`, `reshape_relax.patch`, `reshape_score.patch`, made against 0.4.7, commit b63baac), drop `warp.py`
 in, and point `run_quadre.py` at that copy. `QWARP_OFF=1` turns the reshaping off (this reproduces
 0.4.7 exactly). Knobs: `QWARP_V=3` (version 3 below), `QWARP_TURN`, `QWARP_SMAX`, `QWARP_GROW`,
 `QWARP_COUNT=adapt`, `QRELAX_EVEN`, `QRELAX_ROUNDS`.
+
+## Version 4 (2026-10-03, night): the crotch, and neck and face at the same time
+
+Setting: `QWARP_V=3 QWARP_TURN=0.45 QWARP_POWER=2 QWARP_SMAX=4 QWARP_GROW=0.8 QWARP_EVEN_TURN=0.35
+QWARP_EVEN_MAX=1.5 QWARP_COUNT=adapt QRELAX_EVEN=0`. Pictures: `AB_2026-10-03/EXP_RESHAPE_V4/`
+(four columns: Exoside, 0.4.7, version 3, version 4).
+
+**What was wrong with the crotch in version 3.** Not the crotch itself. The legs are round enough that
+version 3's rule (one-directional stretch wherever a quad spans more than 0.3 radians) stretched them
+all the way down, around the leg only. That made thin upright strips, and the strips ran up into the
+torso and pinched at the leg roots. Seen from underneath, Exoside does two different things: on rounded
+forms (legs, arms) its quads get evenly smaller and stay square; at real creases (neck, between the
+legs) they get thin one way only. Version 4 does the same:
+
+- **Even part:** where the surface turns more than `EVEN_TURN` per quad, both directions are stretched
+  alike, up to `EVEN_MAX`. Legs and arms come out with smaller square quads.
+- **Crease part:** the one-directional stretch now rises steeply (`POWER` 2) past `TURN`, so gentle
+  roundness asks for nothing and a crease gets the full `SMAX`.
+
+**Two more faults fixed in `warp.py`:**
+
+- A kink along the centre line of mirrored shapes (lines met the mirror plane at a slant, in a V).
+  The stretched surface was free to meet the plane at a slant. Points on the plane may now only turn
+  about the plane's own axis, which is what the other half would agree to.
+- Fold repair no longer gives up the whole stretch when a few folds remain: it halves the stretch
+  around the fold first, and as a last resort turns the whole stretch down (60%, 35%, 15%).
+
+**What it measured** (5,000 typed; quads / loops / corners / detail lost / worst spot):
+
+| | 0.4.7 | version 4 | Exoside |
+|---|---|---|---|
+| Chibi, X symmetry | 5,074 / 9.4 / 5.2 / 0.57 / 14.0 | 6,576 / 9.6 / 7.6 / 0.35 / 12.3 | 5,956 / 7.0 / 7.2 / 0.27 / 3.7 |
+| Bucket | 4,909 / 10.2 / 6.8 / 0.33 / 3.9 | 5,335 / 11.6 / 7.5 / 0.29 / 3.4 | 4,657 / 12.2 / 9.6 / 0.31 / 2.4 |
+| Film head, X symmetry | 5,150 / 14.7 / 7.1 / 0.94 / 14.1 | 8,486 / 13.3 / 9.0 / 0.43 / 9.2 | 8,126 / 12.0 / 7.6 / 0.37 / 4.6 |
+| Hand | 5,029 / 8.1 / 5.5 / 0.45 / 6.1 | 6,709 / 7.6 / 5.7 / 0.22 / 1.8 | 5,325 / 5.1 / 5.3 / 0.27 / 2.3 |
+
+**In the pictures:** Chibi neck has a stack of rings, the crotch has loops around the bend, arms and
+legs have smaller square quads, the centre line is straight. Film head: mouth and chin clean, one
+small torn spot at the inner corner of the eye.
+
+**Tried and dropped on the way:** `TURN` 0.6 with no even part (crotch good, neck and face lost their
+detail); `SMAX` 6 (film head: a notch at the mouth and a wrinkle by the nostril, and the fold repair
+ran six times per map); a "quad too big for its spot" term in the score (`span` / `over` in
+`score.py`, printed per candidate): it separates stretched from plain layouts clearly but does not
+tell the four stretched layouts apart, so it is not used in the pick.
+
+**Still open, in order:**
+
+1. The small torn spot at the film head's inner eye corner (carry-back or a fold repair seam).
+2. Time: film head 34 s to 54 s. The fold repair re-solves from scratch each try.
+3. It delivers more quads than Exoside on three of four shapes (Chibi 6,576 against 5,956). The
+   even part is the knob (`EVEN_MAX`).
+4. The layout lottery: which of the four layouts wins still changes how calm the big surfaces are.
+5. Only four shapes run. The other seven, the six-case suite, other Quad Counts: not run.
+6. Crease lines as engine features (the bucket crop): not started.
+7. Before it ships: a design section in the Phase 1 doc, then one change per commit.
 
 ## Version 3 (2026-10-03, late session): the neck gets its rings
 

@@ -131,6 +131,22 @@ def reshape(V, F, A, plane_x=None, plane_y=None):
         if flip.any():
             Vt[flip, 2, :] *= -1
             R = np.transpose(Vt, (0, 2, 1)) @ np.transpose(U, (0, 2, 1))
+        # On a mirror plane the turn must be one the mirrored half would
+        # share: a turn about the plane's own axis, nothing else. Otherwise
+        # the stretched surface meets the plane at a slant and the quads
+        # come back with a kink along the centre line
+        for plane, axis in ((plane_x, 0), (plane_y, 1)):
+            if plane is not None and plane.any():
+                o = [c for c in range(3) if c != axis]
+                B = R[plane][:, o][:, :, o]
+                angle = np.arctan2(B[:, 1, 0] - B[:, 0, 1], B[:, 0, 0] + B[:, 1, 1])
+                Rp = np.zeros((int(plane.sum()), 3, 3))
+                Rp[:, axis, axis] = 1.0
+                Rp[:, o[0], o[0]] = np.cos(angle)
+                Rp[:, o[0], o[1]] = -np.sin(angle)
+                Rp[:, o[1], o[0]] = np.sin(angle)
+                Rp[:, o[1], o[1]] = np.cos(angle)
+                R[plane] = Rp
         RE = 0.5 * (np.einsum('eij,ej->ei', R[I], AE_I) + np.einsum('eij,ej->ei', R[J], AE_J))
         b = np.zeros((n, 3))
         for c in range(3):
@@ -285,8 +301,18 @@ def stretch_tensors_graded(V, F, D, M, quad_edge):
     f2 = np.cross(N, f1)
     k1 = np.abs(np.einsum('fi,fij,fj->f', f1, M, f1))
     k2 = np.abs(np.einsum('fi,fij,fj->f', f2, M, f2))
-    s1 = np.clip(k1 * quad_edge / TURN_PER_QUAD, 1.0, MAX_SCALE)
-    s2 = np.clip(k2 * quad_edge / TURN_PER_QUAD, 1.0, MAX_SCALE)
+    # Gentle roundness (a leg, a skull) asks for nothing; past TURN_PER_QUAD
+    # the stretch rises steeply, so real creases get most of it
+    power = _env('POWER', 1.0)
+    s1 = np.clip((k1 * quad_edge / TURN_PER_QUAD) ** power, 1.0, MAX_SCALE)
+    s2 = np.clip((k2 * quad_edge / TURN_PER_QUAD) ** power, 1.0, MAX_SCALE)
+    # Rounded forms (a leg, a nose) get evenly smaller, still square quads;
+    # only the crease part above is one-directional
+    even_turn = _env('EVEN_TURN', 0.0)
+    if even_turn > 0:
+        even = np.clip(np.maximum(k1, k2) * quad_edge / even_turn, 1.0, _env('EVEN_MAX', 2.0))
+        s1 = np.maximum(s1, even)
+        s2 = np.maximum(s2, even)
     nb, _ = _face_adjacency(F)
     has = nb >= 0
     nbc = np.where(has, nb, 0)
@@ -340,9 +366,10 @@ def folded_vertices(V, F, X, rings=2):
     return mark, int(bad.sum())
 
 
-def reshape_safe(V, F, A, plane_x=None, plane_y=None, tries=4):
+def reshape_safe(V, F, A, plane_x=None, plane_y=None, tries=5):
     """reshape(), then wherever the result folds over itself the stretch is
-    given up around that spot and the solve is run again."""
+    halved around that spot and the solve is run again. If folds remain after
+    that, the whole stretch is turned down until they are gone."""
     A = A.copy()
     eye = np.eye(3)
     for attempt in range(tries):
@@ -350,7 +377,9 @@ def reshape_safe(V, F, A, plane_x=None, plane_y=None, tries=4):
         mark, n_bad = folded_vertices(V, F, X, rings=2 + attempt)
         if n_bad == 0:
             return X, attempt
-        A[mark] = eye
-    X = reshape(V, F, A, plane_x, plane_y)
-    mark, n_bad = folded_vertices(V, F, X)
-    return (X if n_bad == 0 else V.copy()), tries if n_bad == 0 else -n_bad
+        A[mark] = eye + 0.5 * (A[mark] - eye) if attempt < 2 else eye
+    for k, keep in enumerate((0.6, 0.35, 0.15)):
+        X = reshape(V, F, eye + keep * (A - eye), plane_x, plane_y)
+        if folded_vertices(V, F, X)[1] == 0:
+            return X, tries + 1 + k
+    return V.copy(), -1

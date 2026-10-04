@@ -1,0 +1,17 @@
+--- a/quadre/score.py
++++ b/quadre/score.py
+@@ -99,4 +99,13 @@
+     clear = usable & (strength * np.sqrt(area) > CLEAR_DIRECTION)
+     flow = float(off[clear].mean()) if clear.any() else 0.0
+ 
+-    return {'flow': flow, 'corners': corners, 'faces': len(Q) + others}
++    # How much the shape's normal turns across each quad, the larger of its
++    # two ways (degrees). A quad that spans a lot of turning is too big for
++    # the spot it sits on
++    turn = np.degrees(np.maximum(
++        np.linalg.norm(N_bc - N_da, axis=1), np.linalg.norm(N_cd - N_ab, axis=1)
++    ))
++    span = float((turn * area).sum() / max(area.sum(), 1e-30))
++    over = float(np.maximum(turn - 20.0, 0.0).mean())
++    return {'flow': flow, 'corners': corners, 'faces': len(Q) + others,
++            'span': span, 'over': over, 'turn95': float(np.percentile(turn, 95))}
