@@ -23,6 +23,43 @@ in, and point `run_quadre.py` at that copy. `QWARP_OFF=1` turns the reshaping of
 0.4.7 exactly). Knobs: `QWARP_V=3` (version 3 below), `QWARP_TURN`, `QWARP_SMAX`, `QWARP_GROW`,
 `QWARP_COUNT=adapt`, `QRELAX_EVEN`, `QRELAX_ROUNDS`.
 
+## Blind three-way picks (2026-10-03, about 22:00)
+
+Ten whole-shape sheets (`AB_2026-10-03/BLIND3/`, key `BLIND3_KEY.json`), A/B/C shuffled: Exoside, Quadre
+0.4.7, and the version 3 setting run with the version 4 code (`QWARP_V=3 TURN=0.3 SMAX=5 GROW=0.8
+COUNT=adapt QRELAX_EVEN=0`). David ranked before the key was opened.
+
+| Shape | Best | Second | Worst | His words |
+|---|---|---|---|---|
+| B01_chibi | Exoside | 0.4.7 | experiment | "a center line buildup of vertices ... along the middle of the torso" |
+| B02_bucket | Exoside | 0.4.7 | experiment | "buildup issues where the vertices are getting too close to one another" |
+| B03_suzanne | 0.4.7 | Exoside | experiment | "this one's closer" |
+| B04_filmhead | Exoside | experiment | 0.4.7 | |
+| B05_hand | Exoside | experiment | 0.4.7 | "pretty darn indistinguishable" |
+| B06_firstsculpt | Exoside | experiment | 0.4.7 | "a hard call" |
+| B07_alientree | Exoside | 0.4.7 | experiment | "close" |
+| B08_bracket | Exoside | 0.4.7 | experiment | both Quadres: "the lines aren't straight ... zigzagging" |
+| B09_studentA | experiment | 0.4.7 | Exoside | "hard to tell" |
+| B11_studentC | experiment | (0.4.7 or experiment, not ranked) | | Exoside's column: "some weird doubling up of vertices" |
+
+**Firsts: Exoside 7, experiment 2, Quadre 0.4.7 1. Experiment against 0.4.7 head to head: 5 to 5.**
+The experiment wins where the shape has fine organic detail (film head, hand, first sculpt, two
+student sculpts) and loses on clean, smooth or hard-edged shapes (Chibi, bucket, Suzanne, alien tree,
+bracket). What he named against it is crowding: vertices bunching up, along the centre line on the
+Chibi and in patches on the bucket.
+
+**The Chibi in this test was damaged by a change made after he first saw it.** Checked afterwards
+(same camera, torso crop): the version 3 result he called "overall better" earlier in the evening has
+a clean centre line; the one in the blind sheet has quads slanting into the centre line and piling
+up there. Same setting, later code (the mirror-plane changes and the new fold repair came in between).
+So one of those changes, or the layout draw, did this, and it has to be found before anything else.
+
+**What this says:** shrinking quads is worth something on detailed organic shapes and costs
+something on clean ones, and the cost is crowding. Not a step forward as it stands. Next, in order:
+(1) find what put the pile-up on the Chibi's centre line; (2) stop the crowding: no stretch on shapes
+or regions that do not need it (bracket, bucket), and a floor on how close lines may get; (3) the
+bracket's zigzag is in 0.4.7 too and is a separate job (straight lines on flat faces).
+
 ## Version 4 (2026-10-03, night): the crotch, and neck and face at the same time
 
 Setting: `QWARP_V=3 QWARP_TURN=0.45 QWARP_POWER=2 QWARP_SMAX=4 QWARP_GROW=0.8 QWARP_EVEN_TURN=0.35
