@@ -62,6 +62,15 @@ legs) they get thin one way only. Version 4 does the same:
 legs have smaller square quads, the centre line is straight. Film head: mouth and chin clean, one
 small torn spot at the inner corner of the eye.
 
+**David's verdict on the version 4 sheets (2026-10-03, about 21:40): "no in fact i would say the
+current install is better than the experiment, especially on the eyes."** He is right, and the
+sheets above missed it because they only cropped the places the work was aimed at. Close-ups of the
+eyes afterwards: the Chibi's eye socket is packed with thin slivers, its rim has lost its shape and
+the lines around it wander; the film head's eyes are smeared and partly collapsed, where 0.4.7 keeps
+both lids. So version 4 is a step back overall, whatever the neck and crotch look like, and the
+"detail lost" column did not catch it either. Lesson for the next round: judge whole shapes and the
+places that were NOT being worked on before showing crops of the places that were.
+
 **Tried and dropped on the way:** `TURN` 0.6 with no even part (crotch good, neck and face lost their
 detail); `SMAX` 6 (film head: a notch at the mouth and a wrinkle by the nostril, and the fold repair
 ran six times per map); a "quad too big for its spot" term in the score (`span` / `over` in
