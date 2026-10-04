@@ -611,8 +611,15 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
                     continue
                 X[i] = point[:]
 
+        # Without the crease and border lines the pass still runs, the way
+        # it did before it knew about them
+        try:
+            lines = relax.load_lines(job.qw, job.sym_x, job.sym_y)
+        except Exception as e:
+            print(f"QUADRE: finishing pass ran without the crease lines ({e})")
+            lines = None
         relax.finish_quads(
-            mesh, snap, relax.load_flow(job.qw), job.sym_x, job.sym_y
+            mesh, snap, relax.load_flow(job.qw), job.sym_x, job.sym_y, lines
         )
 
     def _face_pieces(self, n_verts, faces):
