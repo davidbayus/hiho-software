@@ -4,12 +4,12 @@
 David's blind picks and markup. Phases 1 to 4 are not built. Follows the v0.4.2 work recorded in
 `QUADRE_FLOW_QUALITY_DESIGN_2026-10-02.md`.
 
-**Update 2026-10-03: Phase 1 was built as v0.4.4 to v0.4.6**, but not as the four items listed under
+**Update 2026-10-03: Phase 1 was built as v0.4.4 to v0.4.7**, but not as the four items listed under
 Phase 1 below. The diagnosis found bigger wins elsewhere (`QUADRE_PHASE1_DESIGN_2026-10-03.md`): the
 finishing pass now keeps hard edges and borders, Quadre builds four layouts and keeps the best, and
 the engine runs outside Blender with a time limit (the item Phase 0 put first). On the nine shapes all
-tools finish: loops off the form 12.7 to 12.0 (Exoside 10.4), corners 9.0 to 7.3 (Exoside 7.9), detail
-lost 0.77 to 0.80 (Exoside 0.39). Corners are now ahead of the finish line; loops and detail still
+tools finish: loops off the form 12.7 to 12.1 (Exoside 10.4), corners 9.0 to 7.0 (Exoside 7.9), detail
+lost 0.77 to 0.79 (Exoside 0.39). Corners are now ahead of the finish line; loops and detail still
 need Phase 3. The four items below (curvature from the real sculpt, the simplify step's aim, crease
 detection on the original, finishing pass version 2) were not built and stay open; the measurements
 say none of them is where the remaining gap is.

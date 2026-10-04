@@ -3,7 +3,7 @@
 HERE=${0:A:h}
 W=${AB_WORK:-$HERE/work}
 B=${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}
-NEW_TAG=${NEW_TAG:-quadre046}; NEW_LABEL=${NEW_LABEL:-Quadre 0.4.6}   # the current Quadre column (and the B side of the blind sheets)
+NEW_TAG=${NEW_TAG:-quadre047}; NEW_LABEL=${NEW_LABEL:-Quadre 0.4.7}   # the current Quadre column (and the B side of the blind sheets)
 OLD_TAG=${OLD_TAG:-quadre043}; OLD_LABEL=${OLD_LABEL:-Quadre 0.4.3}   # the "before" column
 OUT=$1; shift; O=$W/bench; mkdir -p $OUT $W/renders
 for code in "$@"; do

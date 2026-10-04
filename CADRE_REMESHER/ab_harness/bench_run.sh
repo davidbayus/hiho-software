@@ -5,7 +5,7 @@
 HERE=${0:A:h}
 W=${AB_WORK:-$HERE/work}
 QUADRE_SRC=${QUADRE_SRC:-${HERE:h}}            # folder that contains quadre/
-NEW_TAG=${NEW_TAG:-quadre046}
+NEW_TAG=${NEW_TAG:-quadre047}
 OLD_TAG=${OLD_TAG:-quadre043}
 OLD_SRC=${OLD_SRC:-$W/old043/CADRE_REMESHER}   # git archive of the "before" source (git archive <commit> CADRE_REMESHER/quadre)
 B=${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}

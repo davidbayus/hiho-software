@@ -2,7 +2,7 @@
 env NEW_TAG / NEW_LABEL / OLD_TAG / OLD_LABEL name the two Quadre columns (as in bench_report.sh)."""
 import json, os, sys
 W = sys.argv[1]; codes = sys.argv[2:]
-NEW_TAG, NEW_LABEL = os.environ.get('NEW_TAG', 'quadre046'), os.environ.get('NEW_LABEL', 'Quadre 0.4.6')
+NEW_TAG, NEW_LABEL = os.environ.get('NEW_TAG', 'quadre047'), os.environ.get('NEW_LABEL', 'Quadre 0.4.7')
 OLD_TAG, OLD_LABEL = os.environ.get('OLD_TAG', 'quadre043'), os.environ.get('OLD_LABEL', 'Quadre 0.4.3')
 TOOLS = [('exoside', 'Exoside 1.4'), (NEW_TAG, NEW_LABEL), (OLD_TAG, OLD_LABEL), ('autoremesher', 'AutoRemesher 1.2'), ('quadriflow', 'QuadriFlow')]
 COLS = [('faces', 'Quads', 0), ('nonquads', 'Non-quads', 0), ('singular', 'Poles', 0), ('curv_misalign_strong_mean_deg', 'Loops off form', 1), ('angle_dev_mean', 'Corner error', 1),

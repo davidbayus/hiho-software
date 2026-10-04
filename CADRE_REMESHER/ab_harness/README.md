@@ -47,8 +47,8 @@ $B -b <source.blend> --python bench_prep.py -- "<object name>" <code> work "<not
 python3 bench_table.py work <code> ...  # markdown tables
 ```
 
-The two Quadre columns are named by `NEW_TAG` / `NEW_LABEL` (the current source, default `quadre046` /
-"Quadre 0.4.6") and `OLD_TAG` / `OLD_LABEL` (the "before", default `quadre043`, source expected at
+The two Quadre columns are named by `NEW_TAG` / `NEW_LABEL` (the current source, default `quadre047` /
+"Quadre 0.4.7") and `OLD_TAG` / `OLD_LABEL` (the "before", default `quadre043`, source expected at
 `work/old043/`). `ONLY_QUADRE=1 ./bench_run.sh ...` reruns only the current source and reuses the
 other tools' saved results. `bench_prep.py`'s symmetry verdict was not repeatable on 2026-10-03 (the
 hand came back "X"): keep the saved `work/input/<code>.json` files when rebuilding inputs.
