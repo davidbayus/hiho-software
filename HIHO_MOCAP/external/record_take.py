@@ -93,13 +93,21 @@ class _Voice:
     - While a countdown runs (start or end) the count is silent. The first
       count is spoken right after "recording".
 
+    1.5.6: a phrase is NEVER cut off and the `say` process is never polled.
+    1.5.5 terminated whatever was still speaking when a clock phrase came due;
+    with the real macOS voice that silenced every number after the first
+    (field report, BASEMENT 2026-09-19), which no simulation showed. Speaking
+    is now exactly the old proven mechanism (launch `say` and move on);
+    "is the voice busy" is an ESTIMATE from the phrase's length, used only to
+    hold a camera count back.
+
     `launch` and `clock` are injectable so this is testable with no sound.
     Best-effort everywhere: a voice problem must never touch a recording."""
 
     def __init__(self, launch=None, clock=time.monotonic):
         self._launch = launch or self._launch_say
         self._clock = clock
-        self._proc = None
+        self._quiet_until = 0.0
         self._last_count = None
         self._count_after = 0.0
         self.in_countdown = False
@@ -110,23 +118,16 @@ class _Voice:
         return subprocess.Popen(["say", text])
 
     def busy(self) -> bool:
-        try:
-            return self._proc is not None and self._proc.poll() is None
-        except Exception:
-            return False
+        return self._clock() < self._quiet_until
 
     def _speak(self, text) -> None:
         try:
-            self._proc = self._launch(text)
+            self._launch(text)
         except Exception:
-            self._proc = None
+            pass
+        self._quiet_until = self._clock() + max(0.8, 0.3 + 0.09 * len(text))
 
     def clock(self, text) -> None:
-        if self.busy():
-            try:
-                self._proc.terminate()
-            except Exception:
-                pass
         self._speak(text)
 
     def count(self, text) -> None:
@@ -632,6 +633,8 @@ def main() -> int:
             if elapsed >= deadline:
                 stopped_by = "clock"
                 break
+            if args.duration - elapsed <= END_COUNTDOWN_SEC + 1.5:
+                VOICE.in_countdown = True   # let a count finish before "5"
             overlay = _ending(elapsed) or f"REC {int(elapsed)}s / {args.duration}s"
             frames = mgr.get_latest_frames()
             if reader is not None:
