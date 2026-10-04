@@ -5,7 +5,8 @@ answers, recorded in section 9). **ALL FOUR BUILDS SHIPPED THE SAME AFTERNOON: 1
 1.5.5 (D), each tested headless, installed live and committed; details in STATUS.md. Both open placements were
 confirmed by David ("computer paths understood. And yes that makes everything cleaner . status line . yes go ahead").
 Still owed: his ears on the audio and his eyes on the panel in a real session (BASEMENT, 2026-09-20).** Born from the debrief of
-the first demo with a student (2026-09-18) and talked through section by section the same day. Rules in force: design
+the first demo with a student watching (2026-09-18; David performed, the student observed) and talked
+through section by section the same day. Rules in force: design
 before code, one change per zip, test after each, screenshot of the real panel for David's eye after each.*
 
 *Version note: this wave takes the next free numbers, 1.5.2 to 1.5.5. The two builds still owed by
@@ -49,7 +50,7 @@ What the code showed (read 2026-09-19):
   in the order 1, 5, 2, 3, 4, 6, 7.
 - Both record buttons wear the same icon and nearly the same word.
 - ONE Length box feeds BOTH recordings. Every calibration take from the last three sessions (09-05, 09-11, 09-18) was
-  set to 120 seconds; the student take on 09-18 was 30. So on demo day the number had to be typed twice, and the
+  set to 120 seconds; the demo take on 09-18 was 30. So on demo day the number had to be typed twice, and the
   default of 60 is right for neither job.
 - Bake Animation and Save Out work on whatever rig is selected, and Spawn Rig already selects the new rig. So Bake is
   live the moment a rig spawns, with nothing needed from the Studio panel.
@@ -275,3 +276,44 @@ Bottom of the panel after Build B:
  [ ] Lock Feet (cleanup)
  [ ] Studio tools
 ```
+
+## 10. NEXT WAVE, from the first live session (BASEMENT, 2026-09-19 afternoon). DESIGN ONLY, not built.
+
+Field notes, David's words: "Countdown just says 10 and then that's it... When solving the progress bar doesn't update
+it just stays at 0.00 till complete. Also when we process the mobcap the cursor progress icon stays at 0.00 and the info
+update graphic on the top is unclear in progress" and, on the step 4 badge ("Quality: not measured yet."): "this part
+becomes unclear, thers should be a quality check button underneath so students know where to go". Asked whether the
+button should show numbers only or also a rating: "number and a quality value yes plz".
+
+**Build E = 1.5.6, audio hot fix (BUILT 09-19, waiting for his ears):** never cut off or poll the `say` process; the
+estimate of "is the voice busy" comes from the phrase's length. Lesson: a simulated voice proves the rules, never the
+Mac's speech system; anything touching `say` needs one audible run before it ships.
+
+**Build F, Check Quality (step 4), mirrors Check in step 2:**
+- A **Check Quality** button under the Process badge. It reads the processed take's own motion inside Blender (numpy
+  only, a second or two, no cameras, no FreeMoCap env) with the take log's definitions (`HIHO_ALL/TAKE_LOG/take_metrics.py`).
+- The badge then shows a **quality value plus the numbers**, the same shape as the calibration badge:
+  `Quality: Clean` / `Body tracked 100%` / `Bones steady 5%` / `Shake 2.4` / `Left/right mix-ups: none`.
+- Quality words are the COMPUTED value and deliberately not the human ones: **Clean / Look closer / Rough**.
+  PROVISIONAL bands, from the ten take-log rows (one room, mostly one performer), to be re-derived as the log grows:
+  Clean = tracked 99 % or more, no mix-ups, bone wobble 7 % or less, mean shake 3.5 or less; Rough = tracked under 90 %,
+  or mix-ups in more than 2 % of frames, or bone wobble over 12 %; everything else = Look closer. The badge says
+  "provisional" in its hover text. Never the words GOOD / CHECK / BAD (those belong to the pixel badge).
+- **Rate this take** beside it: three buttons, **ceiling / usable / redo** (the take log's human words). One click saves
+  the rating WITH the numbers into the take folder (`HIHO_TAKE_RATING.json`: numbers, computed value, human rating, who,
+  when, tracker stamp). The take log can then fill itself, and every rated take is one more point for tuning the bands:
+  numbers next to an artist's eye, the data the FreeMoCap diagnostics work has no source for.
+- After a run the "not measured yet" line gains a pointer: "Click Check Quality".
+- Test: the ten logged takes must reproduce their take-log numbers exactly; the 09-18 demo take (his "ceiling") must
+  come out Clean; the 09-05 walk (shakiest on record) must not.
+
+**Build G, honest progress for Process (RTMPose):** read the per-camera `Camera_N: NN%` lines the script already passes
+through; bar = the average across cameras mapped to 5 to 90 %, then triangulate / filter / convert; status reads
+"Tracking: all 6 cameras, 42% (about 2 min left)". This is the build the V2 changeover design still owed.
+
+**Build H, honest progress for Solve:** the runner's stage words are FreeMoCap PROCESSING stages, which the calibration
+script never matches, so Solve sits at 0 % until done (older than this wave; the status line on top made it visible).
+Minimum = a ticking clock ("Solving: 1:23 so far, usually about 3 minutes"); better = real stage lines from
+`external/calibrate.py`.
+
+Order: E (his ears) > G > F > H, one change per zip, each tested, screenshots after each.

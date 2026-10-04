@@ -6,7 +6,7 @@ answered: the menu remembers PER FILE). Q1, Q3, Q4 stand at the recommended defa
 and plan"). The blessing stands; no code was written. 1.5.0 starts at the next laptop dev session.*
 
 ***1.5.0 BUILT AND TERMINAL-TESTED 2026-09-19 (laptop), hold lifted by David ("lets build it so its ready to deploy").**
-Both tests in section 6 pass: the 09-18 student take in 2 min 55 s (MediaPipe: 13 min), numbers level with or calmer
+Both tests in section 6 pass: the 09-18 demo take in 2 min 55 s (MediaPipe: 13 min), numbers level with or calmer
 than the MediaPipe ceiling result; the 09-11 120 s take in 9 min 26 s, past the 300 s mark, loader files identical to
 the eval kit's (0.0000 mm). David's eye on the two rigs side by side, same day, his words: "visual check confirmed.
 RTMpose mocap looks great out of the box". **1.5.0's acceptance test is COMPLETE.** Details in STATUS.md. What the build
@@ -51,7 +51,7 @@ Nothing else in the addon changes. Recording, calibration, Load Take, the rig, B
 
 ## 1. Why now
 
-David's ask, 2026-09-18, after the first classroom-style demo with a student: "it ran on the old mediapipe not
+David's ask, 2026-09-18, after the first classroom-style demo with a student watching (David performed): "it ran on the old mediapipe not
 the RTMpose. so it took a long time and it processed one cam at a time. can we set it up so that RTM is the
 default. and we can also have a toggle maybe for previous machine vision models."
 

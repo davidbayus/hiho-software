@@ -319,3 +319,54 @@ findings + ranked fix list), **Z_JITTER_DIAGNOSIS_2026-08-04.md**,
 6. Calibration: the Dance v3 (no chair) scored 2.90 px vs 3.67 for the hand sweep; far cameras fixed (E, F 0.3 / 0.2),
    close cameras B/C/D bad (4-10 px) with the most face-on views → solver design next: per-camera fixed intrinsics
    from each camera's own bow, then anipose for extrinsics only. Letters: tape runs clockwise (dance map default flipped).
+
+## 2026-10-02 — Recording session on 1.5.6 (laptop): three finds, nothing fixed
+Session facts: 1.5.6 installed that morning, countdown voice confirmed by ear. Calibration `13-48-18` = 1.287 px
+workable; redo `13-58-31` = 0.940 px good. Take `2026-10-02_14-07-34` recorded 3600/3600 on all six, processed with
+RTMPose in 354 s, body tracked 100%. Letters that session (derived): 0=F, 1=E, 2=A, 3=B, 4=D, 5=C.
+1. **Solve Calibration readout sits at "(0%)" for the whole solve.** David: "the countdown just stays at zero. I can
+   hear the machine going... the countdown clock is locked." Cause: `core/external_runner.py` `STAGES` only matches
+   FreeMoCap's motion-processing lines ("detecting 2d", ...), which `external/calibrate.py` never prints, and the
+   solve runs without the disk watcher. The status reads "starting backend (0%)" until done. Same in 1.5.5.
+2. **Process (RTMPose) shows a number stuck at zero.** David: "again, the clock is stuck at zero." The status line
+   does tick ("RTMPose: all cameras at once (1:48 so far)", `operators/process.py:94`) but it is pinned to the TOP of
+   the panel and he was scrolled down at steps 3 to 6, so he never saw it. What he saw at 0 is most likely the mouse
+   pointer number from `wm.progress_update(runner.progress_pct)`, which stays 0 on this path (not confirmed: the
+   screenshot does not show the pointer). The honest six-at-once percentage is the build already owed by the V2
+   changeover doc. Items 1 and 2 are one "honest progress" build; also put the running clock next to the Process
+   button, where his eyes are.
+3. **A new file shows an empty calibration section.** David saved the take as a .blend, opened a new file for the
+   next take, and "the calibration section and everything, all of that is empty. What we should be seeing is the
+   last good calibration file, no?" Cause: `calibration_toml_path`, `calibration_take_path`, the Quality and Floor
+   badges and `last_take_path` are all per-scene properties (`properties.py`), so they live in the .blend and a new
+   file starts blank. NOT a data loss: a blank Calib box falls back to
+   `~/freemocap_data/logs_info_and_settings/last_successful_calibration.toml` (`operators/process.py:26,131`), which
+   that day was byte-identical to the good 13-58-31 solve. So Process in the new file uses the right calibration, the
+   panel just does not say so. Hit AGAIN the same session on the second new file; David: "can we check on that
+   process and make sure that we have that corrected for the next version." → **PLANNED for the next build.** Not
+   user error: the addon keeps the calibration inside the .blend, and nothing in the panel told him that or offered
+   the last one. Claude filled the boxes by hand that time (toml + take + floor badge, then ran Check Calibration =
+   0.561 px good). Design question for David before any code: on a new file, show the last solved
+   calibration by name with its Quality and Floor badges (remembered per computer, like "Save to"), and say plainly
+   when the box is blank which calibration will be used. Related: audit 09-25 B13 (old status message carries into
+   new files) and 06-09 M2 (blank Calib box).
+4. **Finger bones blow up to 36 cm on BOTH hands when ONE hand tracks badly.** Take `2026-10-02_15-27-28`, recorded
+   after a camera was knocked and recalibrated (new solve 1.261 px workable, far cameras A/E/D placed much higher
+   and further out than every earlier solve). David: "something really abnormal just happened to the hands... it's
+   both hands, all the bones are exaggerated in scale." Mechanism, verified against the files and the live rig:
+   - Raw data: right-hand fingertips wrong in about a third of the frames (index dip->tip over 15 cm in 1260 of
+     3600 frames); LEFT hand clean (never past 11 cm). Good-calibration takes the same day: 0 to 78 bad frames.
+   - `core/enforce_rigid_bodies.py` fixes every finger bone to its 90th-percentile measured length
+     (`_FINGER_PERCENTILE = 90`, line 172) so foreshortened fingers are not built stubby. Here the top 10% is garbage:
+     right index tip 69 cm, right thumb tip 48 cm.
+   - `_symmetrize_fingers` (line 122) then averages left and right: (69 + 3.6) / 2 = 36 cm, and the live rig's
+     `f_index.03.L` measures exactly 0.364 m. So the right hand's damage is copied onto the clean left hand and
+     applied to all 3600 frames; `_translate_with_children` cascades it down each finger.
+   - Docstring still says "Not wired into the load pipeline yet"; it IS wired (`core/loader.py:108`).
+   Fix shape (one build, its own number, design note first): a human cap on finger bone targets (a fingertip bone
+   is 2 to 3 cm; nothing on a hand is 10 cm), fall back to the median when the percentile is wildly above it, and
+   do not mirror two hands whose targets disagree by more than ~2x (keep the sane one). Also the general case:
+   even good takes have a few dozen fingertip-spike frames; a per-frame "finger sanity" clamp belongs in Cleanup
+   next to Lock Feet (MOCAP_CORRECTION_RESEARCH_2026-08-11 territory).
+   Session verdict in David's words: "I think it was just a mix of bad calibration... we'll just have to come back
+   to it tomorrow."
