@@ -8,6 +8,10 @@ The heavy QuadWild stages run on a worker thread (they are pure ctypes
 and never touch bpy) while a modal timer keeps the UI alive and shows
 progress. Headless/script calls fall back to the old synchronous path.
 See QUADRE_NOFREEZE_DESIGN_2026-07-06.md.
+
+The engine builds one quad layout per flow map, and the layout that
+measures best is the one that gets finished and handed back.
+See QUADRE_PHASE1_DESIGN_2026-10-03.md.
 """
 
 import os
@@ -22,39 +26,13 @@ import bmesh
 import mathutils
 import numpy as np
 
-from . import flow, relax
-from .lib import (
-    Quadwild, QuadreException, EngineLoadError,
-    flow_config_files, satsuma_config_files,
-)
-from .lib.data import create_default_QRParameters
+from . import flow, relax, score, stages
+from .lib import Quadwild, EngineLoadError
+from .stages import SHARP_ANGLE
 from .util import bisect, exporter, importer
 
 
 # ---------- defaults tuned for character work ----------
-
-# Sharp feature detection at 35 degrees — good for catching
-# body part transitions (arm meets torso, neck meets head)
-SHARP_ANGLE = 35.0
-
-# The Quad Count field is an absolute TARGET face count. QuadWild's own
-# density knob is relative to the input mesh's resolution, so a fixed
-# setting used to give wildly different results on different meshes
-# (bug report: bucket ballooned 43K → 160K faces). Instead we take the
-# count the student typed and solve for the density that should hit it.
-
-# Empirical: output faces ≈ K × remeshed_tris / density².
-#   2026-07-06 (Blender 5.1.2, sphere/torus): K ≈ 0.42.
-#   2026-09-16 (Blender 5.2.0 LTS, Suzanne at two densities + the
-#   bug-report bucket, counts 1K–25K): K measured 0.45–0.53, so the
-#   old value delivered ~20% more faces than the typed Quad Count.
-#   Recalibrated to 0.50 (results now land within ~±10% of the ask).
-# Sharp features set a floor (~650 faces on Suzanne, ~1,450 on a
-# voxel-remeshed sculpt), so very low counts land above the ask.
-QUADWILD_K = 0.50
-
-# Further off the typed count than this, the engine gets one corrected retry
-COUNT_TOLERANCE = 0.05
 
 # Max input triangles before we auto-decimate.
 # QRemeshify recommends < 100K. We enforce it so students
@@ -77,8 +55,8 @@ PIECE_GUARD_MAX_FACES = 150_000
 
 STAGE_LABELS = {
     1: "Step 1 of 3 — rebuilding the surface…",
-    2: "Step 2 of 3 — tracing quad flow…",
-    3: "Step 3 of 3 — building the final quads…",
+    2: "Step 2 of 3 — building quad layouts…",
+    3: "Step 3 of 3 — squaring up the best layout…",
 }
 
 
@@ -109,6 +87,14 @@ class _Job:
         self.sym_y = sym_y
         self.n_parts = n_parts
 
+        # One layout per flow map; the best one's quads end up here
+        self.layouts_total = 0
+        self.layouts_done = 0
+        self.result_path = None
+        # The map the finishing pass turns quads toward: Quadre's own when
+        # it could be drawn, otherwise the engine's
+        self.flow_path = qw.field_path
+
         self.stage = 0
         self.stage_started = time.monotonic()
         self.cancel_requested = False
@@ -124,6 +110,8 @@ class _Job:
     def status_line(self):
         elapsed = int(time.monotonic() - self.stage_started)
         line = f"QUADRE: {STAGE_LABELS.get(self.stage, 'working…')} {elapsed}s"
+        if self.stage == 2 and self.layouts_total:
+            line += f"  ({self.layouts_done} of {self.layouts_total} done)"
         if self.cancel_requested:
             line += "  (stopping after this step)"
         return line
@@ -131,84 +119,62 @@ class _Job:
     def run(self):
         try:
             self._enter_stage(1)
-            self.qw.remeshAndField(
-                remesh=True, enableSharp=True, sharpAngle=SHARP_ANGLE
-            )
-            # The native stages can report success without writing their
-            # result (seen upstream: xtrytofindme/QRemeshify a9afdf1,
-            # 2026-08-11). Handing the next stage a missing file is a
-            # hard-crash road, so check on disk between stages
-            if not os.path.exists(self.qw.remeshed_path):
-                self.error = "the engine could not rebuild the surface of this shape"
-                return
+            stages.rebuild(self.qw)
             if self.cancel_requested:
                 self.cancelled = True
                 return
 
-            # Swap in Quadre's own flow map. The engine's map is already on
-            # disk, so any failure here just leaves that one in place
+            # One folder per layout: Quadre's own flow maps first, then the
+            # map the engine wrote in step 1. If Quadre's maps cannot be
+            # drawn, the engine's map alone still gives a result
+            names = [name for name, _, _ in flow.MAPS]
+            normals_at = None
+            sides = []
             try:
-                flow.write_flow_field(
-                    self.qw, self.ref_co, self.ref_no, self.target_faces
+                normals_at = flow.normal_lookup(self.ref_co, self.ref_no)
+                sides = [stages.layout_folder(self.qw, k) for k in range(len(names))]
+                flow.write_flow_fields(
+                    self.qw.remeshed_path, self.qw.sharp_path, normals_at,
+                    self.target_faces, [side.field_path for side in sides],
                 )
+                self.flow_path = sides[0].field_path
             except Exception as e:
-                print(f"QUADRE: kept the engine's own flow map ({e})")
+                print(f"QUADRE: used the engine's own flow map only ({e})")
+                names, normals_at, sides = [], None, []
+            engine_side = stages.layout_folder(self.qw, len(sides))
+            shutil.copyfile(self.qw.field_path, engine_side.field_path)
+            names.append('engine')
+            sides.append(engine_side)
 
+            self.layouts_total = len(sides)
             self._enter_stage(2)
-            if not self.qw.trace() or not os.path.exists(self.qw.traced_path):
-                self.error = "the engine could not trace quad flow on this shape"
-                return
-            if self.cancel_requested:
-                self.cancelled = True
-                return
-
-            self._enter_stage(3)
-            qr_params = create_default_QRParameters()
-            lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
-            qr_params.flow_config_filename = os.path.join(
-                lib_dir, flow_config_files["SIMPLE"]
-            ).encode()
-            qr_params.satsuma_config_filename = os.path.join(
-                lib_dir, satsuma_config_files["DEFAULT"]
-            ).encode()
-
-            remeshed_tris = _count_obj_faces(self.qw.remeshed_path)
-            density = math.sqrt(QUADWILD_K * remeshed_tris / self.target_faces)
-            density = min(max(density, 0.4), 12.0)
-
-            self.qw.quadrangulate(qr_params, density, 0, True)
-
-            # The native call can fail without raising — ground truth is
-            # whether the result file actually appeared
-            result_path = self.qw.output_smoothed_path
-            if not os.path.exists(result_path):
-                self.error = "the engine finished without producing a result"
-                return
-
-            # The density formula is an estimate. When the engine lands well
-            # off the typed count, correct the density from what it actually
-            # delivered and build the quads once more (this step is the
-            # quick one), then keep whichever result is closer
-            got = _count_obj_faces(result_path)
-            if (
-                got > 0
-                and abs(got / self.target_faces - 1.0) > COUNT_TOLERANCE
-                and not self.cancel_requested
-            ):
-                retry_density = density * math.sqrt(got / self.target_faces)
-                retry_density = min(max(retry_density, 0.4), 12.0)
-                if abs(retry_density - density) > 1e-3:
-                    first_path = result_path + ".first"
-                    shutil.copyfile(result_path, first_path)
-                    self.qw.quadrangulate(qr_params, retry_density, 0, True)
-                    retry = (
-                        _count_obj_faces(result_path)
-                        if os.path.exists(result_path) else 0
+            best = None
+            failure = None
+            notes = []
+            for name, side in zip(names, sides):
+                try:
+                    result_path = stages.layout(
+                        side, self.target_faces, lambda: self.cancel_requested
                     )
-                    if retry == 0 or (
-                        abs(retry - self.target_faces) >= abs(got - self.target_faces)
-                    ):
-                        os.replace(first_path, result_path)
+                except Exception as e:
+                    # One layout failing is not the end: the others still count
+                    failure = str(e)
+                    self.layouts_done += 1
+                    notes.append(f"{name} failed")
+                    continue
+                if result_path is None or self.cancel_requested:
+                    self.cancelled = True
+                    return
+                self.layouts_done += 1
+                total = self._measure(result_path, normals_at)
+                notes.append(f"{name} {total:.1f}")
+                if best is None or total < best[0]:
+                    best = (total, name, result_path)
+            if best is None:
+                self.error = failure or "the engine finished without producing a result"
+                return
+            print(f"QUADRE: layouts (loops + corners off, degrees): {', '.join(notes)}; kept {best[1]}")
+            self.result_path = best[2]
             self.finished_ok = True
 
         except Exception as e:
@@ -216,15 +182,19 @@ class _Job:
         finally:
             self.done = True
 
-
-def _count_obj_faces(obj_path):
-    """Count 'f' lines in an OBJ file (QuadWild's intermediate output)."""
-    count = 0
-    with open(obj_path, 'r') as f:
-        for line in f:
-            if line.startswith('f '):
-                count += 1
-    return count
+    def _measure(self, result_path, normals_at):
+        """Lower is better: loops off the form plus corners off square. A
+        layout that cannot be measured still counts, in last place."""
+        if normals_at is None:
+            return 0.0
+        try:
+            measured = score.score_quads(result_path, normals_at)
+        except Exception as e:
+            print(f"QUADRE: could not measure a layout ({e})")
+            measured = None
+        if measured is None:
+            return float('inf')
+        return measured['flow'] + measured['corners']
 
 
 class QUADRE_OT_cleanup(bpy.types.Operator):
@@ -287,6 +257,14 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             return {'PASS_THROUGH'}
 
         if not job.done:
+            context.workspace.status_text_set(job.status_line())
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        # The finishing pass pauses the window for a moment, so the status
+        # line gets one redraw to say what is happening first
+        if job.finished_ok and not job.cancelled and job.stage != 3:
+            job._enter_stage(3)
             context.workspace.status_text_set(job.status_line())
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
@@ -492,7 +470,7 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             obj = bpy.data.objects.get(job.obj_name)
 
             # Import the result
-            final_mesh = importer.import_mesh(job.qw.output_smoothed_path)
+            final_mesh = importer.import_mesh(job.result_path)
 
             # Finishing pass: square the quads up and sit them on the
             # original. If the original is gone or anything goes wrong, the
@@ -619,7 +597,8 @@ class QUADRE_OT_cleanup(bpy.types.Operator):
             print(f"QUADRE: finishing pass ran without the crease lines ({e})")
             lines = None
         relax.finish_quads(
-            mesh, snap, relax.load_flow(job.qw), job.sym_x, job.sym_y, lines
+            mesh, snap, relax.load_flow(job.qw.remeshed_path, job.flow_path),
+            job.sym_x, job.sym_y, lines,
         )
 
     def _face_pieces(self, n_verts, faces):

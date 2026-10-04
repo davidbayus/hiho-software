@@ -11,7 +11,7 @@ bl_info = {
     "name": "QUADRE",
     "description": "One-button quad remesher for character work — clean up messy shapes into animation-ready quads",
     "author": "Prof. David Bayus, CADRE Lab (SJSU)",
-    "version": (0, 4, 4),
+    "version": (0, 4, 5),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > QUADRE",
     "category": "Mesh",

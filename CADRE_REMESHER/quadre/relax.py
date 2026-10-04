@@ -67,12 +67,12 @@ CORNER_ANGLE = 35.0
 MIN_LINE_LENGTH = 4.0
 
 
-def load_flow(qw):
-    """The flow map the engine traced: (BVH of its triangles, one direction per triangle)."""
-    if not (os.path.exists(qw.field_path) and os.path.exists(qw.remeshed_path)):
+def load_flow(remeshed_path, field_path):
+    """A flow map on the engine's triangles: (BVH of the triangles, one direction per triangle)."""
+    if not (os.path.exists(field_path) and os.path.exists(remeshed_path)):
         return None
-    V, F = _read_triangles(qw.remeshed_path)
-    with open(qw.field_path) as f:
+    V, F = _read_triangles(remeshed_path)
+    with open(field_path) as f:
         lines = f.read().split('\n')[2:]
     D = np.array([[float(x) for x in line.split()] for line in lines if line.strip()])
     if len(D) != len(F):
