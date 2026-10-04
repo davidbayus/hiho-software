@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "quadre"
-version = "0.4.6"
+version = "0.4.7"
 name = "QUADRE"
 tagline = "One-button quad remesher for character work"
 maintainer = "Prof. David Bayus, CADRE Lab (SJSU)"

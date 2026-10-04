@@ -98,8 +98,8 @@ class _Job:
         self.layouts_total = 0
         self.layouts_done = 0
         self.result_path = None
-        # The map the finishing pass turns quads toward: Quadre's own when
-        # it could be drawn, otherwise the engine's
+        # What the finishing pass turns quads toward: Quadre's guide when
+        # its maps could be drawn, otherwise the engine's map
         self.flow_path = qw.field_path
 
         self.stage = 0
@@ -178,11 +178,13 @@ class _Job:
             try:
                 normals_at = flow.normal_lookup(self.ref_co, self.ref_no)
                 sides = [stages.layout_folder(self.qw, k) for k in range(len(names))]
+                guide_path = sides[0].field_path + ".guide"
                 flow.write_flow_fields(
                     self.qw.remeshed_path, self.qw.sharp_path, normals_at,
                     self.target_faces, [side.field_path for side in sides],
+                    guide_path,
                 )
-                self.flow_path = sides[0].field_path
+                self.flow_path = guide_path
             except Exception as e:
                 print(f"QUADRE: used the engine's own flow map only ({e})")
                 names, normals_at, sides = [], None, []

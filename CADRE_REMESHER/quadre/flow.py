@@ -50,6 +50,13 @@ ALIGN_WEIGHT = 5.0
 # Normals are averaged over this fraction of a quad edge before differencing
 NORMAL_RADIUS = 0.35
 
+# The finishing pass turns quads toward the first map only where the shape
+# clearly has a direction: not at all on a flat or ball-like patch, fully
+# where the normal turns this much more (radians) one way than the other
+# across one quad. On a flat face the map's direction is arbitrary, and
+# turning toward it made straight grids wander (bracket, 2026-10-03)
+GUIDE_FULL = 0.3
+
 
 def _read_triangles(path):
     verts, faces = [], []
@@ -121,7 +128,12 @@ def normal_lookup(ref_co, ref_no):
 
 
 def compute_fields(V, F, sharp, normals_at, quad_edge, maps=MAPS):
-    """One field per map: a unit direction per triangle (an arm of the cross)."""
+    """One field per map: a unit direction per triangle (an arm of the cross).
+
+    Also returns the guide for the finishing pass: the first map's field
+    with each direction scaled by how clearly the shape has a direction
+    there (0 to 1; 1 on triangles pinned to a crease or border).
+    """
     nF = len(F)
     P = [V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]]
     N = np.cross(P[1] - P[0], P[2] - P[0])
@@ -206,6 +218,7 @@ def compute_fields(V, F, sharp, normals_at, quad_edge, maps=MAPS):
     pin_value = np.where(mag > 1e-9, pin_value / np.maximum(mag, 1e-9), 1.0)
 
     fields = []
+    guide = None
     for _, smooth_rounds, confidence_full in maps:
         M = smoothed(smooth_rounds)
         a = np.einsum('fi,fij,fj->f', U, M, U)
@@ -248,13 +261,18 @@ def compute_fields(V, F, sharp, normals_at, quad_edge, maps=MAPS):
 
         theta = np.angle(u) / 4.0
         fields.append(np.cos(theta)[:, None] * U + np.sin(theta)[:, None] * W)
-    return fields
+        if guide is None:
+            clear = np.where(pinned, 1.0, np.clip(strength / GUIDE_FULL, 0.0, 1.0))
+            guide = fields[0] * clear[:, None]
+    return fields, guide
 
 
-def write_flow_fields(remeshed_path, sharp_path, normals_at, target_faces, paths, maps=MAPS):
+def write_flow_fields(remeshed_path, sharp_path, normals_at, target_faces, paths,
+                      guide_path, maps=MAPS):
     """Write one flow map file per entry of maps, for the engine's remeshed
-    triangles. Raises on any problem; the caller then falls back to the
-    engine's own map.
+    triangles, and the finishing pass's guide (same file layout, directions
+    scaled by their strength). Raises on any problem; the caller then falls
+    back to the engine's own map.
     """
     V, F = _read_triangles(remeshed_path)
     if len(F) == 0:
@@ -264,11 +282,11 @@ def write_flow_fields(remeshed_path, sharp_path, normals_at, target_faces, paths
         np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), axis=1
     ).sum()
     quad_edge = math.sqrt(area / max(target_faces, 1))
-    fields = compute_fields(V, F, sharp, normals_at, quad_edge, maps)
-    for D in fields:
+    fields, guide = compute_fields(V, F, sharp, normals_at, quad_edge, maps)
+    for D in fields + [guide]:
         if not np.isfinite(D).all():
             raise ValueError("flow map has gaps")
-    for D, path in zip(fields, paths):
+    for D, path in zip(fields + [guide], list(paths) + [guide_path]):
         tmp_path = path + '.tmp'
         with open(tmp_path, 'w') as f:
             f.write(f"{len(F)}\n4\n")

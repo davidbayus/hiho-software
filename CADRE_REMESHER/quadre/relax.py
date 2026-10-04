@@ -29,8 +29,9 @@ ROUNDS = 60
 # How far each vertex moves toward where its quads want it, per round
 STEP = 0.7
 
-# How far each quad's target rectangle turns toward the flow map. Full
-# strength reads better on the ruler but leaves visible zigzags
+# How far each quad's target rectangle turns toward the flow map, where the
+# map is at full strength (see flow.GUIDE_FULL). Full strength reads better
+# on the ruler but leaves visible zigzags
 FLOW_PULL = 0.3
 
 # Blend of each quad's size toward the average of the quads around it
@@ -68,7 +69,8 @@ MIN_LINE_LENGTH = 4.0
 
 
 def load_flow(remeshed_path, field_path):
-    """A flow map on the engine's triangles: (BVH of the triangles, one direction per triangle)."""
+    """A flow map on the engine's triangles: (BVH of the triangles, one
+    direction per triangle). A direction shorter than 1 is a weaker pull."""
     if not (os.path.exists(field_path) and os.path.exists(remeshed_path)):
         return None
     V, F = _read_triangles(remeshed_path)
@@ -326,6 +328,7 @@ def finish_quads(mesh, snap, flow_map, sym_x, sym_y, lines=None):
             if flow_dirs is None or rnd % FLOW_LOOKUP_EVERY == 0:
                 bvh, field = flow_map
                 flow_dirs = np.array([field[bvh.find_nearest(Vector(c))[2]] for c in centre])
+            pull = FLOW_PULL * np.minimum(np.linalg.norm(flow_dirs, axis=1), 1.0)
             d1 = flow_dirs - (flow_dirs * normal).sum(1)[:, None] * normal
             d1 /= np.maximum(np.linalg.norm(d1, axis=1), 1e-20)[:, None]
             d2 = np.cross(normal, d1)
@@ -333,7 +336,7 @@ def finish_quads(mesh, snap, flow_map, sym_x, sym_y, lines=None):
             # line turn all the way so loops cross the centre line square
             angle = np.arctan2((tu * d2).sum(1), (tu * d1).sum(1))
             turn = -(((angle + math.pi / 4) % (math.pi / 2)) - math.pi / 4)
-            turn *= np.where(on_mirror_line, 1.0, FLOW_PULL)
+            turn *= np.where(on_mirror_line, 1.0, pull)
             cos_t, sin_t = np.cos(turn)[:, None], np.sin(turn)[:, None]
             tu, tv = cos_t * tu + sin_t * tv, -sin_t * tu + cos_t * tv
 
