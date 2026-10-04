@@ -1,13 +1,13 @@
 # QUADRE — Phase 1: squeeze the current engine (findings + design, 2026-10-03, laptop)
 
-**Occasion:** David, Saturday evening: "can we pick up our dev work from where we last left off on the
-Quadre add-on... feel free to go hard on this for a bit." This is Phase 1 of
-`QUADRE_EXOSIDE_PARITY_PLAN_2026-10-02.md`. It follows `QUADRE_PHASE0_BENCHMARK_2026-10-02.md`.
+**Occasion:** David: "can we pick up our dev work from where we last left off on the Quadre add-on."
+This is Phase 1 of `QUADRE_EXOSIDE_PARITY_PLAN_2026-10-02.md`. It follows
+`QUADRE_PHASE0_BENCHMARK_2026-10-02.md`.
 
 **Status:** built the same evening as **v0.4.4, v0.4.5, v0.4.6 and v0.4.7**, one commit each, each
 measured through the real operator before the next. Sections 2 and 3 were written first, from measurements on
 throwaway copies of the add-on in the session scratch folder. Section 5 records what was built and
-what it measured. David has not looked at any of it yet.
+what it measured. **David's blind picks came in the same evening: Exoside 9, Quadre 1** (section 5.7).
 
 ---
 
@@ -422,13 +422,55 @@ Chibi at 25,000 quads: 20 s. In a real window from the installed zip: 9.6 s at 5
 
 ### 5.6 Not checked
 
-- **David's eye.** Nothing here has been looked at by him.
+- **David's live look in his own Blender.** 0.4.7 was installed there the same evening (verified
+  headless with his preferences); he has seen the pictures, not yet the add-on at work.
 - **Windows.** The child process is new code that has never run there (nor has any other part of
   Quadre been observed there). If the child cannot start, the fallback runs everything inside Blender.
 - **An old or slow Mac.** All timings are from the M4 laptop.
 - The 300-second limit has only been exercised turned down to 8.
 
+### 5.7 David's blind picks (2026-10-03)
+
+Ten sheets (`AB_2026-10-03/BLIND_*.png`), Exoside against Quadre 0.4.7, shuffled as A and B. He picked
+before the key was opened.
+
+| Shape | His pick |
+|---|---|
+| B01_chibi | Exoside |
+| B02_bucket | Exoside |
+| B03_suzanne | Quadre |
+| B04_filmhead | Exoside |
+| B05_hand | Exoside |
+| B06_firstsculpt | Exoside |
+| B07_alientree | Exoside |
+| B08_bracket | Exoside |
+| B09_studentA | Exoside |
+| B11_studentC | Exoside |
+
+**Exoside 9, Quadre 1.** The second half of the finish line in the parity plan (he cannot reliably
+tell which one is Exoside) is not met.
+
+**What this says about the ruler.** It had Quadre ahead on corner squareness overall, and ahead in
+every column on the bucket and the bracket, and he picked Exoside on both. So the ruler does not
+count something his eye weighs. Two things were measured afterwards that it had left out:
+
+- **How straight the loops run** (the bend of each edge loop at every ordinary vertex, measured in
+  the surface; 0 is ruler-straight). Exoside's loops are straighter on seven of the ten shapes, and
+  this measure agrees with his pick on eight of ten. The widest difference is the bracket: 1.7 degrees
+  against 4.0. On most organic shapes the two are within half a degree.
+- **How many quads, and how their size varies.** Exoside delivered more quads than Quadre on eight of
+  the ten (up to 12,228 where 5,000 was asked) and it varies quad size far more (smaller quads on
+  tight features). On the one shape he gave to Quadre the two are closest on both counts.
+
+Not yet known: which of these decided his picks, or whether it is something else again (rings around
+bumps, where the poles sit). That is the next question, and it is his to answer.
+
 ## 6. Open list after this phase
+
+0. **The ruler has to learn what David's eye sees** (section 5.7) before more engine work is steered
+   by it. First steps: his words on what tipped the picks; add loop straightness to `metrics.py`; a
+   blind round with Quadre run at the quad count Exoside actually delivered, so density is not the
+   difference.
 
 1. **The two gaps in the parity plan are untouched:** adaptive quad size (all of the detail gap) and
    quads following the map loosely inside big patches (most of the remaining flow gap). Phase 3.

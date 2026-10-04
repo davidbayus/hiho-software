@@ -97,7 +97,7 @@ Four moves, all inside Blender. The [demo](https://youtu.be/3x4TEfNW5bk?t=925) s
 |---|---|---|
 | `HIHO_MOCAP/` | Multi-camera markerless motion capture addon for Blender. Record with a ring of webcams, process through FreeMoCap, get a baked animation on a rig. | Active, canonical (v1.4.43) |
 | `UV_UNWRAPER/` | PaWrappa, one-click UV unwrapping for student sculpts. | Student-testing ready (v0.3.5) |
-| `CADRE_REMESHER/` | Quadre, a quad remesher. A free alternative to paid remeshing tools. | Working (v0.3.8) |
+| `CADRE_REMESHER/` | Quadre, a quad remesher. A free alternative to paid remeshing tools. | v0.4.7 (2026-10-03): keeps hard edges, picks the best of four quad layouts, and the engine runs outside Blender so it cannot freeze it |
 | `green_room/` | Procedural character design toolkit. | Early, recently reactivated |
 | `PPPARTY_V2/` | The single-camera era of the mocap work. | Parked (v2.0.4) |
 | `PPPARTY_V1_ARCHIVE/` | The phone-era live puppet experiment that started it all. | Archived, read only |

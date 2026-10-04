@@ -1,6 +1,6 @@
 # QUADRE v0.3.8 — the Quad Count field (2026-09-16, laptop)
 
-**Occasion:** David, morning of the ART 102-01 class (Mo/We 3 PM, Art 241): "build a new version of
+**Occasion:** David, on a class day: "build a new version of
 Quadre for today's class. I want it specifically to bring back the QUAD COUNT value, and remove the
 current LOW to HI decimal setup. Also audit the code against leading edge open source tech for any easy
 improvements. If nothing is worth implementing today then just bring back the Quad count value."

@@ -1,14 +1,14 @@
 # QUADRE v0.4.7 — keeps hard edges, picks the best of four layouts, cannot freeze Blender (2026-10-03, laptop)
 
-**Occasion:** David, Saturday evening: "can we pick up our dev work from where we last left off on the
-Quadre add-on... feel free to go hard on this for a bit." Phase 1 of the plan to match Exoside
+**Occasion:** David: "can we pick up our dev work from where we last left off on the Quadre add-on."
+Phase 1 of the plan to match Exoside
 (`QUADRE_EXOSIDE_PARITY_PLAN_2026-10-02.md`). Findings, design, and every table:
 `QUADRE_PHASE1_DESIGN_2026-10-03.md`. Pictures: `AB_2026-10-03/`.
 
 Zip: `CADRE_REMESHER/quadre-v0.4.7.zip` (Blender 5.2.0 LTS `--command extension build`). v0.4.3 kept as
-the one previous zip (it is what David's Blender has); v0.3.8 and the never-distributed v0.4.6 are in
-`SOFTWARE/ARCHIVES/OLD_ZIPS/`. **Not installed in David's Blender** (his has 0.4.3). **Not staged for
-students** (the staged class package still holds 0.4.3). Four code commits, local, unpushed.
+the one previous zip; v0.3.8 and the never-distributed v0.4.6 are in `SOFTWARE/ARCHIVES/OLD_ZIPS/`.
+**Installed in David's Blender 5.2** the same evening (verified headless with his preferences).
+**Not staged for students**, by his choice: the staged class package stays at 0.4.3.
 
 ## What changed (four changes, one commit each, each measured before the next)
 
@@ -81,8 +81,9 @@ Time: about one second more per run than 0.4.3 on this laptop with nothing else 
 
 ## Not checked / known
 
-- **David has not looked at any of it.** New blind sheets (Exoside against 0.4.7) are in
-  `AB_2026-10-03/BLIND_*.png`; the key is `BLIND_KEY.json` in the same folder.
+- **David's blind picks (Exoside against 0.4.7, `AB_2026-10-03/BLIND_*.png`): Exoside 9, Quadre 1.**
+  The ruler says the quads are squarer than Exoside's; his eye still prefers Exoside. What the ruler is
+  missing is the next question (design doc, section 5.7).
 - **Windows.** Never observed, and the child process is new code there. The fallback is the safety net.
 - **Old or slow Macs.** Timings are from the M4 laptop only.
 - **The film head keeps slightly less detail than in 0.4.3** (0.94 against 0.74) in exchange for half
