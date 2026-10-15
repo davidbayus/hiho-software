@@ -84,7 +84,7 @@ Nothing in the rig tables themselves (unchanged since 2026-04-04). Around the ri
 - **Missing-hand survival (#69, #74, merged August):** `is_hand_bone()` in `bone_definitions.py` and NaN guards in the
   length statistics. Ours already skips bones with no valid readings.
 
-## 5. Proposed parity build (one zip, two one-line fixes, David's OK)
+## 5. Parity build: DONE as 1.5.9 the same day (3a + 3b, plus the wrist limit at influence 0; see BUGS_AND_BACKLOG 2026-10-15)
 
 1.5.8 "parity": mirror the left wrist limit (3a) and connect the four bones (3b). Both are table edits. Check: load
 `2026-09-19_16-06-36` (clean) before and after; shoulders and wrists should look the same or better. The thirteen body

@@ -380,7 +380,7 @@ picked under the cap, and a hand that tracked badly copies the good hand (`FINGE
 match the design table; the blow-up take's fingers went from 364 mm to 27 mm). 1.5.8 adds the "Rig rest pose" preference,
 A-pose default (`APOSE_REST_DESIGN_2026-10-15.md`).
 
-**NEW FIND, not fixed (David's call, its own build): the wrist Limit Rotation points the hands wrong.** Measured with
+**NEW FIND, FIXED the same day as 1.5.9 (influence 0 by default, David's go after the A/B in Blender): the wrist Limit Rotation points the hands wrong.** Measured with
 `diagnostics/wrist_limit_check_2026-10-15.py` (hand bone direction vs its own tracking target, every 2nd frame):
 
 | Take | Pose | Limit | hand.R frames >10° off | max | flips (Z jumps >120°) | hand.L >10° | flips |
@@ -406,7 +406,7 @@ structure), flips handled by a real per-frame hand cleanup later; (b) keep the l
 **Also noticed (small):** Load Take runs `load_aligned_data` three times per take (the finger-length line prints three
 times): measure lengths, spawn empties, virtual landmarks each reload. Cache per take folder; saves ~2 s per load.
 
-**Parity with upstream (`RIG_PARITY_UPSTREAM_2026-10-15.md`), two one-line fixes waiting for David's OK:** the left wrist
+**Parity with upstream (`RIG_PARITY_UPSTREAM_2026-10-15.md`), two one-line fixes, DONE in 1.5.9:** the left wrist
 limit is not mirrored (ours copies the right hand's values); shoulder.R/L and heel.02.R/L are `connected=False` here,
 `True` upstream. The thirteen body-bone rotation limits upstream applies and we skipped in May are a separate decision,
 and after today's wrist numbers, not an obvious win.
