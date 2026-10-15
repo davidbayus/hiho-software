@@ -100,3 +100,19 @@ markers. ActionForge calls this door "make a character on our skeleton". Pieces,
 2. Keep upstream's finger fan at rest (1:1), and treat the playback overlap as the separate cleanup it is? (My
    recommendation.)
 3. Proportions for the shipped blockout rig: David's own clean take, or wait for a student take?
+
+## 8. Build result, 1.5.8 (same day)
+
+Built and installed on the laptop (commit `f8a3836`). Checks from section 6: (1) A-pose rig on `2026-09-19_16-06-36`:
+upper_arm.R rests 45.0 degrees below horizontal, wrist local Z rotated as upstream's table says, 63 of 63 bones bound,
+plays. (2) T-pose preference: identical to 1.5.7 (0.0 degrees up-arm drop, same bones bound). (3) The Studio roll
+references read the active table (23 refs). (4) Picture for David: `SOFTWARE/MEDIA/HIHO_RIG_APOSE_REST_2026-10-15.png`.
+
+Playback comparison, A build vs T build, same take, same frames: upper arm, forearm, finger, thigh and spine bones point
+the same way to 0.00 degrees on every sampled frame. **The wrist does not** (3.7 / 80 / 47 / 20 degrees apart at frames
+1 / 300 / 900 / 1500), and the cause is section 4b exactly: the wrist Limit Rotation acts in the bone's local frame, which
+the A-pose changes. Measured over the whole take with the limit switched off, both builds aim the hand perfectly on every
+frame and the clean take has no flips; with it on, the hand points more than 10 degrees away from its target on 43%
+(T) / 64% (A) of frames. Full table and options: `BUGS_AND_BACKLOG.md`, 2026-10-15. **So the A-pose is correct and
+1:1, but it makes a pre-existing wrist problem more visible. David's pick for the next build: wrist limit off by
+default (recommended), or A-pose off by default until then.**

@@ -1,6 +1,6 @@
 # Finger Length Fix (bug #4) — Design Note
 
-*2026-10-04, laptop. Proposed build: **1.5.7**, one file (`core/enforce_rigid_bodies.py`). Status: **awaiting David's OK. No code written.***
+*2026-10-04, laptop. Proposed build: **1.5.7**, one file (`core/enforce_rigid_bodies.py`). Status: **BUILT as 1.5.7 on 2026-10-15 (laptop, commit 5ca4b4a); the seven-take check matched this table exactly; rule 3 implemented as written (both hands copy the good hand).***
 
 ## What went wrong (10-02, take `15-27-28`)
 

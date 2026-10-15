@@ -370,3 +370,43 @@ RTMPose in 354 s, body tracked 100%. Letters that session (derived): 0=F, 1=E, 2
    next to Lock Feet (MOCAP_CORRECTION_RESEARCH_2026-08-11 territory).
    Session verdict in David's words: "I think it was just a mix of bad calibration... we'll just have to come back
    to it tomorrow."
+
+---
+
+## 2026-10-15 — Build day on the laptop: 1.5.7 (finger lengths) + 1.5.8 (A-pose rest), one new find
+
+**Fixed today:** bug #4 finger blow-up (10-02) is 1.5.7: finger bones capped at a fraction of the performer's forearm, lengths
+picked under the cap, and a hand that tracked badly copies the good hand (`FINGER_LENGTH_FIX_DESIGN_2026-10-04.md`; seven takes
+match the design table; the blow-up take's fingers went from 364 mm to 27 mm). 1.5.8 adds the "Rig rest pose" preference,
+A-pose default (`APOSE_REST_DESIGN_2026-10-15.md`).
+
+**NEW FIND, not fixed (David's call, its own build): the wrist Limit Rotation points the hands wrong.** Measured with
+`diagnostics/wrist_limit_check_2026-10-15.py` (hand bone direction vs its own tracking target, every 2nd frame):
+
+| Take | Pose | Limit | hand.R frames >10° off | max | flips (Z jumps >120°) | hand.L >10° | flips |
+|---|---|---|---|---|---|---|---|
+| 09-19 clean | T | on | 43% | 101° | 0 | 45% | 0 |
+| 09-19 clean | T | off | 0% | 0° | 0 | 0% | 0 |
+| 09-19 clean | A | on | 64% | 102° | 0 | 68% | 0 |
+| 09-19 clean | A | off | 0% | 0° | 0 | 0% | 0 |
+| 10-02 noisy right hand | T | on | 58% | 135° | 16 | 85% | 0 |
+| 10-02 noisy right hand | T | off | 0% | 0° | 21 | 0% | 2 |
+| 10-02 noisy right hand | A | on | 85% | 135° | 8 | 96% | 0 |
+| 10-02 noisy right hand | A | off | 0% | 0° | 21 | 0% | 2 |
+
+Reading: the limit (added in 1.4.x against a 180-degree wrist flip, values verbatim from upstream) does not stop the flips
+on a noisy hand (21 to 8 or 16) and on a CLEAN take it only hurts: nearly half the frames (T) or two thirds (A) have the
+hand pointing more than 10 degrees away from where the data says, up to 100 degrees. With the limit off the hand aims
+perfectly on every frame of both takes. A-pose makes the clamped share worse because the limit works in the bone's local
+frame and the A-pose wrist roll is 0 instead of -90 (upstream applies one limit table to both poses, so their A-pose has
+the same problem). **Options for the next build:** (a) wrist limit influence 0 by default (constraint stays, 1:1 in
+structure), flips handled by a real per-frame hand cleanup later; (b) keep the limit, A-pose off by default until (a);
+(c) upstream finding either way, with this table. Recommendation: (a).
+
+**Also noticed (small):** Load Take runs `load_aligned_data` three times per take (the finger-length line prints three
+times): measure lengths, spawn empties, virtual landmarks each reload. Cache per take folder; saves ~2 s per load.
+
+**Parity with upstream (`RIG_PARITY_UPSTREAM_2026-10-15.md`), two one-line fixes waiting for David's OK:** the left wrist
+limit is not mirrored (ours copies the right hand's values); shoulder.R/L and heel.02.R/L are `connected=False` here,
+`True` upstream. The thirteen body-bone rotation limits upstream applies and we skipped in May are a separate decision,
+and after today's wrist numbers, not an obvious win.
