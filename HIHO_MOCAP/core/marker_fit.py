@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple
 import bpy
 from mathutils import Euler, Vector
 
-from .build_rig import _ARMATURE_DEFINITION, _TPOSE
+from .build_rig import _ARMATURE_DEFINITION, rest_pose_table
 
 BODY_BONES: Tuple[str, ...] = tuple(
     name for name in _ARMATURE_DEFINITION
@@ -220,12 +220,13 @@ def _derive_bone_points(markers: Dict[str, Vector],
 
 def _tpose_z_references(edit_bones) -> Dict[str, Vector]:
     """Local-Z world direction of each body bone in the canonical ajc27
-    T-pose, read off temporary bones (Blender derives bone axes from
+    rest pose (A or T, per the preference), read off temporary bones (Blender derives bone axes from
     direction + roll, so building the bone is the reliable way to get them)."""
     refs: Dict[str, Vector] = {}
     temps = []
+    pose = rest_pose_table()
     for name in BODY_BONES:
-        rotation, roll = _TPOSE[name]
+        rotation, roll = pose[name]
         tb = edit_bones.new(f"HIHO_TMP_{name}")
         tb.head = Vector((0, 0, 0))
         tb.tail = Euler(rotation, "XYZ").to_matrix() @ Vector((0, 0, 0.1))

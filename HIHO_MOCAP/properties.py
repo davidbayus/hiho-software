@@ -293,6 +293,22 @@ class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
         update=_data_home_update,
     )
 
+    rest_pose: bpy.props.EnumProperty(
+        name="Rig rest pose",
+        description=(
+            "The pose the skeleton is built in before the motion plays. "
+            "A-pose (arms 45 degrees down) is what characters are modeled "
+            "around and what rigging tools expect; T-pose matches "
+            "FreeMoCap's default. Same bones and constraints either way. "
+            "Set once per machine"
+        ),
+        items=[
+            ('APOSE', "A-pose", "Arms 45 degrees down, fingers fanned (HIHO default)"),
+            ('TPOSE', "T-pose", "Arms straight out (FreeMoCap default)"),
+        ],
+        default='APOSE',
+    )
+
     # The two opt-in checkboxes at the bottom of the panel
     # (PANEL_REDESIGN_DESIGN_2026-09-19, section 9). Per COMPUTER on purpose:
     # ticked once on the studio laptop they survive every new file, while a
@@ -321,5 +337,6 @@ class HIHO_MOCAP_AddonPreferences(bpy.types.AddonPreferences):
         self.layout.prop(self, "freemocap_env_python")
         self.layout.prop(self, "fmc2_env_python")
         self.layout.prop(self, "data_home")
+        self.layout.prop(self, "rest_pose")
         self.layout.prop(self, "show_lock_feet")
         self.layout.prop(self, "show_studio_tools")

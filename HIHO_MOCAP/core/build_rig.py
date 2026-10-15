@@ -1,7 +1,7 @@
 """HIHO MOCAP — build a FreeMoCap-style armature from the captured empties.
 
 1:1 with ajc27_freemocap_blender_addon's BY_BONE path. We replicate ajc27's
-full 63-bone topology (15 body + 8 leg + 40 finger) + T-pose orientation +
+full 63-bone topology (15 body + 8 leg + 40 finger) + T/A-pose orientation +
 bone-length measurement so the rig matches what FreeMoCap exports.
 
 Bone-length measurement: median of per-frame distance between the head and
@@ -95,15 +95,15 @@ _ARMATURE_DEFINITION: Dict[str, Dict] = {
 _BONE_TO_EMPTIES = BONE_HEAD_TAIL_MAP
 
 
-def _finger_chain_tpose(side: str) -> Dict[str, Tuple[Tuple[float, float, float], float]]:
-    """Per-side finger T-pose rotations. Side is 'R' or 'L'.
+def _finger_chain_pose(side: str, arm_y_deg: float = 90) -> Dict[str, Tuple[Tuple[float, float, float], float]]:
+    """Per-side finger rest rotations. Side is 'R' or 'L'.
 
-    All finger bones rotate ±90° around Y to align with the arm direction.
-    Palm bones add a small Z offset so the fingers fan out naturally in
-    T-pose; thumb bones add a 45° Z rotation for thumb opposition. Verbatim
-    from ajc27 freemocap_tpose.py.
+    All finger bones rotate around Y to align with the arm direction (90° in
+    the T-pose, 135° in the A-pose). Palm bones add a small Z offset so the
+    fingers fan out naturally; thumb bones add a 45° Z rotation for thumb
+    opposition. Verbatim from ajc27 freemocap_tpose.py / freemocap_apose.py.
     """
-    y = math.radians(-90 if side == "R" else 90)
+    y = math.radians(-arm_y_deg if side == "R" else arm_y_deg)
     z_sign = 1 if side == "R" else -1
     thumb_z = math.radians(45 * z_sign)
     palm1_z = math.radians(17 * z_sign)
@@ -151,8 +151,8 @@ _TPOSE: Dict[str, Tuple[Tuple[float, float, float], float]] = {
     "forearm.L":   ((0, math.radians(90), math.radians(-1)), math.radians(90)),
     "hand.R":      ((0, math.radians(-90), 0), math.radians(-90)),
     "hand.L":      ((0, math.radians(90), 0), math.radians(90)),
-    **_finger_chain_tpose("R"),
-    **_finger_chain_tpose("L"),
+    **_finger_chain_pose("R"),
+    **_finger_chain_pose("L"),
     "thigh.R":     ((math.radians(1), math.radians(180), 0), 0.0),
     "thigh.L":     ((math.radians(1), math.radians(180), 0), 0.0),
     "shin.R":      ((math.radians(-1), math.radians(180), 0), 0.0),
@@ -162,6 +162,35 @@ _TPOSE: Dict[str, Tuple[Tuple[float, float, float], float]] = {
     "heel.02.R":   ((math.radians(195), 0, 0), 0.0),
     "heel.02.L":   ((math.radians(195), 0, 0), 0.0),
 }
+
+
+# A-pose: the arm chain swings 45° down from the T-pose, the wrist roll goes
+# to 0, everything else is identical. Verbatim from ajc27 freemocap_apose.py
+# (the rest pose upstream's 2.0 GUI offers since 2026-09-24, addon PR #77).
+_APOSE: Dict[str, Tuple[Tuple[float, float, float], float]] = {
+    **_TPOSE,
+    "upper_arm.R": ((0, math.radians(-135), 0), math.radians(-135)),
+    "upper_arm.L": ((0, math.radians(135), 0), math.radians(135)),
+    "forearm.R":   ((0, math.radians(-135), math.radians(1)), math.radians(-135)),
+    "forearm.L":   ((0, math.radians(135), math.radians(-1)), math.radians(135)),
+    "hand.R":      ((0, math.radians(-135), 0), 0.0),
+    "hand.L":      ((0, math.radians(135), 0), 0.0),
+    **_finger_chain_pose("R", 135),
+    **_finger_chain_pose("L", 135),
+}
+
+_REST_POSES = {"APOSE": _APOSE, "TPOSE": _TPOSE}
+
+
+def rest_pose_table() -> Dict[str, Tuple[Tuple[float, float, float], float]]:
+    """The rest pose the preferences ask for (A-pose unless switched to T)."""
+    choice = "APOSE"
+    try:
+        addon_id = __package__.rsplit(".", 1)[0]
+        choice = bpy.context.preferences.addons[addon_id].preferences.rest_pose
+    except (KeyError, AttributeError):
+        pass
+    return _REST_POSES.get(choice, _APOSE)
 
 
 # ---- Public API -------------------------------------------------------------
@@ -197,13 +226,15 @@ def build_freemocap_armature(
     rig_name: str,
     parent_object: Optional[bpy.types.Object] = None,
 ) -> bpy.types.Object:
-    """Build a freemocap-style armature in canonical T-pose at world origin.
+    """Build a freemocap-style armature at world origin, in the rest pose the
+    preferences name (A-pose by default, T-pose optional).
 
     Bone lengths measured from the recording. Returns the rig object.
     If parent_object is given, the rig is parented to it (typically the
     HIHO_MOCAP_Skelly empty so the rig + mocap empties move as a unit).
     """
     bone_lengths = measure_bone_lengths(recording_folder)
+    rest_pose = rest_pose_table()
 
     # Pelvis sits at standing height = avg foot projection + avg shin + avg thigh,
     # using a 23° foot-declination assumption (ajc27 convention).
@@ -238,7 +269,7 @@ def build_freemocap_armature(
 
         length = bone_lengths.get(bone_name, info.get("default_length", 0.05))
         bone_vector = mathutils.Vector((0.0, 0.0, length))
-        rotation, roll = _TPOSE[bone_name]
+        rotation, roll = rest_pose[bone_name]
         rot_matrix = mathutils.Euler(rotation, "XYZ").to_matrix()
         edit_bone.tail = edit_bone.head + rot_matrix @ bone_vector
         edit_bone.roll = roll
