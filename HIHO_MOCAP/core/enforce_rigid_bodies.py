@@ -15,14 +15,16 @@ are mirrored left<->right: foreshortening makes per-frame finger lengths read
 too short (and unevenly per hand), so the median builds stubby, asymmetric
 hands; the percentile recovers the true length and the mirror keeps them even.
 
+HIHO addition (1.5.7, FINGER_LENGTH_FIX_DESIGN_2026-10-04.md, bug #4): a badly
+tracked hand can read a fingertip at 692 mm, and the mirror then spreads that
+damage to the clean hand. So every finger bone now has a ceiling scaled to the
+performer's own forearm, lengths are picked from the readings under it, and
+only hands that tracked well are averaged; a bad hand copies the good one.
+
 Pure function. Takes a positions dict (landmark_name → (frames, 3)) plus
 the bone topology, returns a new positions dict with bone lengths
 clamped. The hierarchy is module-level since it's a constant lifted
 1:1 from ajc27.
-
-Not wired into the load pipeline yet — exists as a ready-to-integrate
-module so the next session can drop it in once we know the hand bone
-output is otherwise correct.
 """
 
 from typing import Dict, List, Tuple
@@ -118,26 +120,110 @@ LANDMARK_HIERARCHY: Dict[str, List[str]] = {
 _FINGER_PREFIXES = ("thumb.", "palm.", "f_index.", "f_middle.", "f_ring.", "f_pinky.")
 _FINGER_PERCENTILE = 90
 
+# Ceiling per finger bone as a fraction of the performer's forearm (elbow to
+# wrist, which the body tracker reads reliably). Generous on purpose: a real
+# index fingertip is ~9% of the forearm, the ceiling allows 13%, so a large
+# hand is never squeezed; only tracking garbage is excluded. Scaling by the
+# forearm makes it fit a 6th grader and an adult without a setting.
+_FINGER_CEILING_FRACTION: Dict[str, float] = {
+    "thumb.carpal": 0.22,
+    "thumb.01": 0.22,
+    "thumb.02": 0.18,
+    "thumb.03": 0.16,
+    "palm": 0.45,
+    ".01": 0.22,
+    ".02": 0.15,
+    ".03": 0.13,
+}
+_FOREARM_FALLBACK_M = 0.25
+_HAND_CLEAN_SHARE = 2.0 / 3.0
 
-def _symmetrize_fingers(targets: Dict[str, float]) -> None:
-    """Average each finger bone's left and right target so the hands match.
 
-    Real hands are mirror images; per-hand measurement drifts apart when one
-    hand tracks worse than the other. Mutates `targets` in place.
+def _finger_ceiling_fraction(bone_base: str) -> float:
+    if bone_base in _FINGER_CEILING_FRACTION:
+        return _FINGER_CEILING_FRACTION[bone_base]
+    if bone_base.startswith("palm."):
+        return _FINGER_CEILING_FRACTION["palm"]
+    return _FINGER_CEILING_FRACTION[bone_base[-3:]]
+
+
+def _forearm_length(positions: Dict[str, np.ndarray]) -> float:
+    """Median elbow-to-wrist length over both arms and all frames (meters)."""
+    samples = []
+    for side in ("right", "left"):
+        elbow = positions.get(f"{side}_elbow")
+        wrist = positions.get(f"{side}_wrist")
+        if elbow is None or wrist is None:
+            continue
+        lengths = np.linalg.norm(wrist - elbow, axis=1)
+        lengths = lengths[~np.isnan(lengths)]
+        if len(lengths):
+            samples.append(lengths)
+    if not samples:
+        return _FOREARM_FALLBACK_M
+    forearm = float(np.median(np.concatenate(samples)))
+    return forearm if forearm > 0 else _FOREARM_FALLBACK_M
+
+
+def _finger_targets(
+    bone_lengths_per_frame: Dict[str, np.ndarray],
+    forearm: float,
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Target length per finger bone, mirrored only across hands that tracked well.
+
+    Returns (targets, hand_scores). A hand's score is the share of its finger
+    readings under the ceiling. Both hands clean: average them. One hand bad:
+    both hands copy the good one. Both bad: both copy the better one.
     """
-    for bone in list(targets):
-        if bone.endswith(".R") and bone.startswith(_FINGER_PREFIXES):
-            mate = bone[:-2] + ".L"
-            if mate in targets:
-                avg = (targets[bone] + targets[mate]) / 2.0
-                targets[bone] = targets[mate] = avg
+    per_side: Dict[str, Dict[str, float]] = {"R": {}, "L": {}}
+    under = {"R": 0, "L": 0}
+    total = {"R": 0, "L": 0}
+    for bone, lengths in bone_lengths_per_frame.items():
+        if not bone.startswith(_FINGER_PREFIXES):
+            continue
+        side = bone[-1]
+        base = bone[:-2]
+        valid = lengths[~np.isnan(lengths)]
+        if len(valid) == 0:
+            continue
+        ceiling = _finger_ceiling_fraction(base) * forearm
+        clean = valid[valid <= ceiling]
+        under[side] += len(clean)
+        total[side] += len(valid)
+        per_side[side][base] = (
+            float(np.percentile(clean, _FINGER_PERCENTILE)) if len(clean) else ceiling
+        )
+
+    scores = {s: (under[s] / total[s] if total[s] else 0.0) for s in ("R", "L")}
+    clean_hands = [s for s in ("R", "L") if scores[s] >= _HAND_CLEAN_SHARE]
+    better = "R" if scores["R"] >= scores["L"] else "L"
+
+    targets: Dict[str, float] = {}
+    for base in set(per_side["R"]) | set(per_side["L"]):
+        right = per_side["R"].get(base)
+        left = per_side["L"].get(base)
+        if right is not None and left is not None:
+            if len(clean_hands) == 2:
+                value = (right + left) / 2.0
+            elif len(clean_hands) == 1:
+                value = right if clean_hands[0] == "R" else left
+            else:
+                value = right if better == "R" else left
+            targets[base + ".R"] = targets[base + ".L"] = value
+        elif right is not None:
+            targets[base + ".R"] = right
+        elif left is not None:
+            targets[base + ".L"] = left
+    return targets, scores
 
 
 def enforce_rigid_bodies(
     positions: Dict[str, np.ndarray],
     bone_to_empties: Dict[str, Tuple[str, str]],
 ) -> Dict[str, np.ndarray]:
-    """Clamp per-frame bone lengths to their median.
+    """Clamp per-frame bone lengths to one target per bone.
+
+    Body bones: the median. Finger bones: see _finger_targets.
 
     For each bone in `bone_to_empties`, computes the per-frame head-to-tail
     distance across all frames and takes the median. For each frame, computes
@@ -163,17 +249,17 @@ def enforce_rigid_bodies(
         lengths = np.linalg.norm(tail_traj - head_traj, axis=1)
         bone_lengths_per_frame[bone] = lengths
         valid = lengths[~np.isnan(lengths)]
-        if len(valid) > 0:
-            # Fingers read too short most frames (foreshortening collapses the
-            # triangulated depth), so take a high percentile — the length from
-            # the best-tracked frames. Body bones are long enough that the
-            # median is fine, and real left/right asymmetry should be kept.
-            if bone.startswith(_FINGER_PREFIXES):
-                bone_targets[bone] = float(np.percentile(valid, _FINGER_PERCENTILE))
-            else:
-                bone_targets[bone] = float(np.median(valid))
+        if len(valid) > 0 and not bone.startswith(_FINGER_PREFIXES):
+            bone_targets[bone] = float(np.median(valid))
 
-    _symmetrize_fingers(bone_targets)
+    finger_targets, hand_scores = _finger_targets(
+        bone_lengths_per_frame, _forearm_length(positions),
+    )
+    bone_targets.update(finger_targets)
+    print(
+        "HIHO MOCAP finger lengths: right hand {:.0%} clean, left hand {:.0%} clean"
+        .format(hand_scores["R"], hand_scores["L"])
+    )
 
     updated = {name: traj.copy() for name, traj in positions.items()}
 
