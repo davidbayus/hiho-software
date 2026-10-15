@@ -52,16 +52,25 @@ def _finger_chain_constraints(side: str) -> Dict[str, List[Tuple[str, str, Dict]
     }
 
 
-# ajc27's hand rotation limits (degrees, local space). ajc27 gates these behind
-# an opt-in flag (use_limit_rotation, default off), so a 1:1 port left them off
-# and the hand could roll-flip 180 degrees when the LOCKED_TRACK toward the thumb
-# crossed its plane. Applying them clamps the roll so the flip can't happen.
-# Values verbatim from ajc27 bone_constraints.py.
-_HAND_ROT_LIMIT = {
+# ajc27's hand rotation limits (degrees, local space), values verbatim from
+# ajc27 bone_constraints.py, right and left mirrored as upstream has them.
+# The constraint is created but left at influence 0 (1.5.9): measured on a clean
+# take it pushed the hand bone up to 100 degrees off its own target on about
+# half the frames, and on a noisy take it only halved the flips it was added
+# for (BUGS_AND_BACKLOG 2026-10-15). Upstream ships it behind an opt-in flag
+# that defaults to off, so influence 0 matches their default behavior; a student
+# can raise the influence on the constraint if a hand flips.
+_HAND_ROT_LIMIT_R = {
     "use_limit_x": True, "min_x": -45, "max_x": 45,
     "use_limit_y": True, "min_y": -36, "max_y": 25,
     "use_limit_z": True, "min_z": -86, "max_z": 90,
-    "owner_space": "LOCAL",
+    "owner_space": "LOCAL", "influence": 0.0,
+}
+_HAND_ROT_LIMIT_L = {
+    "use_limit_x": True, "min_x": -45, "max_x": 45,
+    "use_limit_y": True, "min_y": -25, "max_y": 36,
+    "use_limit_z": True, "min_z": -90, "max_z": 86,
+    "owner_space": "LOCAL", "influence": 0.0,
 }
 
 
@@ -104,12 +113,12 @@ _CONSTRAINTS: Dict[str, List[Tuple[str, Optional[str], Dict]]] = {
     "hand.R": [
         ("DAMPED_TRACK", "right_hand_middle", {"track_axis": "TRACK_Y"}),
         ("LOCKED_TRACK", "right_hand_thumb_cmc", {"track_axis": "TRACK_Z", "lock_axis": "LOCK_Y"}),
-        ("LIMIT_ROTATION", None, _HAND_ROT_LIMIT),  # clamps the 180-degree wrist flip
+        ("LIMIT_ROTATION", None, _HAND_ROT_LIMIT_R),  # present, influence 0 (see note above)
     ],
     "hand.L": [
         ("DAMPED_TRACK", "left_hand_middle", {"track_axis": "TRACK_Y"}),
         ("LOCKED_TRACK", "left_hand_thumb_cmc", {"track_axis": "TRACK_Z", "lock_axis": "LOCK_Y"}),
-        ("LIMIT_ROTATION", None, _HAND_ROT_LIMIT),  # clamps the 180-degree wrist flip
+        ("LIMIT_ROTATION", None, _HAND_ROT_LIMIT_L),  # present, influence 0 (see note above)
     ],
     "thigh.R": [
         ("COPY_LOCATION", "right_hip", {}),
@@ -190,6 +199,7 @@ def apply_constraints(
                 con.min_z = radians(extras.get("min_z", 0.0))
                 con.max_z = radians(extras.get("max_z", 0.0))
                 con.owner_space = extras.get("owner_space", "LOCAL")
+                con.influence = extras.get("influence", 1.0)
                 continue
 
             target_obj = empties.get(target_substring)

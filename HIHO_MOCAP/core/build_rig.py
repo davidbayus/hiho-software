@@ -69,8 +69,8 @@ _ARMATURE_DEFINITION: Dict[str, Dict] = {
     "spine.001":   {"parent": "spine",      "connected": True,  "parent_position": "tail"},
     "neck":        {"parent": "spine.001",  "connected": True,  "parent_position": "tail"},
     "face":        {"parent": "neck",       "connected": True,  "parent_position": "tail", "default_length": 0.1},
-    "shoulder.R":  {"parent": "spine.001",  "connected": False, "parent_position": "tail"},
-    "shoulder.L":  {"parent": "spine.001",  "connected": False, "parent_position": "tail"},
+    "shoulder.R":  {"parent": "spine.001",  "connected": True,  "parent_position": "tail"},
+    "shoulder.L":  {"parent": "spine.001",  "connected": True,  "parent_position": "tail"},
     "upper_arm.R": {"parent": "shoulder.R", "connected": True,  "parent_position": "tail"},
     "upper_arm.L": {"parent": "shoulder.L", "connected": True,  "parent_position": "tail"},
     "forearm.R":   {"parent": "upper_arm.R","connected": True,  "parent_position": "tail"},
@@ -85,8 +85,8 @@ _ARMATURE_DEFINITION: Dict[str, Dict] = {
     "shin.L":      {"parent": "thigh.L",    "connected": True,  "parent_position": "tail"},
     "foot.R":      {"parent": "shin.R",     "connected": True,  "parent_position": "tail"},
     "foot.L":      {"parent": "shin.L",     "connected": True,  "parent_position": "tail"},
-    "heel.02.R":   {"parent": "shin.R",     "connected": False, "parent_position": "tail"},
-    "heel.02.L":   {"parent": "shin.L",     "connected": False, "parent_position": "tail"},
+    "heel.02.R":   {"parent": "shin.R",     "connected": True,  "parent_position": "tail"},
+    "heel.02.L":   {"parent": "shin.L",     "connected": True,  "parent_position": "tail"},
 }
 
 
